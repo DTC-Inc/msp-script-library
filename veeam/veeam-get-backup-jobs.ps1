@@ -6,7 +6,7 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
         catch {
             throw "Failed to load Veeam Modules"
             }
- }s
+ }
 
 # Get Backup Jobs
 Write-Host "Getting Backup Jobs"
