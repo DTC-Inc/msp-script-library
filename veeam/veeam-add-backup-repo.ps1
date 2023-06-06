@@ -51,7 +51,7 @@ $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
 $folderName = $timeStamp
 
 
-if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
+if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
     Write-Host "Creating S3 Repository: S3 $timeStamp"
     # Add the S3 Account
     $account = Add-VBRAmazonAccount -AccessKey $accessKey -SecretKey $secretKey -Description "$description $bucketName"
@@ -69,7 +69,7 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 
 
 
-if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
+if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
     Write-Host "Creating local repository Local $timeStamp"
     # Get all logical drives on the system
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
