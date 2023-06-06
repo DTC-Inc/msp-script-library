@@ -1,3 +1,3 @@
 # Get Backup Jobs
-Get-VBRComputerBackupJob
+Get-VBRJob
 Get-VBRComputerBackupJob
