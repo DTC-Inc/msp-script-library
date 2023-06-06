@@ -91,7 +91,6 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
     $backups = Get-VBRBackup
     $repository = Get-VBRBackupRepository -Name "Local $timeStamp"
 
-    # Move backups
     Write-Host "moving all backups too Local $timeStamp"
     if ($moveBackups -eq 1){ 
         $backups | ForEach-Object {
@@ -99,5 +98,4 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
         }
     }
 }
-
 Stop-Transcript
