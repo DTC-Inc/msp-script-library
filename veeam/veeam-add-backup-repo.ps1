@@ -91,8 +91,7 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
         $repositoryName = "Local $timeStamp"
         Write-Host "Repository name: $repositoryName"
         Write-Host "Repository path: $repositoryPath"
-        New-Item -ItemType Directory -Force -Path $repoistoryPath
-        $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $_ -Description "$description"
+        $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $repositoryPath -Description "$description"
         #  Display the added repository details
         $repository
         Start-Sleep -Seconds 1
