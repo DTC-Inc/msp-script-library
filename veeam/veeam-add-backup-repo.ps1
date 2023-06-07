@@ -84,17 +84,17 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
         $filteredDrives = $drives
     }
 
-
-    # Set the local repository details
-    $repositoryPath = Join-Path -Path $filteredDrives.DeviceID -ChildPath "\veeam\$timeStamp"
-
     # Create the local repository
-    $repositoryPath | ForEach-Object { 
+    $filteredDrives | ForEach-Object { 
+        $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
+        $repositoryPath = Join-Path -Path $_.DeviceID -ChildPath "\veeam\$timeStamp"
         $repositoryName = "Local $timeStamp"
+        Write-Host "Repository name: $repositoryName"
+        Write-Host "Repository path: $repositoryPath"
         $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $_ -Description "$description"
         #  Display the added repository details
         $repository
-
+        Start-Sleep -Seconds 1
     }
 }
 Stop-Transcript
