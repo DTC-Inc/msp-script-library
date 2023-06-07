@@ -30,6 +30,8 @@ Write-Host "Secret key: **redacted for sensativity**"
 Write-Host "S3 Endpoint: $endpoint"
 Write-Host "S3 Region ID: $regionId"
 Write-Host "S3 Bucket Name: $bucketName"
+Write-Host "Automatic volume letter to create WinLocal repo: "
+Write-Host "Drive letters to create WinLocal Repos: $driveLetters"
 
 
 # Make sure PSModulePath includes Veeam Console
@@ -75,27 +77,24 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
 
     # Find the drive with the largest total capacity
-    $largestDrive = $drives | Sort-Object -Property Size -Descending | Select-Object -First 1
+    if ($drives.Count -gt 1){ 
+        $filteredDrives = $drives | Where-Object { $_ -ne 'C:' }
+
+    } else {
+        $filteredDrives = $drives
+    }
+
 
     # Set the local repository details
-    $repositoryName = "Local $timeStamp"
-    $repositoryPath = Join-Path -Path $largestDrive.DeviceID -ChildPath "\veeam\$timeStamp"
+    $repositoryPath = Join-Path -Path $filteredDrives.DeviceID -ChildPath "\veeam\$timeStamp"
 
     # Create the local repository
-    $repository = Add-VBRBackupRepository -Type WinLocal -Name $repositoryName -Folder $repositoryPath -Description "$description"
+    $repositoryPath | ForEach-Object { 
+        $repositoryName = "Local $timeStamp"
+        $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $_ -Description "$description"
+        #  Display the added repository details
+        $repository
 
-    # Display the added repository details
-    $repository
-
-    # Move backups
-    $backups = Get-VBRBackup
-    $repository = Get-VBRBackupRepository -Name "Local $timeStamp"
-
-    Write-Host "moving all backups too Local $timeStamp"
-    if ($moveBackups -eq 1){ 
-        $backups | ForEach-Object {
-            Move-VBRBackup -Repository $repository -Backup $_ -RunAsync
-        }
     }
 }
 Stop-Transcript
