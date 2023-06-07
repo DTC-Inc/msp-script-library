@@ -8,7 +8,5 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             }
  }
 
-# Get Backup Jobs
-Write-Host "Getting Backup Jobs"
-Get-VBRJob
-Get-VBRComputerBackupJob
+# Upgrade VBR Backup Chain to True Per VM
+Get-VBRBackup -Name $backupJob | Upgrade-VBRBackup

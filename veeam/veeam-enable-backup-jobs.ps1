@@ -8,7 +8,4 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             }
  }
 
-# Get Backup Jobs
-Write-Host "Getting Backup Jobs"
-Get-VBRJob
-Get-VBRComputerBackupJob
+Get-VBRJob | Enable-VBRJob
