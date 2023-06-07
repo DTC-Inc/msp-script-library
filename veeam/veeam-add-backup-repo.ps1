@@ -78,7 +78,7 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 
     # Find the drive with the largest total capacity
     if ($drives.Count -gt 1){ 
-        $filteredDrives = $drives | Where-Object { $_ -ne 'C:' }
+        $filteredDrives = $drives | Where-Object { $_.DeviceId -ne 'C:' }
 
     } else {
         $filteredDrives = $drives
