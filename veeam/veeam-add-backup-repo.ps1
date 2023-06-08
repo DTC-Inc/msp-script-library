@@ -94,7 +94,31 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
         $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $repositoryPath -Description "$description"
         #  Display the added repository details
         $repository
+        $localRepository = $repository
         Start-Sleep -Seconds 1
     }
 }
+
+
+
+# Move all local backups
+if ($moveBackups){
+    $backups = Get-VBRBackup
+
+    Write-Host "moving all backups to $localRepository"
+    $backups | ForEach-Object {
+        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
+    }
+}
+
+# Move listed backups
+if ($moveListedBackups){ 
+    Write-Host "Moving $moveListedBackups to $localRepository."
+
+    $moveListedBackups | ForEach-Object {
+        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
+    }
+
+}
+
 Stop-Transcript
