@@ -9,4 +9,4 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
  }
 
 # Upgrade VBR Backup Chain to True Per VM
-Get-VBRBackup -Name $backupJob | Upgrade-VBRBackup
+Get-VBRBackup |Where -Property TypeToString -eq "Hyper-V Backup" | Upgrade-VBRBackup
