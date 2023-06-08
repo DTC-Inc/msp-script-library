@@ -104,7 +104,7 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 # Move all local backups
 if ($moveBackups){
     $backups = Get-VBRBackup
-    $localRepository = $localRepository | Where -Property Name -like "Local*"
+    $localRepository = Get-VBRBackupRepository | Where -Property Name -like "Local*"
     Write-Host "moving all backups to $localRepository"
     $backups | ForEach-Object {
         Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
