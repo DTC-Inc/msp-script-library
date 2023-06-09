@@ -67,8 +67,7 @@ Stop-Transcript
          $url = "https://github.com/DTC-Inc/msp-script-library/blob/main/iaas-backblaze/b2-windows.exe"  # Replace with the actual download URL
      
          Write-Host "Downloading file..."
-         $webClient = New-Object System.Net.WebClient
-         $webClient.DownloadFile($url, $filePath)
+         wget $url -OutFile $filePath
          Write-Host "File downloaded successfully."
      } else {
          Write-Host "File already exists."
