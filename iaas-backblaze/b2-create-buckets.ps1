@@ -2,16 +2,40 @@
 
 Start-Transcript $psScriptRoot\backblaze-create-buckets.log
 
-# Get backblaze API credentials
-$userApiKey = Read-Host "Enter Key ID"
-$userApiSecret = Read-Host "Enter App Key"
+Write-Host "Checking if we're running from a RMM. If we are we're using RMM variables."
+if (rmm -ne 1) {
+     $userApiKey = Read-Host "Enter API Key ID"
+     $userApiSecret = Read-Host "Enter API App Key"
+     $clientListFile = Read-Host "Enter 1 if you want to import the client list via CSV file"
+     if ($clientListFile -eq 1) {
+          # Get client list
+          $path = Read-Host "Enter path to client list CSV file:"
+          $clientList = Import-Csv $path | Select-Object -Skip 1 | ForEach-Object {
+               $row = $_.PSObject.Properties.Value
+               $cleanedRow = $row -replace '\W','' -replace ' ','-' | ForEach-Object { $_.ToLower() }
+               $bucketList = "$cleanedRow-veeam-dtc"
+          $bucketList
+      } else {
+          $clientList = Read-Host "Enter clients comma separated. Enter them exactly as is in your PSA" | ForEach-Object {
+               $row = $_.PSObject.Properties.Value
+               $cleanedRow = $row -replace '\W','' -replace ' ','-' | ForEach-Object { $_.ToLower()
+               $bucketList = "veeam-dtc-$cleanedRow"
+               $bucketList
+          }
+          $userApiKey = Read-Host "Enter API Key ID"
+          $userApiSecret = Read-Host "Enter API App Key"
+          
+     }
+ }
 
+
+ 
 # Get client list
 $path = Read-Host "Enter path to client list CSV file:"
 $clientList = Import-Csv $path | Select-Object -Skip 1 | ForEach-Object {
      $row = $_.PSObject.Properties.Value
      $cleanedRow = $row -replace '\W','' -replace ' ','-' | ForEach-Object { $_.ToLower() }
-     $bucketList = "$cleanedRow-veeam-dtc"
+     $bucketList = "veeam-dtc-$cleanedRow"
      $bucketList
  }
 
