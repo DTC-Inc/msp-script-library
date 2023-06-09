@@ -4,6 +4,20 @@
 
 Start-Transcript -Path $env:WINDIR\logs\veeam-add-backup-copy-job.log
 
+# Make sure PSModulePath includes Veeam Console
+Write-Host "Installing Veeam PowerShell Module if not installed already."
+$MyModulePath = "C:\Program Files\Veeam\Backup and Replication\Console\"
+$env:PSModulePath = $env:PSModulePath + "$([System.IO.Path]::PathSeparator)$MyModulePath"
+if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
+    try {
+        $Modules | Import-Module -WarningAction SilentlyContinue
+        }
+        catch {
+            throw "Failed to load Veeam Modules"
+            }
+ }
+
+
 # Get timestamp
 Write-Host "Getting timestamp."
 $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
