@@ -1,9 +1,7 @@
 # Please make sure that b2-windows.exe is in the script root. All logs and data exported is stored here.
 
-Start-Transcript $psScriptRoot\backblaze-create-buckets.log
-
-Write-Host "Checking if we're running from a RMM. If we are we're using RMM variables."
 if (rmm -ne 1) {
+     Start-Transcript $psScriptRoot\backblaze-create-buckets.log
      $filePath = Join-Path -Path $psScriptRoot -ChildPath "backblaze-b2.exe"
 
      if (-not (Test-Path -Path $filePath)) {
@@ -56,9 +54,12 @@ if (rmm -ne 1) {
      $data | Export-Csv -Path "$psScriptRoot\bucket-info.csv" -NoTypeInformation -Append
 
 }
+Stop-Transcript
 
 } else {
-     Write-Host "Bucket name: $bucketName"
+     Start-Transcript -Path $rmmScriptPath\logs\backblaze-create-buckets.log
+
+     Write-Host "Bucket name: $client"
      Write-Host "RMM Script Path: $rmmScriptPath"
      Write-Host "Access key: $userApiKey"
      Write-Host "Secret key: **redacted for sensativity**"
@@ -90,8 +91,10 @@ if (rmm -ne 1) {
      $keyOut = .\b2-windows.exe create-key $client "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $client
      Write-Host $client " " $keyOut
      $keyId, $keyApp = $keyOut -split '\s+'
-
+     
+     Write-Host "API Key ID: $keyId"
+     Write-Host "API Key App: $keyApp"
+     Stop-Transcript
 }
 
 
-Stop-Transcript 
