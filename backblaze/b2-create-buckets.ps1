@@ -7,13 +7,7 @@ $userApiKey = Read-Host "Enter Key ID"
 $userApiSecret = Read-Host "Enter App Key"
 
 # Get client list
-$path = Read-Host "Enter path to client list CSV file:"
-$clientList = Import-Csv $path | Select-Object -Skip 1 | ForEach-Object {
-     $row = $_.PSObject.Properties.Value
-     $cleanedRow = $row -replace '\W','' -replace ' ','-' | ForEach-Object { $_.ToLower() }
-     $bucketList = "$cleanedRow-veeam-dtc"
-     $bucketList
- }
+$clientList = Read-Host "Enter client names comma separated. If a client contains comma, put it in single 'quotes'"
 
 # Create bucket for each client
 foreach ($client in $clientList) {
@@ -30,6 +24,7 @@ foreach ($client in $clientList) {
      }
 
      $data | Export-Csv -Path "bucket-info.csv" -NoTypeInformation -Append
+     $data
 
 }
 Stop-Transcript 
