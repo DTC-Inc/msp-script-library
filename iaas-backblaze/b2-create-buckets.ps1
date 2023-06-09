@@ -76,9 +76,9 @@ Stop-Transcript
 
      $bucketName = "$client-veeam-dtc"
      Write-Host "Creating bucket: $bucketName"
-     .\$rmmScriptPath\b2-windows.exe authorize-account $userApiKey $userApiSecret
-     .\$rmmScriptPath\b2-windows.exe create-bucket --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $bucketName "allPrivate" 
-     $keyOut = .\$rmmScriptPath\b2-windows.exe create-key $bucketName "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $bucketName
+     & "$rmmScriptPath\b2-windows.exe authorize-account" $userApiKey $userApiSecret
+     & "$rmmScriptPath\b2-windows.exe create-bucket" --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $bucketName "allPrivate" 
+     $keyOut = & "$rmmScriptPath\b2-windows.exe create-key" $bucketName "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $bucketName
      Write-Host $bucketName " " $keyOut
      $keyId, $keyApp = $keyOut -split '\s+'
      
