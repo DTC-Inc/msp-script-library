@@ -73,7 +73,7 @@ Stop-Transcript
          Write-Host "File already exists."
      }
 
-     $bucketName = "$client-veeam-dtc"
+     $bucketName = "veeam-dtc-$client"
      Write-Host "Creating bucket: $bucketName"
      & "$rmmScriptPath\b2-windows.exe" authorize-account $userApiKey $userApiSecret
      & "$rmmScriptPath\b2-windows.exe" create-bucket --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $bucketName "allPrivate" 
