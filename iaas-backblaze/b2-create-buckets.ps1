@@ -1,6 +1,6 @@
 # Please make sure that b2-windows.exe is in the script root. All logs and data exported is stored here.
 
-if (rmm -ne 1) {
+if ($rmm -ne 1) {
      Start-Transcript $psScriptRoot\backblaze-create-buckets.log
      $filePath = Join-Path -Path $psScriptRoot -ChildPath "backblaze-b2.exe"
 
