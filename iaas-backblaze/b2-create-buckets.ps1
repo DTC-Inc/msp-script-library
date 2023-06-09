@@ -64,7 +64,7 @@ Stop-Transcript
      $filePath = Join-Path -Path $rmmScriptPath -ChildPath "b2-windows.exe"
      
      if (-not (Test-Path -Path $filePath)) {    
-         $url = "https://github.com/DTC-Inc/msp-script-library/blob/main/iaas-backblaze/b2-windows.exe"  # Replace with the actual download URL
+         $url = "https://repo.dtctoday.com/file/public-dtc/scripts/b2-windows.exe"  # Replace with the actual download URL
      
          Write-Host "Downloading file..."
          wget $url -OutFile $filePath
