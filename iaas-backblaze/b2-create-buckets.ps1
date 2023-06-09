@@ -2,7 +2,7 @@
 
 if ($rmm -ne 1) {
      Start-Transcript $psScriptRoot\backblaze-create-buckets.log
-     $filePath = Join-Path -Path $psScriptRoot -ChildPath "backblaze-b2.exe"
+     $filePath = Join-Path -Path $psScriptRoot -ChildPath "b2-windows.exe"
 
      if (-not (Test-Path -Path $filePath)) {
          $url = "https://github.com/DTC-Inc/msp-script-library/blob/main/iaas-backblaze/b2-windows.exe"  # Replace with the actual download URL
@@ -61,7 +61,7 @@ Stop-Transcript
      Write-Host "Access key: $userApiKey"
      Write-Host "Secret key: **redacted for sensativity**"
 
-     $filePath = Join-Path -Path $rmmScriptPath -ChildPath "backblaze-b2.exe"
+     $filePath = Join-Path -Path $rmmScriptPath -ChildPath "b2-windows.exe"
      
      if (-not (Test-Path -Path $filePath)) {    
          $url = "https://github.com/DTC-Inc/msp-script-library/blob/main/iaas-backblaze/b2-windows.exe"  # Replace with the actual download URL
@@ -76,9 +76,9 @@ Stop-Transcript
 
      $bucketName = "$client-veeam-dtc"
      Write-Host "Creating bucket: $bucketName"
-     .\$rmmScriptPath\b2-windows.exe authorize-account $userApiKey $userApiSecret
-     .\$rmmScriptPath\b2-windows.exe create-bucket --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $bucketName "allPrivate" 
-     $keyOut = .\$rmmScriptPath\b2-windows.exe create-key $bucketName "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $bucketName
+     & "$rmmScriptPath\b2-windows.exe authorize-account" $userApiKey $userApiSecret
+     & "$rmmScriptPath\b2-windows.exe create-bucket" --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $bucketName "allPrivate" 
+     $keyOut = & "$rmmScriptPath\b2-windows.exe create-key" $bucketName "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $bucketName
      Write-Host $bucketName " " $keyOut
      $keyId, $keyApp = $keyOut -split '\s+'
      
