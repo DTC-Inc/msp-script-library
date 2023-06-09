@@ -30,6 +30,8 @@ Write-Host "Secret key: **redacted for sensativity**"
 Write-Host "S3 Endpoint: $endpoint"
 Write-Host "S3 Region ID: $regionId"
 Write-Host "S3 Bucket Name: $bucketName"
+Write-Host "Automatic volume letter to create WinLocal repo: "
+Write-Host "Drive letters to create WinLocal Repos: $driveLetters"
 
 
 # Make sure PSModulePath includes Veeam Console
@@ -75,27 +77,52 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
 
     # Find the drive with the largest total capacity
-    $largestDrive = $drives | Sort-Object -Property Size -Descending | Select-Object -First 1
+    if ($drives.Count -gt 1){ 
+        $filteredDrives = $drives | Where-Object { $_.DeviceId -ne 'C:' }
 
-    # Set the local repository details
-    $repositoryName = "Local $timeStamp"
-    $repositoryPath = Join-Path -Path $largestDrive.DeviceID -ChildPath "\veeam\$timeStamp"
+    } else {
+        $filteredDrives = $drives
+    }
 
     # Create the local repository
-    $repository = Add-VBRBackupRepository -Type WinLocal -Name $repositoryName -Folder $repositoryPath -Description "$description"
-
-    # Display the added repository details
-    $repository
-
-    # Move backups
-    $backups = Get-VBRBackup
-    $repository = Get-VBRBackupRepository -Name "Local $timeStamp"
-
-    Write-Host "moving all backups too Local $timeStamp"
-    if ($moveBackups -eq 1){ 
-        $backups | ForEach-Object {
-            Move-VBRBackup -Repository $repository -Backup $_ -RunAsync
-        }
+    $filteredDrives | ForEach-Object { 
+        $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
+        $repositoryPath = Join-Path -Path $_.DeviceID -ChildPath "\veeam\$timeStamp"
+        $repositoryName = "Local $timeStamp"
+        Write-Host "Repository name: $repositoryName"
+        Write-Host "Repository path: $repositoryPath"
+        $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $repositoryPath -Description "$description"
+        #  Display the added repository details
+        $repository
+        $localRepository = $repository
+        Start-Sleep -Seconds 1
     }
 }
+
+
+
+# Move all local backups
+if ($moveBackups){
+    $backups = Get-VBRBackup
+    $localRepository = Get-VBRBackupRepository | Where -Property Name -like "Local*" | Select -First 1
+    
+    Write-Host "moving all backups to $localRepository"
+    $backups | ForEach-Object {
+        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
+    }
+}
+
+# Move listed backups
+if ($moveListedBackups){ 
+    Write-Host "Moving $moveListedBackups to $localRepository."
+
+    $moveListedBackups | ForEach-Object {
+        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
+    }
+
+}
+
+# Move local/scale out repo to new repo
+
+
 Stop-Transcript
