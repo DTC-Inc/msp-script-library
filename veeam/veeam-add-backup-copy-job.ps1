@@ -29,7 +29,7 @@ $encryptionKey = Get-VBREncryptionKey | Sort ModificationDate -Descending | Sele
 $windowOption = New-VBRBackupWindowOptions -FromDay Monday -FromHour 06 -ToDay Saturday -ToHour 20
 $scheduleOption = New-VBRPeriodicallyOPtions -FullPeriod 1 -PeriodicallyKind Hours -PeriodicallySchedule $windowOption
 $storageOptions = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $encryptionKey -CompressionLevel Auto -EnableDataDeduplication -StorageOptimizationType Automatic
-$backupJobs = Get-VBRJob | Where -Property Type -ne "Backup Copy"
+$backupJobs = Get-VBRJob | Where -Property TypeToString -ne "Backup Copy"
 # $schedule = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $scheduleOption -EnableRetry -RetryCount 3 -RetryTimeout 30 -EnableBackupTerminationWindow -TerminationWindow $windowOption
 $schedule = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $scheduleOption -EnableRetry -RetryCount 3 -RetryTimeout 30
 
