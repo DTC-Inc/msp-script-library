@@ -108,7 +108,7 @@ if ($moveBackups){
     
     Write-Host "moving all backups to $localRepository"
     $backups | ForEach-Object {
-        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync
+        Move-VBRBackup -Repository $localRepository -Backup $_ -RunAsync -Force
     }
 }
 
