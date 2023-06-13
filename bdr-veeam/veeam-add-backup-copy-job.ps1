@@ -38,6 +38,8 @@ if ($rmm -ne 1) {
 
         }
 
+        $description = Read-Host "Please enter the ticket # and your initials. Its used as the description for the job"
+
         $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
     }
 } else { 
