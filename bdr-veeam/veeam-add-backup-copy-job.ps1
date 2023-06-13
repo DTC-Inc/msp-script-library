@@ -29,7 +29,6 @@ if ($rmm -ne 1) {
             $validInput = 1
 
         } elseif ($targetRepoType -eq 1) {
-            $targetRepository = Read-Host "Please enter the bucket name of the target repository"
             $validInput = 1
 
         } else {
@@ -38,20 +37,21 @@ if ($rmm -ne 1) {
 
         }
 
-        $description = Read-Host "Please enter the ticket # and your initials. Its used as the description for the job"
 
-        $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
     }
+    $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
+    $description = Read-Host "Please enter the ticket # and your initials. Its used as the description for the job"
+
+
 } else { 
     # ticketNumber from RMM is set to the description.
     # targetWinLocalRepository is the targetRepository if targetRepoType is 2.
     # targetRepoType is targetRepoType. 
     # RMMScript path is set as a 
     $logPath = "$rmmScriptPath\logs\veeam-add-backup-repo.log"
-    $targetRepository = Get-VBRBackupRepository | Where -Property Name -like "*$bucketName*"
     
-    if ($targetRepository -eq $null) {
-        Write-Host "There is no S3 Compatible Object Storage inputted, exiting."
+    if ($bucketName -eq $null) {
+        Write-Host "There is no bucket name inputted, exiting."
         Exit
     }
     
@@ -71,6 +71,9 @@ if ($targetRepoType -eq 1) {
         Write-Host "Existing S3 Copy Job exists. Exiting."
         Exit
     }   
+
+    $targetRepository = Get-VBRBackupRepository |Where -Property Type -eq AmazonS3Compatible
+
 
 } elseif ($targetRepoType -eq 2) {
     Write-Host "This script doesn't support WinLocal backup copy jobs yet."
