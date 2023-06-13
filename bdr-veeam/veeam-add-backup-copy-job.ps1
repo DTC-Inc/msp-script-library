@@ -50,11 +50,6 @@ if ($rmm -ne 1) {
     # RMMScript path is set as a 
     $logPath = "$rmmScriptPath\logs\veeam-add-backup-repo.log"
     
-    if ($bucketName -eq $null) {
-        Write-Host "There is no bucket name inputted, exiting."
-        Exit
-    }
-    
 
 }
 
@@ -106,5 +101,13 @@ Write-Host "Adding backup copy job for all backup jobs."
 $backupCopyJob = Add-VBRBackupCopyJob -BackupJob $backupJobs -ScheduleOptions $schedule  -Description "$description" -Mode periodic -Name "S3 Copy $timestamp" -ProcessLatestAvailablePoint -RetentionNumber 30 -RetentionType RestoreDays -StorageOptions $storageOptions -TargetRepository $targetRepository  -DirectOperation
 
 $backupCopyJob
+
+Write-Host "Upgrading all bakup job then re-enabling"
+
+# Upgrade VBR Backup Chain to True Per VM
+Get-VBRBackup |Where -Property TypeToString -eq "Hyper-V Backup" | Upgrade-VBRBackup
+
+# Enable all backup jobs
+Get-VBRJob | Where -Property TypeToString -eq "Hyper-V Backup" | Enable-VBRJob
 
 Stop-Transcript
