@@ -1,8 +1,5 @@
-# $targetRepository = Get-VBRBackupRepository | Out-GridView -Title "Select your backup copy target repository" -OutputMode Single
-#$encryptionKey = Get-VBREncryptionKey | Out-GridView -Title "Select the encryption key (use the one that's most recent or documented)" -OutputMode Single
-# $description = Read-Host "Enter the ticket # this change is associated with"\
-
-Start-Transcript -Path $env:WINDIR\logs\veeam-add-backup-copy-job.log
+# This script creates a backup copy job. So far this only supports creating only 1 job, and only 1 so it will exit if 1 exists. 
+# Only supports S3 Compatible Storage
 
 # Make sure PSModulePath includes Veeam Console
 Write-Host "Installing Veeam PowerShell Module if not installed already."
@@ -17,14 +14,71 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             }
  }
 
-
 # Get timestamp
 Write-Host "Getting timestamp."
 $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
 
-# Set variables
-Write-Host "Setting variables."
-$targetRepository = Get-VBRBackupRepository | Where -Property Description -like "*$bucketName*"
+# Getting input from user if not running from RMM else set variables from RMM.
+if ($rmm -ne 1) {
+    $validInput = 0
+    # Only running if S3 Copy Job is true for this part.
+    while ($validInput -ne 1) {
+        $targetRepoType = Read-Host "Enter the backup copy target repo type (S3 1, WinLocal 2)"
+        if ($targetRepoType -eq 2) { 
+            $targetRepository = Read-Host "Enter the target WinLocal repo name"
+            $validInput = 1
+
+        } elseif ($targetRepoType -eq 1) {
+            $targetRepository = Read-Host "Please enter the bucket name of the target repository"
+            $validInput = 1
+
+        } else {
+            Write-Host "Invalid input. Please enter 1 or 2."
+            $validInput = 0
+
+        }
+
+        $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
+    }
+} else { 
+    # ticketNumber from RMM is set to the description.
+    # targetWinLocalRepository is the targetRepository if targetRepoType is 2.
+    # targetRepoType is targetRepoType. 
+    # RMMScript path is set as a 
+    $logPath = "$rmmScriptPath\logs\veeam-add-backup-repo.log"
+    $targetRepository = Get-VBRBackupRepository | Where -Property Name -like "*$bucketName*"
+    
+    if ($targetRepository -eq $null) {
+        Write-Host "There is no S3 Compatible Object Storage inputted, exiting."
+        Exit
+    }
+    
+
+}
+
+
+Start-Transcript -Path $logPath
+
+if ($targetRepoType -eq 1) {
+    # Find existing backup copy jobs to S3 storage. This only supports S3 Compatible and not Amazon S3, Google, or Azure.
+    # We'll exit if one already exists.
+    $backupCopyTarget = Get-VBRBackupCopyJob | Select -Expand Target
+    $s3CompCopyJob = $backupCopyTarget | ForEach-Object {Get-VBRBackupRepository -Name $_ | Where -Property Type -eq AmazonS3Compatible}
+
+    if ($s3CompCopyJob) {
+        Write-Host "Existing S3 Copy Job exists. Exiting."
+        Exit
+    }   
+
+} elseif ($targetRepoType -eq 2) {
+    Write-Host "This script doesn't support WinLocal backup copy jobs yet."
+    Exit
+
+} else {
+    Write-Host "Target repo type doesn't contain valid input. Exiting"
+    Exit
+}
+
 $encryptionKey = Get-VBREncryptionKey | Sort ModificationDate -Descending | Select -First 1
 $windowOption = New-VBRBackupWindowOptions -FromDay Monday -FromHour 06 -ToDay Saturday -ToHour 20
 $scheduleOption = New-VBRPeriodicallyOPtions -FullPeriod 1 -PeriodicallyKind Hours -PeriodicallySchedule $windowOption
