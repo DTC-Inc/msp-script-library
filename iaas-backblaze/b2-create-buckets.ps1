@@ -56,6 +56,8 @@ Stop-Transcript
 } else {
      Start-Transcript -Path $rmmScriptPath\logs\backblaze-create-buckets.log
 
+     $client = $client -replace '\W','' -replace ' ','-' | ForEach-Object { $_.ToLower() }
+
      Write-Host "Bucket name: $client"
      Write-Host "RMM Script Path: $rmmScriptPath"
      Write-Host "Access key: $userApiKey"
