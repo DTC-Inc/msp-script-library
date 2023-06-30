@@ -15,7 +15,7 @@ Connect-ExchangeOnline
 Connect-AzureAd
 
 # Specify the path to save the CSV file
-$csvPath = "C:\HasMailbox.csv"
+$csvPath = "C:\Users\Public\HasMailbox.csv"
 
 # Get all user accounts in Exchange Online
 $users = Get-AzureAdUser -All:$true
@@ -26,6 +26,8 @@ $usersWithMailboxes = @()
 # Iterate through each user and check if they have an Exchange Online mailbox
 foreach ($user in $users) {
     $mailbox = Get-Mailbox -Identity $user.UserPrincipalName -ErrorAction SilentlyContinue
+    $membersFullAccess = Get-MailboxPermission -Identity $user.UserPrincipalName | Where -Property AccessRights -eq FullAccess | Where -Property User -ne "NT AUTHORITY\SELF"
+    $membersSendAs = Get-RecipientPermission -Identity $user.UserPincipalName | Where -Property AccessRights -eq SendAs | Where -Property Trustee -ne "NT AUTHORITY\SELF" | Where -Property Trustee -like "*@*"
 
     # If the mailbox is not found, add the user details to the array
     if ($mailbox) {
@@ -35,6 +37,10 @@ foreach ($user in $users) {
             DirectorySync = $user.DirectorySyncEnabled
             EmailAddress = $mailbox.PrimarySmtpAddress
             EmailAddresses = $mailbox.EmailAddresses
+            MembersSendOnBehalf = $MailBox.GrantSendOnBehalfTo -join ','
+            MembersFullAccess = $membersFullAccess.User -join ','
+            MembersSendAs = $membersSendAs.Trustee -join ','
+
         }
         $usersWithMailboxes += New-Object PSObject -Property $userDetails
     }
