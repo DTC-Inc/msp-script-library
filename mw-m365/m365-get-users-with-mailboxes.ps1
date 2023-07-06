@@ -26,18 +26,22 @@ $usersWithMailboxes = @()
 # Iterate through each user and check if they have an Exchange Online mailbox
 foreach ($user in $users) {
     $mailbox = Get-Mailbox -Identity $user.UserPrincipalName -ErrorAction SilentlyContinue
-    $membersFullAccess = Get-MailboxPermission -Identity $user.UserPrincipalName | Where -Property AccessRights -eq FullAccess | Where -Property User -ne "NT AUTHORITY\SELF"
-    $membersSendAs = Get-RecipientPermission -Identity $user.UserPincipalName | Where -Property AccessRights -eq SendAs | Where -Property Trustee -ne "NT AUTHORITY\SELF" | Where -Property Trustee -like "*@*"
+    if ($mailbox) {
+        $membersFullAccess = Get-MailboxPermission -Identity $mailbox.UserPrincipalName | Where -Property AccessRights -eq FullAccess | Where -Property User -ne "NT AUTHORITY\SELF"
+        $membersSendAs = Get-RecipientPermission -Identity $mailbox.UserPrincipalName | Where -Property AccessRights -eq SendAs | Where -Property Trustee -notlike "S-1-5*" | Where -Property Trustee -notlike "NT AUTHORITY\SELF"
+        $membersSendOnBehalf = Get-Mailbox -Identity $mailbox.UserPrincipalName | Select -ExpandProperty GrantSendOnBehalfTo | Get-Mailbox | Select -ExpandProperty UserPrincipalName
+    }
 
-    # If the mailbox is not found, add the user details to the array
+    # If the mailbox is found, add the user details to the array
     if ($mailbox) {
         $userDetails = @{
             DisplayName = $user.DisplayName
             UserPrincipalName = $user.UserPrincipalName
             DirectorySync = $user.DirectorySyncEnabled
+            Alias = $mailbox.Alias
             EmailAddress = $mailbox.PrimarySmtpAddress
             EmailAddresses = $mailbox.EmailAddresses
-            MembersSendOnBehalf = $MailBox.GrantSendOnBehalfTo -join ','
+            MembersSendOnBehalf = $membersSendOnBehalf -join ','
             MembersFullAccess = $membersFullAccess.User -join ','
             MembersSendAs = $membersSendAs.Trustee -join ','
 
@@ -57,3 +61,4 @@ Write-Host "Users with Exchange Online mailbox: $usersWithMailboxesCount"
 
 # Disconnect from Exchange Online
 Disconnect-ExchangeOnline
+Disconnect-AzureAd
