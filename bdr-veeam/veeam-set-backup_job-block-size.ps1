@@ -29,7 +29,7 @@ if ($rmm -ne 1) {
 Start-Transcript -Path $logPath
 
 # Set the desired block size (8 MB) in bytes
-$blockSizeBytes = 6
+$blockSizeBytes = 5
 
 # Get all backup jobs
 $backupJobs = Get-VBRJob
