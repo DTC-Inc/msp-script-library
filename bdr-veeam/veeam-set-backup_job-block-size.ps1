@@ -14,7 +14,6 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 # Getting input from user if not running from RMM else set variables from RMM.
 if ($rmm -ne 1) {
     $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
-    $description = Read-Host "Please enter the ticket # and your initials. Its used as the description for the job"
 
 
 } else { 
@@ -23,6 +22,7 @@ if ($rmm -ne 1) {
     # targetRepoType is targetRepoType. 
     # RMMScript path is set as a 
     $logPath = "$rmmScriptPath\logs\veeam-add-backup-repo.log"
+    Write-Host "Reference Ticket #$ticketNumber"
     
 }
 
