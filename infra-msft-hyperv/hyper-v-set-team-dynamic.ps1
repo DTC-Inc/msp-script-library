@@ -5,7 +5,7 @@ if ($rmm -ne 1) {
     while ($validInput -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make validInput = 1 whenever correct input is given.
-
+        $validInput = 1
     }
     $logPath = "$env:WINDIR\logs\hyper-v-set-team-dynamic.log"
     $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"

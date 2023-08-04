@@ -80,12 +80,11 @@ if ($targetRepoType -eq 1) {
 }
 
 $encryptionKey = Get-VBREncryptionKey | Sort ModificationDate -Descending | Select -First 1
-$windowOption = New-VBRBackupWindowOptions -FromDay Monday -FromHour 06 -ToDay Saturday -ToHour 20
-$scheduleOption = New-VBRPeriodicallyOPtions -FullPeriod 1 -PeriodicallyKind Days -PeriodicallySchedule $windowOption
+$daily = New-VBRDailyOptions -DayofWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday -Period 22:00
+$schedule = New-VBRScheduleOptions -Type Daily -DailyOptions $daily
 $storageOptions = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $encryptionKey -CompressionLevel Auto -EnableDataDeduplication -StorageOptimizationType Automatic
 $backupJobs = Get-VBRJob | Where -Property TypeToString -ne "Backup Copy"
 # $schedule = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $scheduleOption -EnableRetry -RetryCount 3 -RetryTimeout 30 -EnableBackupTerminationWindow -TerminationWindow $windowOption
-$schedule = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $scheduleOption -EnableRetry -RetryCount 3 -RetryTimeout 30
 
 Write-Host "The varialbes are now set."
 Write-Host "Repository target: $targetRepository"
