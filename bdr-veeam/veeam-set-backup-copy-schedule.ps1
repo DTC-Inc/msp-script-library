@@ -2,6 +2,10 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
+Write-Host $description
+Write-Host $rmmScriptPath
+Write-Host $rmm
+
 $scriptLogName = "veeam-set-backup-copy-schedule.log"
 
 if ($rmm -ne 1) {
@@ -44,7 +48,7 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 $daily = New-VBRDailyOptions -DayofWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday -Period 22:00
 $schedule = New-VBRScheduleOptions -Type Daily -DailyOptions $daily
 
-Get-VBRBackupCopyJOb | ForEach-Object { $_ | Set-VBRBackupCopyJob -ScheduleOptions $schedule  -Description "$description" -Mode Periodic}
+Get-VBRBackupCopyJOb | ForEach-Object { $_ | Set-VBRBackupCopyJob -ScheduleOptions $schedule  -Description "$description" -Mode Periodic; Write-Host "Changed $_.Name to Daily Schedule running at 10:00 PM." }
 
 
 
