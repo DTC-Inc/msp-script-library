@@ -1,7 +1,4 @@
 # Getting input from user if not running from RMM else set variables from RMM.
-
-$scriptLogName = "enter-your-script-log-name-here.log"
-
 if ($rmm -ne 1) {
     $validInput = 0
     # Only running if S3 Copy Job is true for this part.
@@ -10,13 +7,13 @@ if ($rmm -ne 1) {
         # Remember to make validInput = 1 whenever correct input is given.
 
     }
-    $logPath = "$env:WINDIR\logs\$scriptLogName"
+    $logPath = "$env:WINDIR\logs\hyper-v-set-team-dynamic.log"
     $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
 
 
 } else { 
     # Store the logs in the rmmScriptPath
-    $logPath = "$rmmScriptPath\logs\$scriptLogName"
+    $logPath = "$rmmScriptPath\logs\hyper-v-set-team-dynamic.log"
     
 
 }
@@ -24,5 +21,8 @@ if ($rmm -ne 1) {
 Start-Transcript -Path $logPath
 
 Write-Host "This script is being run for $description"
+
+Get-VMSwitchTeam | Where -Property TeamingMode -eq "SwitchIndependent" | Select -Expand Name | ForEach-Object { Set-VMSwitchTeam -LoadBalancingAlgorithm Dynamic -Name $_; Write-Host "Setting VM Switch $_ to Dynamic" }
+
 
 Stop-Transcript
