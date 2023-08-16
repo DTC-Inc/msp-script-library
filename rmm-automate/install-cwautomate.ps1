@@ -1,3 +1,5 @@
+# This script requires PowerShell 7 or newer.
+
 Start-Transcript 
 
 # Detect interactive script or not.
