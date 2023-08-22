@@ -8,5 +8,5 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             }
  }
 
-$backupRepo = $backupRepo = Get-VBRBackupRepository |Where -Property Type -like "AmazonS3*"
+$backupRepo = Get-VBRBackupRepository | Where -Property Type -like "AmazonS3*"
 $backupRepo.DisableImmutability()
