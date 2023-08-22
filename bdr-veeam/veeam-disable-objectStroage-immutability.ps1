@@ -46,3 +46,5 @@ $backupRepo = $backupRepo = Get-VBRBackupRepository |Where -Property Type -like 
 $backupRepo.DisableImmutability()
 
 Stop-Transcript
+$backupRepo = Get-VBRBackupRepository | Where -Property Type -like "AmazonS3*"
+$backupRepo.DisableImmutability()
