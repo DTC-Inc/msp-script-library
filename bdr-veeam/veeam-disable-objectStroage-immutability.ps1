@@ -10,7 +10,7 @@ $scriptLogName = "veeam-disable-objectStorage-immutability.log"
 
 if ($rmm -ne 1) {
     $validInput = 0
-    # Only running if S3 Copy Job is true for this part.
+    # Only run if we receive valid input
     while ($validInput -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make validInput = 1 whenever correct input is given.
