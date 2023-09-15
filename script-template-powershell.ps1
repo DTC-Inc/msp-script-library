@@ -1,9 +1,5 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-Write-Host $description
-Write-Host $rmmScriptPath
-Write-Host $rmm
-
 $scriptLogName = "Put the log file name here."
 
 if ($rmm -ne 1) {
@@ -24,6 +20,9 @@ if ($rmm -ne 1) {
 } else { 
     # Store the logs in the rmmScriptPath
     $logPath = "$rmmScriptPath\logs\$scriptLogName"
+    Write-Host $description
+    Write-Host $rmmScriptPath
+    Write-Host $rmm
 
     if ($description -eq $null) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
