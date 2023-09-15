@@ -45,7 +45,7 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
  }
 
 
-$daily = New-VBRDailyOptions -DayofWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday -Period 20:00
+$daily = New-VBRDailyOptions -DayofWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday -Period 22:00
 $schedule = New-VBRScheduleOptions -Type Daily -DailyOptions $daily
 
 Get-VBRBackupCopyJOb | ForEach-Object { $_ | Set-VBRBackupCopyJob -ScheduleOptions $schedule  -Description "$description" -Mode Periodic; Write-Host "Changed $_ to Daily Schedule running at 10:00 PM." }
