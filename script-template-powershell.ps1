@@ -13,10 +13,13 @@ if ($rmm -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make validInput = 1 whenever correct input is given.
         $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
-        $validInput = 1
+        if ($description) {
+            $validInput = 1
+        } else {
+            Write-Host "Invalid input. Please try again."
+        }
     }
     $logPath = "$env:WINDIR\logs\$scriptLogName"
-
 
 } else { 
     # Store the logs in the rmmScriptPath
