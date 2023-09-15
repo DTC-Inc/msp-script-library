@@ -20,14 +20,16 @@ if ($rmm -ne 1) {
 } else { 
     # Store the logs in the rmmScriptPath
     $logPath = "$rmmScriptPath\logs\$scriptLogName"
-    Write-Host $description
-    Write-Host $rmmScriptPath
-    Write-Host $rmm
 
     if ($description -eq $null) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
         $description = "No description"
     }   
+
+    Write-Host $description
+    Write-Host $rmmScriptPath
+    Write-Host $rmm
+    
 }
 
 Start-Transcript -Path $logPath
