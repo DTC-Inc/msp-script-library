@@ -44,13 +44,15 @@ $installed = Get-WmiObject -Class Win32_Product | Where -Property Name -like *Sc
 
 if ($installed) {
     Write-Host "ConnectWise Control (ScreenConnect) is installed so we're uninstalling."
-    try {
-        $installed.Uninstall()
-    }
-    catch {
-            Write-Host "An error has occured that coult not be resolved."
+    $installed | ForEach-Object {
+        try {
+            $_.Uninstall()
+        }
+        catch {
+               Write-Host "An error has occured that coult not be resolved."
 
-    }    
+        }    
+    }
 }
 
 # Check if application is still installed. 
