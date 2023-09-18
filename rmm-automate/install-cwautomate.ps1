@@ -32,7 +32,7 @@ if ($password) {
 }
 
 
-$computers | ForEach-Object -Parallel {
+$computers | ForEach-Object {
     $computerName = $_.Name
     Write-Output "Running on $computername."
     $ping = Test-Connection -Count 1 -ComputerName $computerName -Quiet
@@ -53,7 +53,7 @@ $computers | ForEach-Object -Parallel {
                 Invoke-Expression (New-Object Net.WebClient).DownloadString('https://raw.githubusercontent.com/Get-Nerdio/NMM/main/scripted-actions/modules/CMSP_Automate-Module.psm1');
                 Install-Automate -Server $server -LocationID $locationid -Token $token -Transcript
             }
-        } -ArgumentList $using:server,$using:token,$using:locationid
+        } -ArgumentList $server,$token,$locationid
     } else {
         #Will display results in powershell window
         Write-Output "Could not connect to $computername"
