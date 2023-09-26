@@ -34,7 +34,7 @@ Write-Host "This script is being run for $description"
 
 Write-Host "Disabling UAC"
 
-$result = Set-ItemProperty -Path REGISTRY::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System -Name ConsentPromptBehaviorAdmin -Value 0
+$result = Set-ItemProperty -Path REGISTRY::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System -Name EnableLUA -Value 0
 
 Write-Host "$result"
 
