@@ -47,3 +47,5 @@ cmdkey /list | ForEach-Object {
 }
 
 Write-Host "Credentials for $targetToDelete removed from Credential Manager."
+
+pause
