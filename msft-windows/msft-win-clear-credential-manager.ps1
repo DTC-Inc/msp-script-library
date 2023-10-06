@@ -1,3 +1,5 @@
+# This script must be run in the user context of the user with saved credentials you want to delete. It does not work being run by SYSTEM.
+
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $scriptLogName = "msft-win-clear-credential-manager.log"
