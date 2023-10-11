@@ -45,7 +45,7 @@ Write-Host "This script is being run for $description"
 Write-Host "NinjaRMM download url $ninjaDownloadUrl"
 
 # Download NinjaRMM
-wget $env:WINDIR\temp\ninjarmm.msi
+wget $ninjaDownloadUrl -OutFile $env:WINDIR\temp\ninjarmm.msi
 
 # Install NinjaRMM
 msiexec /i "$env:WINDIR\temp\ninjarmm.msi" /quiet /norestart
