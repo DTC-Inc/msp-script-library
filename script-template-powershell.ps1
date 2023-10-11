@@ -26,14 +26,12 @@ if ($rmm -ne 1) {
         $description = "No description"
     }   
 
-    Write-Host $description
-    Write-Host $rmmScriptPath
-    Write-Host $rmm
+    Write-Host "Description: $description"
+    Write-Host "RMM Script Path: $rmmScriptPath"
+    Write-Host "RMM: $rmm"
     
 }
 
 Start-Transcript -Path $logPath
-
-Write-Host "This script is being run for $description"
 
 Stop-Transcript

@@ -40,9 +40,9 @@ if ($rmm -ne 1) {
         Exit
     }
 
-    Write-Host $description
-    Write-Host $rmmScriptPath
-    Write-Host $rmm
+    Write-Host "Description: $description"
+    Write-Host "RMM Script Path: $rmmScriptPath"
+    Write-Host "RMM: $rmm"
     
 }
 
