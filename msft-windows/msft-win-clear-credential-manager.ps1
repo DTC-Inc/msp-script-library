@@ -1,6 +1,8 @@
+# This script must be run in the user context of the user with saved credentials you want to delete. It does not work being run by SYSTEM.
+
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$scriptLogName = "Put the log file name here."
+$scriptLogName = "msft-win-clear-credential-manager.log"
 
 if ($rmm -ne 1) {
     $validInput = 0
@@ -33,23 +35,17 @@ if ($rmm -ne 1) {
     
 }
 
-Start-Transcript -Path $logPath
-
 Write-Host "This script is being run for $description."
 Write-Host "Deleting $targetToDelete."
 
 # Clear Windows Credential Manager for the specified target
 cmdkey /list | ForEach-Object {
-    if ($_ -match "Target: (.+)$") {
-        $target = $matches[1]
-        if ($target -eq $targetToDelete) {
-            Write-Host "Removing credentials for $targetToDelete"
-            cmdkey /delete:$targetToDelete
-        }
+    if ($_ -like "*$targetToDelete*") {
+        Write-Host "Removing credentials for $targetToDelete"
+        cmdkey /delete:$targetToDelete
     }
 }
 
 Write-Host "Credentials for $targetToDelete removed from Credential Manager."
 
-
-Stop-Transcript
+pause
