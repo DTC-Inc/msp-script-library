@@ -33,6 +33,13 @@ if ($rmm -ne 1) {
         $description = "No description"
     }   
 
+    if ($ninjaDownloadUrl) {
+        Write-Host "NinjaRMM download url is $ninjaDownloadUrl"
+    } else {
+        Write-Host "NinjaRMM download url is blank. Exiting."
+        Exit
+    }
+
     Write-Host $description
     Write-Host $rmmScriptPath
     Write-Host $rmm
@@ -40,9 +47,6 @@ if ($rmm -ne 1) {
 }
 
 Start-Transcript -Path $logPath
-
-Write-Host "This script is being run for $description"
-Write-Host "NinjaRMM download url $ninjaDownloadUrl"
 
 # Download NinjaRMM
 wget $ninjaDownloadUrl -OutFile $env:WINDIR\temp\ninjarmm.msi
