@@ -1,6 +1,6 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$scriptLogName = "Put the log file name here."
+$scriptLogName = "uninstall-acrobat.log"
 
 if ($rmm -ne 1) {
     $validInput = 0
