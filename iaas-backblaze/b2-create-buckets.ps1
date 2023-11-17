@@ -1,5 +1,16 @@
 # Please make sure that b2-windows.exe is in the script root. All logs and data exported is stored here.
 
+# This script only works with interactive input. It does not support RMM.
+
+# global variables
+$lifecycleRules = @'
+[{
+     "daysFromHidingToDeleting": 1,
+     "daysFromUploadingToHiding": null,
+     "fileNamePrefix": ""
+}]
+'@
+
 if ($rmm -ne 1) {
      Start-Transcript $psScriptRoot\backblaze-create-buckets.log
      $filePath = Join-Path -Path $psScriptRoot -ChildPath "b2-windows.exe"
@@ -38,8 +49,8 @@ if ($rmm -ne 1) {
      # Create bucket for each client
      foreach ($client in $clientList) {
           Write-Host "Creating bucket: $client"
-          .\$psScriptRoot\b2-windows.exe authorize-account $userApiKey $userApiSecret
-          .\$psScriptRoot\b2-windows.exe create-bucket --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $client "allPrivate" 
+          & $psScriptRoot\b2-windows.exe authorize-account $userApiKey $userApiSecret
+          & $psScriptRoot\b2-windows.exe create-bucket --defaultServerSideEncryptionAlgorithm "AES256" --defaultServerSideEncryption "SSE-B2" --fileLockEnabled $client "allPrivate" --lifecycleRules $lifecycleRules
           $keyOut = .\b2-windows.exe create-key $client "listAllBucketNames,listBuckets,readBuckets,readBucketEncryption,writeBucketEncryption, readBucketRetentions,writeBucketRetentions,listFiles,readFiles,shareFiles,writeFiles, deleteFiles,readFileLegalHolds,writeFileLegalHolds,readFileRetentions,writeFileRetentions,bypassGovernance" --bucket $client
           Write-Host $client " " $keyOut
           $keyId, $keyApp = $keyOut -split '\s+'
