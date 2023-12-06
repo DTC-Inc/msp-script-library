@@ -1,6 +1,6 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$scriptLogName = "Put the log file name here."
+$scriptLogName = "disable-dentrix-update-service.log"
 
 if ($rmm -ne 1) {
     $validInput = 0
@@ -19,27 +19,38 @@ if ($rmm -ne 1) {
 
 } else { 
     # Store the logs in the rmmScriptPath
-    if ($rmmScriptPath -ne $null) {
-        $logPath = "$rmmScriptPath\logs\$scriptLogName"
-        
-    } else {
-        $logPath = "$env:WINDIR\logs\$scriptLogName"
-        
-    }
+    $logPath = "$rmmScriptPath\logs\$scriptLogName"
 
     if ($description -eq $null) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
         $description = "No description"
     }   
-
-
     
 }
 
 Start-Transcript -Path $logPath
+    Write-Host "Description: $description"
+    Write-Host "Log path: $logPath"
+    Write-Host "RMM: $rmm"
+    
+    # Specify the name of the service you want to disable
+    $serviceName = "DtxUpdaterSrv"
 
-Write-Host "Description: $description"
-Write-Host "Log path: $logPath"
-Write-Host "RMM: $rmm"
+    # Check if the service exists
+    if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+        # Stop the service if it's running
+        if (Get-Service -Name $serviceName | Where-Object { $_.Status -eq 'Running' }) {
+            Stop-Service -Name $serviceName
+            Write-Host "Service '$serviceName' stopped successfully."
+        }
+
+        # Disable the service
+        Set-Service -Name $serviceName -StartupType Disabled
+        Write-Host "Service '$serviceName' disabled successfully."
+    } else {
+        # Exit if the service doesn't exist
+        Write-Host "Service '$serviceName' not found. Exiting script."
+        exit
+    }
 
 Stop-Transcript
