@@ -54,7 +54,7 @@ $configXml.ConnectionSettings.DatabaseConnection.Database = "opendental"
 $configXml.ConnectionSettings.DatabaseConnection.User = "root"
 $configXml.ConnectionSettings.DatabaseConnection.Password = ""
 $configXml.ConnectionSettings.DatabaseConnection.MySQLPassHash = "$passwordHash"
-$configXml.ConnectionSettings.DatabaseConnection.NoShowOnStartup = "False"
+$configXml.ConnectionSettings.DatabaseConnection.NoShowOnStartup = "True"
 
 # Modify other fields
 $configXml.ConnectionSettings.DatabaseType = "SqlServer"
