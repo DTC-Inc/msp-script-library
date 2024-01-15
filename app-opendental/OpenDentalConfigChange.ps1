@@ -48,17 +48,29 @@ $configFilePath = "C:\Program Files (x86)\Open Dental\FreeDentalConfig.xml"
 # Load the XML content from the file
 [xml]$configXml = Get-Content $configFilePath
 
-# Modify the fields under <ConnectionSettings>
-$configXml.ConnectionSettings.DatabaseConnection.ComputerName = "$serverFQDN"
-$configXml.ConnectionSettings.DatabaseConnection.Database = "opendental"
-$configXml.ConnectionSettings.DatabaseConnection.User = "root"
-$configXml.ConnectionSettings.DatabaseConnection.Password = ""
-$configXml.ConnectionSettings.DatabaseConnection.MySQLPassHash = "$passwordHash"
-$configXml.ConnectionSettings.DatabaseConnection.NoShowOnStartup = "True"
+if ($middleTierURI) {
+    # Middle Tier config
+    $configXml.ConnectionSettings.ServerConnection.URI = "$middleTierURI"
+    $configXml.ConnectionSettings.ServerConnection.UsingEcw = "False"
+    $configXml.ConnectionSettings.DatabaseType = "MySQL"
+    $configXml.ConnectionSettings.UseDynamicMode = "False"
+    
+} else {
+    # Modify the fields under <ConnectionSettings>
+    $configXml.ConnectionSettings.DatabaseConnection.ComputerName = "$serverFQDN"
+    $configXml.ConnectionSettings.DatabaseConnection.Database = "opendental"
+    $configXml.ConnectionSettings.DatabaseConnection.User = "root"
+    $configXml.ConnectionSettings.DatabaseConnection.Password = ""
+    $configXml.ConnectionSettings.DatabaseConnection.MySQLPassHash = "$passwordHash"
+    $configXml.ConnectionSettings.DatabaseConnection.NoShowOnStartup = "True"
+    
+    # Modify other fields
+    $configXml.ConnectionSettings.DatabaseType = "SqlServer"
+    $configXml.ConnectionSettings.UseDynamicMode = "True"
+    
+}
 
-# Modify other fields
-$configXml.ConnectionSettings.DatabaseType = "SqlServer"
-$configXml.ConnectionSettings.UseDynamicMode = "True"
+
 
 # Save the modified XML back to the file
 $configXml.Save($configFilePath)
