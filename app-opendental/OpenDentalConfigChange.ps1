@@ -62,7 +62,7 @@ if ($middleTierURI) {
     $node2ServerConnection.UsingEcw = "False"
     $root.DatabaseType = "MySQL"
     $root.UseDynamicMode = "False"
-    $root.RemoveChild(DatabaseConnection)
+    # $root.RemoveChild(DatabaseConnection)
     
 } else {
     # Modify the fields under <ConnectionSettings>
