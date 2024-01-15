@@ -45,16 +45,24 @@ Write-Host "RMM: $rmm"
 # Define the path to the configuration file
 $configFilePath = "C:\Program Files (x86)\Open Dental\FreeDentalConfig.xml"
 
-# Load the XML content from the file
-[xml]$configXml = Get-Content $configFilePath
+# OpenDental FreeDentalConfig.xml xml object
+$xml = New-Object System.Xml.XmlDocument
+$root = $xml.CreateElement("ConnectionSettings")
+$xml.AppendChild($root)
+
+# Direct database config
+$node1DatabaseConnection = $xml.CreateElement("DatabaseConnection")
+
+# Application server config
+$node2ServerConnection = $xml.CreateElement.("ServerConnection")
 
 if ($middleTierURI) {
     # Middle Tier config
-    $configXml.ConnectionSettings.ServerConnection.URI = "$middleTierURI"
-    $configXml.ConnectionSettings.ServerConnection.UsingEcw = "False"
-    $configXml.ConnectionSettings.DatabaseType = "MySQL"
-    $configXml.ConnectionSettings.UseDynamicMode = "False"
-    $configXml.ConnectionSettings.RemoveChild(DatabaseConnection)
+    $node2ServerConnection.URI = "$middleTierURI"
+    $node2ServerConnection.UsingEcw = "False"
+    $root.DatabaseType = "MySQL"
+    $root.UseDynamicMode = "False"
+    $root.RemoveChild(DatabaseConnection)
     
 } else {
     # Modify the fields under <ConnectionSettings>
