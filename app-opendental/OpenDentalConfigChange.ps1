@@ -54,6 +54,7 @@ if ($middleTierURI) {
     $configXml.ConnectionSettings.ServerConnection.UsingEcw = "False"
     $configXml.ConnectionSettings.DatabaseType = "MySQL"
     $configXml.ConnectionSettings.UseDynamicMode = "False"
+    $configXml.ConnectionSettings.RemoveChild(DatabaseConnection)
     
 } else {
     # Modify the fields under <ConnectionSettings>
