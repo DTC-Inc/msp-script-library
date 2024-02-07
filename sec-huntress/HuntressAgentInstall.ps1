@@ -1,14 +1,3 @@
-# Optional command line params, this has to be the first line in the script.
-param (
-  [string]$acctkey,
-  [string]$orgkey,
-  [string]$tags,
-  [switch]$reregister,
-  [switch]$reinstall,
-  [switch]$uninstall, 
-  [switch]$repair
-)
-
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "HuntressAgentInstall.log"
@@ -34,7 +23,7 @@ if ($RMM -ne 1) {
 
 } else { 
     # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    if ($null -ne $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
         
     } else {
@@ -56,6 +45,11 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
+
+# Huntress specific log output
+
+Write-Host "Organization Key: " $OrganizationKey
+Write-Host "Tag: " $TagKey
 
 # Copyright (c) 2023 Huntress Labs, Inc.
 # All rights reserved.
