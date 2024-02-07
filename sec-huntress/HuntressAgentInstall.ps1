@@ -1,3 +1,14 @@
+# Optional command line params, this has to be the first line in the script.
+param (
+  [string]$acctkey,
+  [string]$orgkey,
+  [string]$tags,
+  [switch]$reregister,
+  [switch]$reinstall,
+  [switch]$uninstall, 
+  [switch]$repair
+)
+
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "HuntressAgentInstall.log"
@@ -74,17 +85,6 @@ Write-Host "RMM: $RMM"
 #
 # example:
 # powershell -executionpolicy bypass -f ./InstallHuntress.powershellv2.ps1 -acctkey "0b8a694b2eb7b642069" -orgkey "Buzzword Company Name" -tags "production,US West" 
-
-# Optional command line params, this has to be the first line in the script.
-param (
-  [string]$acctkey,
-  [string]$orgkey,
-  [string]$tags,
-  [switch]$reregister,
-  [switch]$reinstall,
-  [switch]$uninstall, 
-  [switch]$repair
-)
 
 
 ##############################################################################
