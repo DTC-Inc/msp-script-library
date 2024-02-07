@@ -46,11 +46,6 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 
-# Huntress specific log output
-
-Write-Host "Organization Key: " $OrganizationKey
-Write-Host "Tag: " $TagKey
-
 # Copyright (c) 2023 Huntress Labs, Inc.
 # All rights reserved.
 #
