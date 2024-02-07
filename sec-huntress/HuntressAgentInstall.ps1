@@ -1,6 +1,6 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "Put the log file name here."
+$ScriptLogName = "HuntressAgentInstall.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -23,7 +23,7 @@ if ($RMM -ne 1) {
 
 } else { 
     # Store the logs in the RMMScriptPath
-    if ($RMMScriptPath -ne $null) {
+    if ($null -eq $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
         
     } else {

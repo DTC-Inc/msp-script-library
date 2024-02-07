@@ -19,7 +19,7 @@ if ($rmm -ne 1) {
 
 } else { 
     # Store the logs in the rmmScriptPath
-    if ($rmmScriptPath -ne $null) {
+    if ($null -eq $RMMScriptPath) {
         $logPath = "$rmmScriptPath\logs\$scriptLogName"
         
     } else {
@@ -27,7 +27,7 @@ if ($rmm -ne 1) {
         
     }
 
-    if ($description -eq $null) {
+    if ($null -eq $Description) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
         $description = "No description"
     }   
