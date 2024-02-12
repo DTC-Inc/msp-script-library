@@ -42,7 +42,7 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 
-Stop-Process -Name SDWINCS.exe -Force -Confirm $False
+Stop-Process -Name SDWINCS.exe -Force
 
 
 Stop-Transcript
