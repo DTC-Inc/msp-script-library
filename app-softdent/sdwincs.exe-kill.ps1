@@ -42,7 +42,7 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 
-Get-Process | Where $_.Name -like "SDWINCS" | Stop-Process -Name $_.Name -Force
+Stop-Process -Name "SDWINCS" -Force 
 
 
 Stop-Transcript
