@@ -19,7 +19,7 @@ if ($RMM -ne 1) {
 
 } else { 
     # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    if ($null -ne $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
         
     } else {
