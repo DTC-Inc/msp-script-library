@@ -1,6 +1,6 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "EnterLogNameHere.log"
+$ScriptLogName = "sdwincs.exe-kill.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -41,5 +41,8 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
+
+Stop-Process -Name SDWINCS.exe -Force -Confirm $False
+
 
 Stop-Transcript
