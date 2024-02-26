@@ -50,7 +50,7 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 # Set Timestamp
 Write-Host "Getting timestamp for repository names."
 $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
-$folderName = $timeStamp
+# REMOVED TO MAKE FOLDERNAME LOCATION GUID $folderName = $timeStamp
 
 
 if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
