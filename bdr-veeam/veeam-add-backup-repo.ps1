@@ -102,7 +102,7 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 
 
 # Move all local backups
-if ($moveBackups){
+if ($moveBackups -eq 1){
     $backups = Get-VBRBackup | Where -Property TypeToString -ne "Backup Copy"
     $localRepository = Get-VBRBackupRepository | Where -Property Name -like "Local*" | Select -First 1 | Select -Expand Name
     
