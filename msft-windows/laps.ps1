@@ -73,14 +73,6 @@ try {
     $isAzureADJoined = $False
 
 }
-$guids = $subKey.GetSubKeyNames()
-foreach($guid in $guids) {
-
-    $guidSubKey = $subKey.OpenSubKey($guid);
-    $tenantId = $guidSubKey.GetValue("TenantId");
-    $userEmail = $guidSubKey.GetValue("UserEmail");
-}
-
 
 # Function to generate a random password
 function Generate-RandomPassword {
