@@ -45,7 +45,7 @@ Write-Output "RMM: $RMM"
 Write-Output "Downloading universal automate installer."
 
 try {
-    wget $AutomateUninstaller -OutFile $ENV:WINDIR\TEMP\Agent_Uninstall.exe -ErrorAction Stop
+    wget $AutomateUninstaller -OutFile $ENV:WINDIR\TEMP\Agent_Uninstall.exe
     Write-Output "Download successful."
 } catch {
     Write-Output "Error downloading: $_"
