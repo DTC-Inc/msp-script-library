@@ -46,6 +46,12 @@ Write-Host "RMM: $RMM"
 $os = Get-WmiObject -Class Win32_OperatingSystem
 $isDomainController = $os.Roles -contains "Domain Controller"
 
+# Exit if domain controller
+if ($isDomainController) {
+    Write-Output "Endpoint is a domain controller. Exiting."
+    Exit 0
+}
+
 # Checking if Azure AD Joined
 try {
     $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
