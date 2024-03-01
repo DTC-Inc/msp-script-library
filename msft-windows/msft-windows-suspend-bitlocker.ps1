@@ -58,10 +58,11 @@ function Suspend-AllBitLocker {
         } else {
             Write-Output "No BitLocker encrypted volumes found."
         }
+        Exit 0
     }
     catch {
         Write-Error "An error occurred: $_"
-        exit 2
+        exit 1
     }
 }
 
