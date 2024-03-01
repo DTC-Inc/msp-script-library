@@ -65,11 +65,11 @@ try {
         }
 
     } catch {
-        Write-Output "Computer is not Azure AD Joined."
+        Write-Output "Computer is not Azure AD Joined or there was an error."
         $isAzureADJoined = $False
     }   
 } catch {
-    Write-Output "Computer is not Azure AD joined."
+    Write-Output "Computer is not Azure AD joined or than was an error."
     $isAzureADJoined = $False
 
 }
