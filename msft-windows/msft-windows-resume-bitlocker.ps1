@@ -49,9 +49,12 @@ function Resume-AllBitLocker {
         $suspendedBitLockerVolumes = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'Off' }
 
         if ($suspendedBitLockerVolumes.Count -gt 0) {
-            $bitlockerVolumes | Resume-Bitlocker
-            $bitLockerVolumes | Where VolumeType -ne "OperatingSystem" | Enable-BitlockerAutoUnlock
+            foreach ($volume in $suspendedBitLockerVolumes) {
+                # Resume BitLocker encryption
+                Resume-BitLocker -MountPoint $volume.MountPoint -Verbose
 
+                Write-Output "BitLocker encryption on volume $($volume.MountPoint) has been resumed."
+            }
         } else {
             Write-Output "No BitLocker encrypted volumes with suspended encryption found."
         }
