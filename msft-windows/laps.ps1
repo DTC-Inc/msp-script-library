@@ -42,11 +42,11 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 
-# Check if the computer is a domain controller
-if ((Get-WmiObject -Class Win32_OperatingSystem).Roles -contains "Domain Controller") {
-    Write-Output "This computer is a domain controller. Skipping script execution."
-    Exit
-}
+# Check if the computer is a domain controller or Azure AD joined
+$os = Get-WmiObject -Class Win32_OperatingSystem
+$isDomainController = $os.Roles -contains "Domain Controller"
+$isAzureADJoined = Get-WmiObject -Namespace "root\cimv2\mdm\dmmap" -Class MDM_JoinedDevice | Where-Object { $_.DeviceId -ne $null }
+
 
 # Function to generate a random password
 function Generate-RandomPassword {
@@ -106,11 +106,20 @@ if (-not (Test-ComputerSecureChannel)) {
     # Set password for built-in administrator
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
+    Write-Output "Password set for built-in administrator."
+}
+
+if ($ifAzureAdJoined) { 
+        # Set password for built-in administrator
+        $adminUsername = "Administrator"
+        net user $adminUsername $password > $null  # Redirect output to suppress password display
+        Write-Output "Password set for built-in administrator."
+
 }
 
 
 # Display a message about password setting completion
-Write-Output "Password set for user $localUser and built-in administrator."
+Write-Output "Password set for user $localUser."
 
 # You can uncomment the next line if you want to log the generated password for your reference
 # Write-Output "Generated Password: $password"
