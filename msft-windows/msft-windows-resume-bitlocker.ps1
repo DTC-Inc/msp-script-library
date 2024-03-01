@@ -46,7 +46,7 @@ Write-Host "RMM: $RMM"
 function Resume-AllBitLocker {
     try {
         # Get all BitLocker volumes where BitLocker is suspended
-        $suspendedBitLockerVolumes = Get-BitLockerVolume | Where-Object { $_.VolumeStatus -eq 'AutoUnlock' }
+        $suspendedBitLockerVolumes = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'Off' }
 
         if ($suspendedBitLockerVolumes.Count -gt 0) {
             $bitlockerVolumes | Resume-Bitlocker
