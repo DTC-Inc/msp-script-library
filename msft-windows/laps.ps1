@@ -45,7 +45,17 @@ Write-Host "RMM: $RMM"
 # Check if the computer is a domain controller or Azure AD joined
 $os = Get-WmiObject -Class Win32_OperatingSystem
 $isDomainController = $os.Roles -contains "Domain Controller"
-$isAzureADJoined = Get-WmiObject -Namespace "root\cimv2\mdm\dmmap" -Class MDM_JoinedDevice | Where-Object { $_.DeviceId -ne $null }
+
+# Checking if Azure AD Joined
+$subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+
+$guids = $subKey.GetSubKeyNames()
+foreach($guid in $guids) {
+
+    $guidSubKey = $subKey.OpenSubKey($guid);
+    $tenantId = $guidSubKey.GetValue("TenantId");
+    $userEmail = $guidSubKey.GetValue("UserEmail");
+}
 
 
 # Function to generate a random password
@@ -109,7 +119,7 @@ if (-not (Test-ComputerSecureChannel)) {
     Write-Output "Password set for built-in administrator."
 }
 
-if ($ifAzureAdJoined) { 
+if ($tenantId) { 
         # Set password for built-in administrator
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
