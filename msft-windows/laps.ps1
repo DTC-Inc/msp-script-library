@@ -47,8 +47,32 @@ $os = Get-WmiObject -Class Win32_OperatingSystem
 $isDomainController = $os.Roles -contains "Domain Controller"
 
 # Checking if Azure AD Joined
-$subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+try {
+    $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+    
+    try {
+        foreach($guid in $guids) {
+            $guidSubKey = $subKey.OpenSubKey($guid);
+            $tenantId = $guidSubKey.GetValue("TenantId");
+            $userEmail = $guidSubKey.GetValue("UserEmail");
+        }
 
+        Write-Output "$tenantId $userEmail"
+        if ($teantId) { 
+            $isAzureADJoined = $True
+        } else {
+            $isAzureADJoined = $False
+        }
+
+    } catch {
+        Write-Output "Computer is not Azure AD Joined."
+        $isAzureADJoined = $False
+    }   
+} catch {
+    Write-Output "Computer is not Azure AD joined."
+    $isAzureADJoined = $False
+
+}
 $guids = $subKey.GetSubKeyNames()
 foreach($guid in $guids) {
 
@@ -119,7 +143,7 @@ if (-not (Test-ComputerSecureChannel)) {
     Write-Output "Password set for built-in administrator."
 }
 
-if ($tenantId) { 
+if ($isAzureADJoined) { 
         # Set password for built-in administrator
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
