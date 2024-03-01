@@ -48,13 +48,13 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
  }
 
 # Set Timestamp
-Write-Host "Getting timestamp for repository names."
-$timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
+# Write-Host "Getting timestamp for repository names."
+# $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
 # REMOVED TO MAKE FOLDERNAME LOCATION GUID $folderName = $timeStamp
 
 
 if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
-    Write-Host "Creating S3 Repository: S3 $timeStamp"
+    Write-Host "Creating S3 Repository: S3 $FolderName"
     # Add the S3 Account
     $account = Add-VBRAmazonAccount -AccessKey $accessKey -SecretKey $secretKey -Description "$description $bucketName"
 
@@ -62,7 +62,7 @@ if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
     $connect = Connect-VBRAmazonS3CompatibleService -Account $account -CustomRegionId $regionId -ServicePoint $endpoint
     $bucket = Get-VBRAmazonS3Bucket -Connection $connect -Name $bucketName
     $folder = New-VBRAmazonS3Folder -Name $folderName -Connection $connect -Bucket $bucket
-    Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "S3 $timeStamp" -EnableBackupImmutability -ImmutabilityPeriod $immutabilityPeriod -Description "$description $bucketName"
+    Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "S3 $FolderName" -EnableBackupImmutability -ImmutabilityPeriod $immutabilityPeriod -Description "$description $bucketName"
     
     # Display the added repository details
     $repository
@@ -72,7 +72,7 @@ if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
 
 
 if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
-    Write-Host "Creating local repository Local $timeStamp"
+    Write-Host "Creating local repository Local $FolderName"
     # Get all logical drives on the system
     $drives = Get-WmiObject -Class Win32_LogicalDisk | Where-Object { $_.DriveType -eq 3 }
 
@@ -86,9 +86,9 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 
     # Create the local repository
     $filteredDrives | ForEach-Object { 
-        $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
-        $repositoryPath = Join-Path -Path $_.DeviceID -ChildPath "\veeam\$timeStamp"
-        $repositoryName = "Local $timeStamp"
+        # $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
+        $repositoryPath = Join-Path -Path $_.DeviceID -ChildPath "\veeam\$FolderName"
+        $repositoryName = "Local $FolderName"
         Write-Host "Repository name: $repositoryName"
         Write-Host "Repository path: $repositoryPath"
         $repository = Add-VBRBackupRepository -Type WinLocal -Name "$repositoryName" -Folder $repositoryPath -Description "$description"
