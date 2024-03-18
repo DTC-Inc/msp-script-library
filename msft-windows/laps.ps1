@@ -135,19 +135,24 @@ if (!(User-Exists -username $localUser)) {
 
 # Set password for specified local user
 net user $localUser $password > $null  # Redirect output to suppress password display
-
+# Display a message about password setting completion
+Write-Output "Password set for user $localUser."
 # Check if the computer is domain-joined
+
 if (Test-ComputerSecureChannel) {
     # Set password for built-in administrator
+    Write-Output "Endpoint joined to domain. Setting password for Built-in Administrator and disabling."
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
     Write-Output "Password set for built-in administrator."
     net user administrator /active:no
     Write-Output "Built-in Administrator disabled."
-}
+} else {
+    Write-Output "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
 
 if (Test-AzureADJoined) { 
         # Set password for built-in administrator
+        Write-Output "Endpoint joined to Microsoft Entra ID. Setting password for Built-in Administrator and disabling."
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
         Write-Output "Password set for built-in administrator."
@@ -155,13 +160,9 @@ if (Test-AzureADJoined) {
         Write-Output "Built-in Administrator disabled."
 
 } else {
-    Write-Output "Endpoint is not Azure AD Joined."
+    Write-Output "Endpoint is not Azure AD Joined. Not disabling or resetting Built-in Administrator"
 }
 
-
-
-# Display a message about password setting completion
-Write-Output "Password set for user $localUser."
 
 # You can uncomment the next line if you want to log the generated password for your reference
 # Write-Output "Generated Password: $password"
