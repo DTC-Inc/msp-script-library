@@ -53,31 +53,30 @@ if ($isDomainController) {
 }
 
 # Checking if Azure AD Joined
-try {
-    $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+function Test-AzureAdJoined {
+        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinIfo"
+        if ($AzureADKey) {
+            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
     
-    try {
-        foreach($guid in $guids) {
-            $guidSubKey = $subKey.OpenSubKey($guid);
-            $tenantId = $guidSubKey.GetValue("TenantId");
-            $userEmail = $guidSubKey.GetValue("UserEmail");
-        }
+            try {
+                foreach($guid in $guids) {
+                    $guidSubKey = $subKey.OpenSubKey($guid);
+                    $tenantId = $guidSubKey.GetValue("TenantId");
+                    $userEmail = $guidSubKey.GetValue("UserEmail");
+                }
 
-        Write-Output "$tenantId $userEmail"
-        if ($teantId) { 
-            $isAzureADJoined = $True
+                Write-Output "$tenantId $userEmail"
+                if ($teantId) { 
+                    return $True
+                } else {
+                    return $False
+                }
+            } catch {
+                return $False
+            }
         } else {
-            $isAzureADJoined = $False
+                return $False
         }
-
-    } catch {
-        Write-Output "Computer is not Azure AD Joined or there was an error."
-        $isAzureADJoined = $False
-    }   
-} catch {
-    Write-Output "Computer is not Azure AD joined or than was an error."
-    $isAzureADJoined = $False
-
 }
 
 # Function to generate a random password
@@ -121,7 +120,7 @@ if (-not (User-Exists -username $localUser)) {
     Write-Output "Creating new local user $localuser."
     $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
     $newUser = New-LocalUser -Name $localUser -Password $SecurePassword -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
-    if ($newUser -eq $null) {
+    if ($null -eq $newUser) {
         Write-Output "Failed to create user $localUser."
         Exit 1
     }
@@ -145,13 +144,16 @@ if (-not (Test-ComputerSecureChannel)) {
     Write-Output "Password set for built-in administrator."
 }
 
-if ($isAzureADJoined) { 
+if (Test-AzureADJoined) { 
         # Set password for built-in administrator
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
         Write-Output "Password set for built-in administrator."
 
+} else {
+    Write-Output "Endpoint is not Azure AD Joined."
 }
+
 
 
 # Display a message about password setting completion
