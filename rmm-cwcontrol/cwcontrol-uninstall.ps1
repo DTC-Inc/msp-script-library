@@ -34,33 +34,43 @@ if ($rmm -ne 1) {
 
 Start-Transcript -Path $logPath
 
-Write-Host "This script is being run for $description"
+# Define the service name pattern
+$ServicePattern = "*ScreenConnect*"
 
-# Check if any instances are installed
+# Get services matching the pattern
+$Services = Get-Service | Where-Object { $_.Name -like $ServicePattern }
 
-$installed = Get-WmiObject -Class Win32_Product | Where -Property Name -like *ScreenConnect*
-
-# Remove the application if it is installed
-
-if ($installed) {
-    Write-Host "ConnectWise Control (ScreenConnect) is installed so we're uninstalling."
-    $installed | ForEach-Object {
+if ($Services) {
+    foreach ($Service in $Services) {
+        Write-Host "Uninstalling $($Service.Name)..."
         try {
-            $_.Uninstall()
+            # Uninstall the application associated with the service
+            $UninstallResult = Start-Process "msiexec.exe" -ArgumentList "/x $($Service.Name)" -PassThru -ErrorAction Stop
+            $UninstallResult | Wait-Process -Timeout 30
+            if ($UninstallResult.ExitCode -eq 0) {
+                Write-Host "Uninstall successful for $($Service.Name)"
+            } else {
+                Write-Host "Uninstall failed for $($Service.Name). Attempting force deletion..."
+                # Attempt force deletion of the service
+                $Service | Stop-Service -Force -ErrorAction SilentlyContinue
+                $ServiceDeleteResult = Start-Profcess "sc.exe" -ArgumentList "delete $($Service.Name)" -PassThru -ErrorAction Stop
+                $ServiceDeleteResult | Wait-Process -Timeout 10
+                if ($ServiceDeleteResult -eq 0) {
+                    Write-Host "Service $($Service.Name) forcibly deleted."
+                    Exit 0
+                } else {
+                    Write-Output "Service $($Service.Name) delete failed."
+                    Exit 1
+                }
+            }
+        } catch {
+            Write-Host "Error occurred while uninstalling $($Service.Name): $_"
+            Exit 1
         }
-        catch {
-               Write-Host "An error has occured that coult not be resolved."
-
-        }    
     }
-}
-
-# Check if application is still installed. 
-
-$installCheck = Get-WmiObject -Class Win32_Product | Where -Property Name -like *ScreenConnect*
-
-if ($installCheck) {
-    Write-Host "Uninstall failed."
+} else {
+    Write-Host "No services found matching the pattern $ServicePattern"
+    Exit 0
 }
 
 Stop-Transcript
