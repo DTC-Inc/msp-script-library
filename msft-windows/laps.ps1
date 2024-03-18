@@ -1,4 +1,4 @@
-# Getting input from user if not running from RMM else set variables from RMM.
+user# Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "laps.log"
 
@@ -120,7 +120,7 @@ $password = Generate-RandomPassword
 if (-not (User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
     Write-Output "Creating new local user $locauser."
-    $newUser = LocalUser -Name $localUser -Password $password -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
+    $newUser = New-LocalUser -Name $localUser -Password $password -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
     if ($newUser -eq $null) {
         Write-Output "Failed to create user $localUser."
         Exit 1
