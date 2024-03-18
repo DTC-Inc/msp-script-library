@@ -88,7 +88,8 @@ function Generate-RandomPassword {
     for ($i = 0; $i -lt 32; $i++) {
         $password += $characters[(Get-Random -Minimum 0 -Maximum $characters.Length)]
     }
-    return $password
+    $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
+    return $SecurePassword
 }
 
 # Function to check if a user exists
@@ -119,7 +120,7 @@ $password = Generate-RandomPassword
 if (-not (User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
     Write-Output "Creating new local user $locauser."
-    $newUser = New-LocalUser -Name $localUser -Password $password -PasswordNeverExpires $true -UserMayNotChangePassword $true -AccountNeverExpires $true
+    $newUser = LocalUser -Name $localUser -Password $password -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
     if ($newUser -eq $null) {
         Write-Output "Failed to create user $localUser."
         Exit 1
