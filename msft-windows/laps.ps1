@@ -139,6 +139,7 @@ net user $localUser $password > $null  # Redirect output to suppress password di
 Write-Output "Password set for user $localUser."
 # Check if the computer is domain-joined
 
+# Testing if endpoint is joined to a legacy Windows Active Directory domain.
 if (Test-ComputerSecureChannel) {
     # Set password for built-in administrator
     Write-Output "Endpoint joined to domain. Setting password for Built-in Administrator and disabling."
@@ -149,7 +150,9 @@ if (Test-ComputerSecureChannel) {
     Write-Output "Built-in Administrator disabled."
 } else {
     Write-Output "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
+}
 
+# Testing if endpoint is Azure AD joined.
 if (Test-AzureADJoined) { 
         # Set password for built-in administrator
         Write-Output "Endpoint joined to Microsoft Entra ID. Setting password for Built-in Administrator and disabling."
