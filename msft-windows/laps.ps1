@@ -52,7 +52,7 @@ if ($isDomainController) {
     Exit 0
 }
 
-# Checking if Azure AD Joined
+# Function to check if azure ad joined
 function Test-AzureAdJoined {
         $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinIfo"
         if ($AzureADKey) {
