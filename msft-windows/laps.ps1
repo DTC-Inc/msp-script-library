@@ -119,7 +119,7 @@ $password = Generate-RandomPassword
 # Check if the user exists
 if (-not (User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
-    Write-Output "Creating new local user $locauser."
+    Write-Output "Creating new local user $localuser."
     $newUser = New-LocalUser -Name $localUser -Password $password -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
     if ($newUser -eq $null) {
         Write-Output "Failed to create user $localUser."
