@@ -53,7 +53,7 @@ if ($Services) {
                 Write-Host "Uninstall failed for $($Service.Name). Attempting force deletion..."
                 # Attempt force deletion of the service
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
-                $ServiceDeleteResult = Start-Profcess "sc.exe" -ArgumentList "delete $($Service.Name)" -PassThru -ErrorAction Stop
+                $ServiceDeleteResult = Start-Process "sc.exe" -ArgumentList "delete $($Service.Name)" -PassThru -ErrorAction Stop
                 $ServiceDeleteResult | Wait-Process -Timeout 10
                 if ($ServiceDeleteResult -eq 0) {
                     Write-Host "Service $($Service.Name) forcibly deleted."
