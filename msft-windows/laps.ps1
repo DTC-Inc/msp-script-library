@@ -137,11 +137,13 @@ if (!(User-Exists -username $localUser)) {
 net user $localUser $password > $null  # Redirect output to suppress password display
 
 # Check if the computer is domain-joined
-if (-not (Test-ComputerSecureChannel)) {
+if (Test-ComputerSecureChannel) {
     # Set password for built-in administrator
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
     Write-Output "Password set for built-in administrator."
+    net user administrator /active:no
+    Write-Output "Built-in Administrator disabled."
 }
 
 if (Test-AzureADJoined) { 
@@ -149,6 +151,8 @@ if (Test-AzureADJoined) {
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
         Write-Output "Password set for built-in administrator."
+        net user administrator /active:no
+        Write-Output "Built-in Administrator disabled."
 
 } else {
     Write-Output "Endpoint is not Azure AD Joined."
