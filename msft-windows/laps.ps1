@@ -1,4 +1,4 @@
-user# Getting input from user if not running from RMM else set variables from RMM.
+# Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "laps.log"
 
@@ -95,7 +95,7 @@ function User-Exists {
     param(
         [string]$username
     )
-    $user = Get-WmiObject Win32_UserAccount | Where-Object { $_.Name -eq $username }
+    $user = Get-LocalUser -Name $username
     return [bool]($user -ne $null)
 }
 
@@ -115,7 +115,7 @@ $password = Generate-RandomPassword
 # $localUser = "username"  # Replace "username" with the desired local user
 
 # Check if the user exists
-if (-not (User-Exists -username $localUser)) {
+if (!(User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
     Write-Output "Creating new local user $localuser."
     $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
