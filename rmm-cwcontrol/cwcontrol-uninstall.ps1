@@ -55,7 +55,7 @@ if ($Services) {
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
                 $ServiceDeleteResult = sc.exe delete "$Service.Name"
                 # $ServiceDeleteResult | Wait-Process -Timeout 10
-                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -like $Service.Name
+                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -like $Service.Name }
                 if (!($IsServiceDeleted)) {                    
                     Write-Host "Service $($Service.Name) forcibly deleted."
                     Exit 0
