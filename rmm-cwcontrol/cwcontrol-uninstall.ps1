@@ -45,7 +45,7 @@ if ($Services) {
         Write-Host "Uninstalling $($Service.Name)..."
         try {
             # Uninstall the application associated with the service
-            $UninstallResult = Start-Process "msiexec.exe" -ArgumentList "/x $($Service.Name)" -PassThru -ErrorAction Stop
+            $UninstallResult = Start-Process "msiexec.exe" -ArgumentList "/x $($Service.Name) /q" -PassThru -ErrorAction Stop
             $UninstallResult | Wait-Process -Timeout 30
             if ($UninstallResult.ExitCode -eq 0) {
                 Write-Host "Uninstall successful for $($Service.Name)"
@@ -54,10 +54,12 @@ if ($Services) {
                 # Attempt force deletion of the service
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
                 $ServiceDeleteResult = sc.exe delete "$Service.Name"
+                Write-Output "Service delete output: $ServiceDeleteResult"
                 # $ServiceDeleteResult | Wait-Process -Timeout 10
-                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -like $Service.Name }
-                if (!($IsServiceDeleted)) {                    
-                    Write-Host "Service $($Service.Name) forcibly deleted."
+                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -eq $Service.Name }
+                Write-Output "Checking if service $Service.Name exists. $IsServiceDeleted"
+                if (!($IsServiceDeleted)) {
+                    Write-Output "Service $($Service.Name) forcibly deleted."
                     Exit 0
                 } else {
                     Write-Output "Service $($Service.Name) delete failed."
