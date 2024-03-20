@@ -57,7 +57,7 @@ if ($Services) {
                 Write-Output "Service delete output: $ServiceDeleteResult"
                 # $ServiceDeleteResult | Wait-Process -Timeout 10
                 $IsServiceDeleted = Get-Service | Where-Object { $_.Name -eq $Service.Name } | Select $_.Name
-                Write-Output "Checking if service $Service.Name exists. $IsServiceDeleted"
+                Write-Output "Checking if service $($Service.Name) exists. $IsServiceDeleted"
                 if (!($IsServiceDeleted)) {
                     Write-Output "Service $($Service.Name) forcibly deleted."
                     Exit 0
