@@ -45,10 +45,28 @@ if ($Services) {
         Write-Output "Uninstalling $($Service.Name)..."
         try {
             # Uninstall the application associated with the service
-            $UninstallResult = Start-Process "msiexec.exe" -ArgumentList "/x $($Service.Name) /q" -PassThru -ErrorAction Stop
-            $UninstallResult | Wait-Process -Timeout 30
-            if ($UninstallResult.ExitCode -eq 0) {
-                Write-Host "Uninstall successful for $($Service.Name)"
+            # Check if any instances are installed
+
+            $installed = Get-WmiObject -Class Win32_Product | Where -Property Name -like *ScreenConnect*
+
+            # Remove the application if it is installed
+
+            if ($installed) {
+                Write-Output "ConnectWise Control (ScreenConnect) is installed so we're uninstalling."
+                $installed | ForEach-Object {
+                    try {
+                        $_.Uninstall()
+                    } catch {
+                           Write-Output "An error has occured that coult not be resolved."
+
+                    }    
+                }
+            }
+
+            # Check if application is still installed. 
+            $installCheck = Get-WmiObject -Class Win32_Product | Where -Property Name -like *ScreenConnect*
+            if ($installCheck) {
+                Write-Output "Uninstall failed."
             } else {
                 Write-Output "Uninstall failed for $($Service.Name). Attempting force deletion..."
                 # Attempt force deletion of the service
