@@ -53,10 +53,10 @@ if ($Services) {
                 Write-Output "Uninstall failed for $($Service.Name). Attempting force deletion..."
                 # Attempt force deletion of the service
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
-                $ServiceDeleteResult = sc.exe delete "$Service.Name"
+                $ServiceDeleteResult = sc.exe delete "$Service.Name" | Write-Output
                 Write-Output "Service delete output: $ServiceDeleteResult"
                 # $ServiceDeleteResult | Wait-Process -Timeout 10
-                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -eq $Service.Name }
+                $IsServiceDeleted = Get-Service | Where-Object { $_.Name -eq $Service.Name } | Select $_.Name
                 Write-Output "Checking if service $Service.Name exists. $IsServiceDeleted"
                 if (!($IsServiceDeleted)) {
                     Write-Output "Service $($Service.Name) forcibly deleted."
