@@ -56,6 +56,7 @@ if ($Services) {
                 $installed | ForEach-Object {
                     try {
                         $_.Uninstall()
+                        Start-Sleep -Seconds 10
                     } catch {
                            Write-Output "An error has occured that coult not be resolved."
 
