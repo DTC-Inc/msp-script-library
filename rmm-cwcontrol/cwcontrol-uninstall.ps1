@@ -12,7 +12,7 @@ if ($rmm -ne 1) {
         if ($description) {
             $validInput = 1
         } else {
-            Write-Host "Invalid input. Please try again."
+            Write-Output "Invalid input. Please try again."
         }
     }
     $logPath = "$env:WINDIR\logs\$scriptLogName"
@@ -26,9 +26,9 @@ if ($rmm -ne 1) {
         $description = "No description"
     }   
 
-    Write-Host $description
-    Write-Host $rmmScriptPath
-    Write-Host $rmm
+    Write-Output $description
+    Write-Output $rmmScriptPath
+    Write-Output $rmm
     
 }
 
@@ -42,7 +42,7 @@ $Services = Get-Service | Where-Object { $_.Name -like $ServicePattern }
 
 if ($Services) {
     foreach ($Service in $Services) {
-        Write-Host "Uninstalling $($Service.Name)..."
+        Write-Output "Uninstalling $($Service.Name)..."
         try {
             # Uninstall the application associated with the service
             $UninstallResult = Start-Process "msiexec.exe" -ArgumentList "/x $($Service.Name) /q" -PassThru -ErrorAction Stop
@@ -50,7 +50,7 @@ if ($Services) {
             if ($UninstallResult.ExitCode -eq 0) {
                 Write-Host "Uninstall successful for $($Service.Name)"
             } else {
-                Write-Host "Uninstall failed for $($Service.Name). Attempting force deletion..."
+                Write-Output "Uninstall failed for $($Service.Name). Attempting force deletion..."
                 # Attempt force deletion of the service
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
                 $ServiceDeleteResult = sc.exe delete "$Service.Name"
@@ -67,12 +67,12 @@ if ($Services) {
                 }
             }
         } catch {
-            Write-Host "Error occurred while uninstalling $($Service.Name): $_"
+            Write-Output "Error occurred while uninstalling $($Service.Name): $_"
             Exit 1
         }
     }
 } else {
-    Write-Host "No services found matching the pattern $ServicePattern"
+    Write-Output "No services found matching the pattern $ServicePattern"
     Exit 0
 }
 
