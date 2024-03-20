@@ -54,7 +54,7 @@ if ($isDomainController) {
 
 # Function to check if azure ad joined
 function Test-AzureAdJoined {
-        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinIfo"
+        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
         if ($AzureADKey) {
             $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
     
