@@ -67,8 +67,7 @@ if ($Services) {
             # Check if application is still installed. 
             $installCheck = Get-WmiObject -Class Win32_Product | Where -Property Name -like *ScreenConnect*
             if ($installCheck) {
-                Write-Output "Uninstall failed."
-            } else {
+                # Write-Output "Uninstall failed."
                 Write-Output "Uninstall failed for $($Service.Name). Attempting force deletion..."
                 # Attempt force deletion of the service
                 $Service | Stop-Service -Force -ErrorAction SilentlyContinue
