@@ -45,6 +45,7 @@ Write-Output "RMM: $RMM"
 Write-Output "Days Aging: $DaysAging"
 
 if (-not (Get-WindowsFeature -Name Hyper-V)) {
+    Write-Output "Hyper-V role/feature is not installed."
     Exit 0
 }
 
