@@ -44,6 +44,10 @@ Write-Output "Log path: $LogPath"
 Write-Output "RMM: $RMM"
 Write-Output "Days Aging: $DaysAging"
 
+if (-not (Get-WindowsFeature -Name Hyper-V)) {
+    Exit 0
+}
+
 $AgingCheckpoints = Get-Vm | Get-VMSnapshot | Where {$_.CreationTime -lt (Get-Date).AddDays($DaysAging)}
 
 if ($AgingCheckpoints) { 
