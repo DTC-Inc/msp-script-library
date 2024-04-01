@@ -55,6 +55,7 @@ Write-Output "IP Update Password: *******"
 # Variables need set in RMM
 # $hostname, $domain, $apiKey, $zoneID, $ipUpdatePassword
 $fqdn = $hostname + "." + $domain
+Write-Output "FQDN: $fqdn"
 
 # Check if the domain exists in Dynu using v2 API
 $recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" 
