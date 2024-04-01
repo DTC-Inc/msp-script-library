@@ -59,7 +59,7 @@ Write-Output "FQDN: $fqdn"
 
 # Check if the domain exists in Dynu using v2 API
 $recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" 
-$existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} | Select -Expand dnsRecords
+$existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} -UseBasicParsing | Select -Expand dnsRecords
 $existingRecordId = $existingRecord | Where { $_.hostname -eq '$fqdn' } | Select -Expand id
 if ($existingRecordId -eq $null) {
     # Domain doesn't exist, create new record
@@ -71,15 +71,15 @@ if ($existingRecordId -eq $null) {
         ttl = 60}
         
     $createUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record"
-    Invoke-RestMethod -Method POST -Uri $createUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json) | Write-Output
+    Invoke-RestMethod -Method POST -Uri $createUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json) -UseBasicParsing | Write-Output
 
     # Update record with source IP
-    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" | Write-Output
+    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing | Write-Output
 
 } else {
     ## *** wget METHOD *** ##
     Write-Output "DNS records already exists. Updating IP Address."
-    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" | Write-Output
+    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing | Write-Output
 
     ## *** API METHOD *** ##
     # Domain exists, update the IP address
