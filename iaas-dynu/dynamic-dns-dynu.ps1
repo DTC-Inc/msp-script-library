@@ -58,10 +58,13 @@ $fqdn = $hostname + "." + $domain
 Write-Output "FQDN: $fqdn"
 
 # Check if the domain exists in Dynu using v2 API
-$recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" 
-$existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} -UseBasicParsing | Select -Expand dnsRecords
-$existingRecordId = $existingRecord | Where { $_.hostname -eq '$fqdn' } | Select -Expand id
-if ($existingRecordId -eq $null) {
+# $recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" 
+# $existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} -UseBasicParsing | Select -Expand dnsRecords
+# $existingRecordId = $existingRecord | Where { $_.hostname -eq '$fqdn' } | Select -Expand id
+$existingRecord = wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing
+Write-Output $existingRecord
+
+if ($existingRecord.Content -notlike "good*") {
     # Domain doesn't exist, create new record
     $postData = @{
         nodeName = "$hostname"
@@ -74,12 +77,14 @@ if ($existingRecordId -eq $null) {
     Invoke-RestMethod -Method POST -Uri $createUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json) -UseBasicParsing | Write-Output
 
     # Update record with source IP
-    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing | Write-Output
+    Write-Output "Updating new record $fqdn."
+    $newRecord = wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing
+    Write-Output "New record response: $($newRecord.Content)"
 
 } else {
     ## *** wget METHOD *** ##
-    Write-Output "DNS records already exists. Updating IP Address."
-    wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing | Write-Output
+    Write-Output "DNS records already exists. Record was already updated during the check, here is the response: $($existingRecord.Content)"
+
 
     ## *** API METHOD *** ##
     # Domain exists, update the IP address
