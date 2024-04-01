@@ -1,6 +1,6 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "EnterLogNameHere.log"
+$ScriptLogName = "dynu-dynamic-dns.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -24,7 +24,7 @@ if ($RMM -ne 1) {
 
 } else { 
     # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    if ($RMMScriptPath -eq $null) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
         
     } else {
@@ -88,7 +88,7 @@ if ($existingRecordId -eq $null) {
     #    recordType = "A"
     #    state = "true"
     #    ttl = 60}        
-    #$updateUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode(100335411) + "/record" + [System.Net.WebUtility]::UrlEncode($existingRecordId)
+    #$updateUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" + [System.Net.WebUtility]::UrlEncode($existingRecordId)
     #Invoke-RestMethod -Method POST -Uri $updateUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json)
 }
 
