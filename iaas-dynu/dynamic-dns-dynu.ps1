@@ -62,7 +62,7 @@ Write-Output "FQDN: $fqdn"
 # $existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} -UseBasicParsing | Select -Expand dnsRecords
 # $existingRecordId = $existingRecord | Where { $_.hostname -eq '$fqdn' } | Select -Expand id
 $existingRecord = wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing
-Write-Output $existingRecord
+Write-Output $existingRecord.Content
 
 if ($existingRecord.Content -notlike "good*") {
     # Domain doesn't exist, create new record
