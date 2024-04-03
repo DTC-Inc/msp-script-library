@@ -52,7 +52,7 @@ if (-not (Get-WindowsFeature -Name Hyper-V)) {
 $AgingCheckpoints = Get-VM | Get-VMSnapshot | Where {$_.CreationTime -lt (Get-Date).AddDays($DaysAging)}
 
 if ($AgingCheckpoints) { 
-    $AgingCheckpoints | ForEach-Object { Write-Output "Checkpoint $($_.Name) is older than 1 day. Please delete this checkpoint."}
+    $AgingCheckpoints | ForEach-Object { Write-Output "Checkpoint $($_.Name) is older than 1 day. Checkpoint created on $($_.CreationTime). Please delete this checkpoint."}
     Exit 1
 } else {
     Write-Output "There are no checkpoints older than 1 day that need to be deleted."
