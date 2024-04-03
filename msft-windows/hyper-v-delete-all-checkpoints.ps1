@@ -32,6 +32,7 @@ foreach ($vm in $vmList) {
 
             } catch {
                 Write-Host "Error deleting checkpoint $checkpiont for $vm."
+                Exit 1
             
             }
         }
