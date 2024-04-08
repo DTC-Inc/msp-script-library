@@ -83,4 +83,23 @@ $parms = $autoAdminUsername + " " + $domain + " " + $password + " /accepteula"
 $parms = $parms.Split(" ")
 & "$($targetDir)\Autologon.exe" $parms | Write-Host
 
+# Define the path to the AutoAdminLogon registry key
+$regPath = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+
+# Query the AutoAdminLogon value
+$autoAdminLogon = Get-ItemProperty -Path $regPath -Name "AutoAdminLogon" -ErrorAction SilentlyContinue
+
+if ($null -ne $autoAdminLogon) {
+    if ($autoAdminLogon.AutoAdminLogon -eq "1") {
+        Write-Host "AutoAdminLogon is enabled."
+        Exit 0
+    } else {
+        Write-Host "AutoAdminLogon is disabled."
+        Exit 1
+    }
+} else {
+    Write-Host "The AutoAdminLogon key does not exist."
+    Exit 1
+}
+
 Stop-Transcript
