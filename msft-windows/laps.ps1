@@ -43,30 +43,32 @@ Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 
 # Check if the computer is a domain controller or Azure AD joined
-$os = Get-WmiObject -Class Win32_OperatingSystem
-$isDomainController = $os.Roles -contains "Domain Controller"
+# PowerShell Script to Check if the Server is a Domain Controller
+$serverRole = Get-WmiObject -Class Win32_ComputerSystem
 
-# Exit if domain controller
-if ($isDomainController) {
-    Write-Output "Endpoint is a domain controller. Exiting."
+if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
+    Write-Host "This server IS a Domain Controller."
     Exit 0
+} else {
+    Write-Host "This server is NOT a Domain Controller."
+    Write-Host "Continuing to run LAPS."
 }
 
 # Function to check if azure ad joined
 function Test-AzureAdJoined {
         $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
         if ($AzureADKey) {
-            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
     
             try {
-                foreach($guid in $guids) {
-                    $guidSubKey = $subKey.OpenSubKey($guid);
-                    $tenantId = $guidSubKey.GetValue("TenantId");
-                    $userEmail = $guidSubKey.GetValue("UserEmail");
+                foreach($key in $subKey) {
+                    $tenantId = $key.GetValue("TenantId");
+                    $userEmail = $key.GetValue("UserEmail");
                 }
 
-                Write-Output "$tenantId $userEmail"
-                if ($teantId) { 
+                Write-Host "Tenant ID: $($tenantId)" 
+                Write-Host "User Email: $($userEmail)"
+                if ($tenantId) { 
                     return $True
                 } else {
                     return $False
@@ -117,15 +119,15 @@ $password = Generate-RandomPassword
 # Check if the user exists
 if (!(User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
-    Write-Output "Creating new local user $localuser."
+    Write-Host "Creating new local user $localuser."
     $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
     $newUser = New-LocalUser -Name $localUser -Password $SecurePassword -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
     if ($null -eq $newUser) {
-        Write-Output "Failed to create user $localUser."
+        Write-Host "Failed to create user $localUser."
         Exit 1
     }
-    Write-Output "Local user $localuser created."
-    Write-Output "Adding user to local Administrators group."
+    Write-Host "Local user $localuser created."
+    Write-Host "Adding user to local Administrators group."
     # Add the user to the local Administrators group
     Add-UserToLocalAdministrators -username $localUser
 } else {
@@ -136,39 +138,39 @@ if (!(User-Exists -username $localUser)) {
 # Set password for specified local user
 net user $localUser $password > $null  # Redirect output to suppress password display
 # Display a message about password setting completion
-Write-Output "Password set for user $localUser."
+Write-Host "Password set for user $localUser."
 # Check if the computer is domain-joined
 
 # Testing if endpoint is joined to a legacy Windows Active Directory domain.
 if (Test-ComputerSecureChannel) {
     # Set password for built-in administrator
-    Write-Output "Endpoint joined to domain. Setting password for Built-in Administrator and disabling."
+    Write-Host "Endpoint joined to domain. Setting password for Built-in Administrator and disabling."
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
-    Write-Output "Password set for built-in administrator."
+    Write-Host "Password set for built-in administrator."
     net user administrator /active:no
-    Write-Output "Built-in Administrator disabled."
+    Write-Host "Built-in Administrator disabled."
 } else {
-    Write-Output "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
+    Write-Host "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
 }
 
 # Testing if endpoint is Azure AD joined.
 if (Test-AzureADJoined) { 
         # Set password for built-in administrator
-        Write-Output "Endpoint joined to Microsoft Entra ID. Setting password for Built-in Administrator and disabling."
+        Write-Host "Endpoint joined to Microsoft Entra ID. Setting password for Built-in Administrator and disabling."
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
-        Write-Output "Password set for built-in administrator."
+        Write-Host "Password set for built-in administrator."
         net user administrator /active:no
-        Write-Output "Built-in Administrator disabled."
+        Write-Host "Built-in Administrator disabled."
 
 } else {
-    Write-Output "Endpoint is not Azure AD Joined. Not disabling or resetting Built-in Administrator"
+    Write-Host "Endpoint is not Azure AD Joined. Not disabling or resetting Built-in Administrator"
 }
 
 
 # You can uncomment the next line if you want to log the generated password for your reference
-# Write-Output "Generated Password: $password"
+# Write-Host "Generated Password: $password"
 
 
 Stop-Transcript
