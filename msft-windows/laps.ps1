@@ -47,7 +47,7 @@ Write-Host "RMM: $RMM"
 $serverRole = Get-WmiObject -Class Win32_ComputerSystem
 
 if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
-    Write-Host "This server IS a Domain Controller."
+    Write-Host "This server IS a Domain Controller. Exiting"
     Exit 0
 } else {
     Write-Host "This server is NOT a Domain Controller."
