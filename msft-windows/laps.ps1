@@ -148,8 +148,10 @@ if (Test-ComputerSecureChannel) {
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
     Write-Host "Password set for built-in administrator."
-    net user administrator /active:no
+    net user administrator /active:no > $null
     Write-Host "Built-in Administrator disabled."
+    Exit 0
+
 } else {
     Write-Host "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
 }
@@ -161,8 +163,9 @@ if (Test-AzureADJoined) {
         $adminUsername = "Administrator"
         net user $adminUsername $password > $null  # Redirect output to suppress password display
         Write-Host "Password set for built-in administrator."
-        net user administrator /active:no
+        net user administrator /active:no > $null
         Write-Host "Built-in Administrator disabled."
+        Exit 0
 
 } else {
     Write-Host "Endpoint is not Azure AD Joined. Not disabling or resetting Built-in Administrator"
