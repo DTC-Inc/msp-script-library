@@ -1,5 +1,5 @@
 ## ** VARIALBES THAT ARE REQUIRED. SET IN INTERACTIVE FOR FROM RMM ** 
-### $Username
+### $autoAdminUserName
 ### $Domain
 ### $Password
 ### $downloadURL
@@ -15,7 +15,7 @@ if ($RMM -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make ValidInput = 1 whenever correct input is given.
         $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        $Username = Read-Host "Please enter the administrator username to auto login"
+        $autoAdminUserName = Read-Host "Please enter the administrator username to auto login"
         $Domain = Read-Host "Please enter the administrator user domain"
         $Password = Read-Host "Please enter the password"
         $downloadURL = Read-Host "Please enter the download url"
@@ -54,7 +54,7 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "Username: $Username"
+Write-Host "Username: $autoAdminUsername"
 Write-Host "Domain: $Domain"
 Write-Host "Password: ***REDACTED***"
 Write-Host "Download URL: $downloadURL"
@@ -79,7 +79,8 @@ Expand-Archive -Path $zipFile -DestinationPath $targetDir -Force
 Remove-Item -Path $zipFile
 
 Write-Host "AutoLogon has been downloaded and extracted to: $targetDir"
-
-& "$($targetDir)\Autologon.exe $($username) $($domain) $($password)" | Write-Host
+$parms = $autoAdminUsername + " " + $domain + " " + $password + " /accepteula"
+$parms = $parms.Split(" ")
+& "$($targetDir)\Autologon.exe" $parms | Write-Host
 
 Stop-Transcript
