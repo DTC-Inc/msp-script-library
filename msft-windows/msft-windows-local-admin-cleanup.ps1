@@ -66,7 +66,7 @@ $localUsers = Get-WmiObject -Class Win32_UserAccount -Filter "LocalAccount = Tru
 
 foreach ($user in $localUsers) {
     # Check if the user is in the Local Administrators group
-    $isMember = Get-LocalGroupMember -Group $localAdminGroup | Where-Object { $_.Name -eq $user.Name }
+    $isMember = Get-LocalGroupMember -Group $localAdminGroup | Where-Object { $_.Name -eq $user.Caption }
 
     # Check if the user is a local user, not in the exclusion list, and if their last login is older than the inactive threshold
     if ($isMember -and $user.Name -notin $exclusionList -and $user.LastLogin) {
@@ -75,11 +75,11 @@ foreach ($user in $localUsers) {
         if ($lastLoginTime -lt $inactiveThreshold) {
             try {
                 # Attempt to remove the user from the Local Administrators group
-                Remove-LocalGroupMember -Group $localAdminGroup -Member $user.Name -ErrorAction Stop
-                Write-Host "Removed inactive local user $($user.Name) from the Local Administrators group."
+                Remove-LocalGroupMember -Group $localAdminGroup -Member $user.Caption -ErrorAction Stop
+                Write-Host "Removed inactive local user $($user.Caption) from the Local Administrators group."
             }
             catch {
-                Write-Error "Failed to remove $($user.Name) from the Local Administrators group. Error: $_"
+                Write-Error "Failed to remove $($user.Caption) from the Local Administrators group. Error: $_"
             }
         }
     }
