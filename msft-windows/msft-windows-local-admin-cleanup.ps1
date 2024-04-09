@@ -49,44 +49,42 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "InactivedDays: $inactiveDays"
+Write-Host "Inactive days: $inactiveDays"
 Write-Host "Users excluded: $exclusionList"
 
 # Define the threshold for inactivity (30 days in this example)
 $inactiveThreshold = (Get-Date).AddDays(-$inactiveDays)
 
 # Define an array of usernames to exclude from removal
-# $exclusionList = @("User1", "User2")  # Replace 'User1', 'User2' with the actual usernames you want to exclude
+### exclusionList = @("User1", "User2")  # Replace 'User1', 'User2' with the actual usernames you want to exclude
 
 # Get the Local Administrators group
 $localAdminGroup = Get-LocalGroup -Name "Administrators"
 
-# Enumerate all members of the Local Administrators group
-$groupMembers = Get-LocalGroupMember -Group $localAdminGroup
+# Enumerate all local user accounts
+$localUsers = Get-WmiObject -Class Win32_UserAccount -Filter "LocalAccount = True"
 
-foreach ($member in $groupMembers) {
-    # Check if the member is a local user and not in the exclusion list
-    if ($member.ObjectClass -eq 'User' -and $member.PrincipalSource -eq 'Local' -and $member.Name -notin $exclusionList) {
-        # Build the path to the user's NTUSER.DAT file
-        $ntuserDatPath = Join-Path -Path (Get-WmiObject -Class Win32_UserProfile | Where-Object { $_.LocalPath -like "*\$($member.Name)" }).LocalPath -ChildPath "NTUSER.DAT"
+foreach ($user in $localUsers) {
+    # Check if the user is in the Local Administrators group
+    $isMember = Get-LocalGroupMember -Group $localAdminGroup | Where-Object { $_.Name -eq $user.Name }
 
-        if (Test-Path $ntuserDatPath) {
-            $ntuserDatLastWrite = (Get-Item $ntuserDatPath).LastWriteTime
+    # Check if the user is a local user, not in the exclusion list, and if their last login is older than the inactive threshold
+    if ($isMember -and $user.Name -notin $exclusionList -and $user.LastLogin) {
+        $lastLoginTime = [Management.ManagementDateTimeConverter]::ToDateTime($user.LastLogin)
 
-            # Check if the last write time of NTUSER.DAT is older than the inactive threshold
-            if ($ntuserDatLastWrite -lt $inactiveThreshold) {
-                try {
-                    # Attempt to remove the local user from the Local Administrators group
-                    Remove-LocalGroupMember -Group $localAdminGroup -Member $member.Name -ErrorAction Stop
-                    Write-Host "Removed inactive local user $($member.Name) from the Local Administrators group."
-                }
-                catch {
-                    Write-Error "Failed to remove $($member.Name) from the Local Administrators group. Error: $_"
-                }
+        if ($lastLoginTime -lt $inactiveThreshold) {
+            try {
+                # Attempt to remove the user from the Local Administrators group
+                Remove-LocalGroupMember -Group $localAdminGroup -Member $user.Name -ErrorAction Stop
+                Write-Host "Removed inactive local user $($user.Name) from the Local Administrators group."
+            }
+            catch {
+                Write-Error "Failed to remove $($user.Name) from the Local Administrators group. Error: $_"
             }
         }
     }
 }
+
 
 
 
