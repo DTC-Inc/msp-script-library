@@ -23,10 +23,10 @@ if ($events -ne $null -and $events.Count -gt 0) {
 }
 
 # Add 200 days to MaxOfflineTimeInDays
-	$daysPlus200 = $timeDifference.Days + 200
+	$daysPlus = $timeDifference.Days + 1000
 
 # Save command to a variable to run withing powershell
-	$dfsrcmd = "wmic.exe /namespace:\\root\microsoftdfs path DfsrMachineConfig set MaxOfflineTimeInDays=$daysPlus200"
+	$dfsrcmd = "wmic.exe /namespace:\\root\microsoftdfs path DfsrMachineConfig set MaxOfflineTimeInDays=$daysPlus"
 
 # Run command to set MaxOfflineTimeInDays to value in $daysPlus200
 	Start-Process "cmd.exe" -ArgumentList "/c $dfsrcmd"
