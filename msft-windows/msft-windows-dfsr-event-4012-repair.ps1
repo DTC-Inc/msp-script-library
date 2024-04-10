@@ -23,7 +23,7 @@ if ($events -ne $null -and $events.Count -gt 0) {
 }
 
 # Add 200 days to MaxOfflineTimeInDays
-	$daysPlus = $timeDifference.Days + 1000
+	$daysPlus = $timeDifference.Days + 2000
  Write-Output $daysPlus
 
 # Save command to a variable to run withing powershell
