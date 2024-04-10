@@ -1,6 +1,7 @@
-# Define the event ID and log name
+# Define the event ID, log name and service name
 $eventId = 4012
 $logName = "DFS Replication"
+$serviceName = 'DFSR'
 
 # Get all events with ID 4012 from the DFS Replication log and sort them by TimeCreated in ascending order
 $events = Get-WinEvent -FilterHashtable @{LogName=$logName; ID=$eventId} | Sort-Object TimeCreated
@@ -30,8 +31,14 @@ if ($events -ne $null -and $events.Count -gt 0) {
 # Run command to set MaxOfflineTimeInDays to value in $daysPlus200
 	Start-Process "cmd.exe" -ArgumentList "/c $dfsrcmd"
 
-# Restart DFSR for setting to take effect
-	Restart-Service -Name "DFSR"
+# Restart the service for setting to take effect
+Restart-Service -Name $serviceName -Force
+
+# Wait for the service to come back up
+do {
+    Start-Sleep -Seconds 1
+    $serviceStatus = (Get-Service -Name $serviceName).Status
+} while ($serviceStatus -ne 'Running')
 
 # Save command in variable to run in powershell with default MaxOfflineTimeInDays value
 	$dfsrcmd = "wmic.exe /namespace:\\root\microsoftdfs path DfsrMachineConfig set MaxOfflineTimeInDays=60"
