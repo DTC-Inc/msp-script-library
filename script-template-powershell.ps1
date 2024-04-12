@@ -36,6 +36,8 @@ if ($RMM -ne 1) {
     
 }
 
+# Start the script logic here. This is the part that actually gets done what you need done.
+
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
