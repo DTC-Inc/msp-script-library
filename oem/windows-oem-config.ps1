@@ -73,6 +73,13 @@ if ($osEdition -notmatch "Server") {
             Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
             Write-Host "Dell Command Update has been installed."
         }
+        if (Test-Path -Path $dcuPath) {
+            Write-Host "Dell Command Update has been installed."
+            exit 0
+        } else {
+            Write-Host "Dell Command Update failed to install."
+            exit 1
+        }
     } else {
         Write-Host "This script is only for Dell workstations."
     }
