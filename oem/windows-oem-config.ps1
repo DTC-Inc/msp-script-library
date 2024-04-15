@@ -69,7 +69,7 @@ if ($osEdition -notmatch "Server") {
             Write-Host "Dell Command Update is already installed."
         } else {
             $output = "$env:WINDIR\temp\dell-command-update.exe"
-            Invoke-WebRequest -Uri $$dellDCUURL -OutFile $output
+            Invoke-WebRequest -Uri $dellDCUURL -OutFile $output
             Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
             Write-Host "Dell Command Update has been installed."
         }
