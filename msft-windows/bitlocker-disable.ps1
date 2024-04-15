@@ -3,7 +3,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "EnterLogNameHere.log"
+$ScriptLogName = "bitlocker-disable.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -46,5 +46,42 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
+
+# This script disables BitLocker on all non-OS volumes first and disables the OS volume last.
+
+# Get all BitLocker-protected volumes
+$volumes = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'On' }
+
+# Separate the OS volume (typically C:) from other volumes
+$osVolume = $volumes | Where-Object { $_.MountPoint -eq "C:" }
+$nonOsVolumes = $volumes | Where-Object { $_.MountPoint -ne "C:" }
+
+# Disable BitLocker on all non-OS volumes first
+foreach ($volume in $nonOsVolumes) {
+    Write-Host "Disabling BitLocker on volume:" $volume.MountPoint
+    Disable-BitLocker -MountPoint $volume.MountPoint
+
+    # Optionally check status before moving to next volume
+    while ((Get-BitLockerVolume -MountPoint $volume.MountPoint).VolumeStatus -ne 'FullyDecrypted') {
+        Start-Sleep -Seconds 5
+    }
+    Write-Host "BitLocker disabled on volume:" $volume.MountPoint
+}
+
+# Check if there's an OS volume and disable BitLocker on it last
+if ($osVolume) {
+    Write-Host "Disabling BitLocker on OS volume:" $osVolume.MountPoint
+    Disable-BitLocker -MountPoint $osVolume.MountPoint
+
+    # Optionally check status
+    while ((Get-BitLockerVolume -MountPoint $osVolume.MountPoint).VolumeStatus -ne 'FullyDecrypted') {
+        Start-Sleep -Seconds 5
+    }
+    Write-Host "BitLocker disabled on OS volume:" $osVolume.MountPoint
+} else {
+    Write-Host "No OS volume with BitLocker protection found."
+}
+
+Write-Host "All volumes processed."
 
 Stop-Transcript
