@@ -43,6 +43,17 @@ function Download-S3Object {
     }
 }
 
+# USES TO ABOVE FUNCTION
+# $accessKey = 'YOUR_ACCESS_KEY'
+# $secretKey = 'YOUR_SECRET_KEY'
+# $region = 'us-east-1' # Change to your bucket's region
+# $bucketName = 'example-bucket'
+# $objectKey = 'example-object.jpg'
+# $filePath = 'C:\path\to\save\example-object.jpg'
+
+# Download-S3Object -AccessKey $accessKey -SecretKey $secretKey -Region $region -BucketName $bucketName -ObjectKey $objectKey -FilePath $filePath
+
+
 # Function to upload an S3 Object
 function Upload-S3Object {
     [CmdletBinding()]
