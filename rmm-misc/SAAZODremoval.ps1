@@ -16,14 +16,20 @@ $serviceNames | ForEach-Object {
 
         # Set the service to disabled
         Set-Service -Name $_ -StartupType Disabled -ErrorAction SilentlyContinue
-		
-		# Remove the service
-        Remove-Service -Name $_ -ErrorAction SilentlyContinue
-        
-    } else {
+
+	
+        } else {
         Write-Output "Service $_ does not exist or cannot be accessed."
     }
 }
+
+# Remove services
+sc.exe delete -Name "SAAZappr"
+sc.exe delete -Name "SAAZDPMACTL"
+sc.exe delete -Name "SAAZRemoteSupport"
+sc.exe delete -Name "SAAZScheduler"
+sc.exe delete -Name "SAAZServerPlus"
+sc.exe delete -Name "SAAZWatchDog"
 
 # Remove directories
 $paths = @("C:\Program Files (x86)\SAAZOD", "C:\Program Files (x86)\SAAZODBKP")
