@@ -1,3 +1,6 @@
+# Call uninstall of software from WMI
+wmic product where "name like '%ITSPlatform%'" call uninstall /nointeractive
+
 $serviceNames = @("SAAZappr", "SAAZDPMACTL", "SAAZRemoteSupport", "SAAZScheduler", "SAAZServerPlus", "SAAZWatchDog")
 
 $serviceNames | ForEach-Object {
