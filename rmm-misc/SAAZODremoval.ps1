@@ -1,5 +1,12 @@
-# Call uninstall of software from WMI
-wmic product where "name like '%ITSPlatform%'" call uninstall /nointeractive
+# Stop and disable ITSPlatform services
+& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatform\log\platform_agent_core.log" stopservice
+& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatform\log\platform_agent_core.log" disableservice
+& "C:\Program Files (x86)\ITSPlatform\agentmanager\platform-agent-manager.exe" stopservice "C:\Program Files (x86)\ITSPlatform\log\platform_agent_manager.log" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json"
+& "C:\Program Files (x86)\ITSPlatform\agentmanager\platform-agent-manager.exe" disableservice "C:\Program Files (x86)\ITSPlatform\log\platform_agent_manager.log" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json"
+
+#Uninstall ITSPlatform agent
+& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatformSetupLogs\platform_agent_core.log" uninstallagent
+
 
 $serviceNames = @("SAAZappr", "SAAZDPMACTL", "SAAZRemoteSupport", "SAAZScheduler", "SAAZServerPlus", "SAAZWatchDog")
 
