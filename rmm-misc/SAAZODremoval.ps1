@@ -1,11 +1,24 @@
-# Stop and disable ITSPlatform services
-& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatform\log\platform_agent_core.log" stopservice
-& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatform\log\platform_agent_core.log" disableservice
-& "C:\Program Files (x86)\ITSPlatform\agentmanager\platform-agent-manager.exe" stopservice "C:\Program Files (x86)\ITSPlatform\log\platform_agent_manager.log" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json"
-& "C:\Program Files (x86)\ITSPlatform\agentmanager\platform-agent-manager.exe" disableservice "C:\Program Files (x86)\ITSPlatform\log\platform_agent_manager.log" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json"
+# Define the base path for ITSPlatform
+$basePath = "C:\Program Files (x86)\ITSPlatform"
 
-#Uninstall ITSPlatform agent
-& "C:\Program Files (x86)\ITSPlatform\agentcore\platform-agent-core.exe" "C:\Program Files (x86)\ITSPlatform\config\platform_agent_core_cfg.json" "C:\Program Files (x86)\ITSPlatformSetupLogs\platform_agent_core.log" uninstallagent
+# Collect all services containing 'ITSPlatform'
+$services = Get-Service | Where-Object {$_.Name -like "*ITSPlatform*"}
+
+# Check if any services are found
+if ($services -ne $null) {
+    foreach ($service in $services) {
+        # Stop and disable ITSPlatform services
+        & "$basePath\agentcore\platform-agent-core.exe" "$basePath\config\platform_agent_core_cfg.json" "$basePath\log\platform_agent_core.log" stopservice
+        & "$basePath\agentcore\platform-agent-core.exe" "$basePath\config\platform_agent_core_cfg.json" "$basePath\log\platform_agent_core.log" disableservice
+        & "$basePath\agentmanager\platform-agent-manager.exe" stopservice "$basePath\log\platform_agent_manager.log" "$basePath\config\platform_agent_core_cfg.json"
+        & "$basePath\agentmanager\platform-agent-manager.exe" disableservice "$basePath\log\platform_agent_manager.log" "$basePath\config\platform_agent_core_cfg.json"
+    
+        # Uninstall ITSPlatform agent
+        & "$basePath\agentcore\platform-agent-core.exe" "$basePath\config\platform_agent_core_cfg.json" "$basePath\ITSPlatformSetupLogs\platform_agent_core.log" uninstallagent
+    }
+} else {
+    Write-Host "No services named 'ITSPlatform' found."
+}
 
 
 $serviceNames = @("SAAZappr", "SAAZDPMACTL", "SAAZRemoteSupport", "SAAZScheduler", "SAAZServerPlus", "SAAZWatchDog")
