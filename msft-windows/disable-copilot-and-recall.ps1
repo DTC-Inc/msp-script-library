@@ -67,7 +67,7 @@ if (!(Test-Path $copilotRegPath)) {
      New-Item -Path $copilotRegPath
      Write-Host "Registry key created - $copilotRegPath"
 }
-Set-ItemProperty -Path $copilot_reg_path -Name "TurnOffWindowsCopilot" -Value 1
+Set-ItemProperty -Path $copilotRegPath -Name "TurnOffWindowsCopilot" -Value 1
 Write-Host "TurnOffWindowsCopilot reg value set to 1"
 
 # Hide Copilot taskbar icon
