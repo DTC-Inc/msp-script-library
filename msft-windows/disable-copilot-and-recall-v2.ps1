@@ -46,10 +46,7 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
-Write-Host "Copilot Button Reg Path: $copilotButtonRegPath"
-Write-Host "Copilot Reg Path: $copilotRegPath"
-Write-Host "Recall Reg Path: $recallRegPath"
+Write-Host "RMM: $RMM `n"
 
 # This script turns off Microsoft Copilot, hides the Copilot taskbar icon and disables Recall
 
@@ -65,7 +62,9 @@ $GetSID = Get-ChildItem -Path $profileList -rec -ea SilentlyContinue | % { if((g
 $SID = $GetSID -replace "^.*?list\\"
 
 # Add HKEY_USERS drive so HKU can be referenced reg path variables
+Write-Host "Creating drive mapped to HKEY_USERS"
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS
+Write-Host "Drive mapped to HKEY_USERS `n"
 
 # Variables
 $copilotButtonRegPath = "HKU:\$SID\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
