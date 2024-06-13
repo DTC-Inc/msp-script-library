@@ -60,7 +60,7 @@ $loggedOnUserName = $loggedOnUser.username
 $UserWithoutDomain = $loggedOnUserName -replace "^.*?\\"
 $GetSID = Get-ChildItem -Path $profileList -rec -ea SilentlyContinue | % { if((get-itemproperty -Path $_.PsPath) -match "$userWithoutDomain") { $_.PsPath} }
 $SID = $GetSID -replace "^.*?list\\"
-Write-Host "Current Logged On User: $loggedOnUser
+Write-Host "Current Logged On User: $loggedOnUser `n"
 
 # Add HKEY_USERS drive so HKU can be referenced reg path variables
 Write-Host "Creating drive mapped to HKEY_USERS"
