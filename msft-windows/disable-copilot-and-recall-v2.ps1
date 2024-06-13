@@ -1,6 +1,5 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-#
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -51,7 +50,6 @@ Write-Host "RMM: $RMM `n"
 # This script turns off Microsoft Copilot, hides the Copilot taskbar icon and disables Recall
 
 # Variables need set in RMM
-# None
 
 # Get SID for currently logged on user
 $profileList = "HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
