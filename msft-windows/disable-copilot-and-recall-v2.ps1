@@ -75,10 +75,10 @@ $recallRegPath = "HKU:\$SID\SOFTWARE\Policies\Microsoft\Windows\WindowsAI"
 if (!(Test-Path $copilotRegPath)) {
      Write-Host "Creating registry key" 
      New-Item -Path $copilotRegPath
-     Write-Host "Registry key created - $copilotRegPath"
+     Write-Host "Registry key created"
 }
 Set-ItemProperty -Path $copilotRegPath -Name "TurnOffWindowsCopilot" -Value 1
-Write-Host "TurnOffWindowsCopilot reg value set to 1"
+Write-Host "$copilotRegPath\TurnOffWindowsCopilot reg value set to 1"
 
 # Hide Copilot taskbar icon
 Set-ItemProperty -Path $copilotButtonRegPath -Name "ShowCopilotButton" -Value 0
@@ -88,7 +88,7 @@ Write-Host "$copilotButtonRegPath\ShowCopilotButton reg value set to 0"
 if (!(Test-Path $recallRegPath)) {
      Write-Host "Creating registry key"
      New-Item -Path $recallRegPath
-     Write-Host "Registry key created - $recallRegPath"
+     Write-Host "Registry key created"
 }
 Set-ItemProperty -Path $recallRegPath -Name "DisableAIDataAnalysis" -Value 1
 Write-Host "$recallRegPath\DisableAIDataAnalysis reg value set to 1"
