@@ -13,9 +13,6 @@ if ($RMM -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make ValidInput = 1 whenever correct input is given.
         $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        $copilotButtonRegPath = Read-Host "Enter the reg path to the Copilot button/taskbar icon withhout quotes"
-        $copilotRegPath = Read-Host "Enter the reg path for Copilot without quotes"
-        $recallRegPath = Read-Host "Enter the reg path for Recall without quotes"
         if ($Description) {
             $ValidInput = 1
         } else {
@@ -57,23 +54,23 @@ Write-Host "Recall Reg Path: $recallRegPath"
 # This script turns off Microsoft Copilot, hides the Copilot taskbar icon and disables Recall
 
 # Variables need set in RMM
-# $copilotButtonRegPath, $copilotRegPath, $recallRegPath
+# None
 
 # Get SID for currently logged on user
-$profilelist = "HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
-$loggedonuser = Get-Ciminstance -ClassName Win32_ComputerSystem | Select-Object UserName
-$loggedonusername = $loggedonuser.username
-$userwithoutdomain = $loggedonusername -replace "^.*?\\"
-$GetSID = Get-ChildItem -Path $profilelist -rec -ea SilentlyContinue | % { if((get-itemproperty -Path $_.PsPath) -match "$userwithoutdomain") { $_.PsPath} }
+$profileList = "HKLM:SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+$loggedOnUser = Get-Ciminstance -ClassName Win32_ComputerSystem | Select-Object UserName
+$loggedOnUserName = $loggedOnUser.username
+$UserWithoutDomain = $loggedOnUserName -replace "^.*?\\"
+$GetSID = Get-ChildItem -Path $profileList -rec -ea SilentlyContinue | % { if((get-itemproperty -Path $_.PsPath) -match "$userWithoutDomain") { $_.PsPath} }
 $SID = $GetSID -replace "^.*?list\\"
 
 # Add HKEY_USERS drive so HKU can be referenced reg path variables
 New-PSDrive -PSProvider Registry -Name HKU -Root HKEY_USERS
 
 # Variables
-$copilot_button_reg_path = "HKU:\$SID\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
-$copilot_reg_path = "HKU:\$SID\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot"
-$recall_reg_path = "HKU:\$SID\SOFTWARE\Policies\Microsoft\Windows\WindowsAI"
+$copilotButtonRegPath = "HKU:\$SID\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$copilotRegPath = "HKU:\$SID\SOFTWARE\Policies\Microsoft\Windows\WindowsCopilot"
+$recallRegPath = "HKU:\$SID\SOFTWARE\Policies\Microsoft\Windows\WindowsAI"
 
 # Turn off Copilot
 if (!(Test-Path $copilotRegPath)) {
