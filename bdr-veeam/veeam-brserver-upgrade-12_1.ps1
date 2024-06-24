@@ -300,7 +300,8 @@ Write-Log "INFO: Upgrade logs for this script can be found here: $logFile"
 
 # Pending reboot check
 if (Test-PendingReboot) {
-    throw "This Windows server requires a reboot prior to beginning the Veeam Backup & Replication upgrade. After rebooting this server, you can proceed with the upgrade."
+    Write-Log "This Windows server requires a reboot prior to beginning the Veeam Backup & Replication upgrade. The BDR will restart now."
+	Restart-Computer
 }
 
 # Enforcing absolute paths
