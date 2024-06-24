@@ -740,6 +740,6 @@ if ($vbr) {
 
 Write-Log "Unmounting Veeam ISO"
 Dismount-DiskImage -ImagePath $iso
-Write-Log "Script has completed successfully. Please reboot this server prior to using Veeam."
-Write-Host "This can be done easily in PowerShell as well: Restart-Computer -Force"
+Write-Log "Script has completed successfully. BDR will now Restart."
+Restart-Computer -Force"
 return 0
