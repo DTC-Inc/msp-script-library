@@ -741,5 +741,5 @@ if ($vbr) {
 Write-Log "Unmounting Veeam ISO"
 Dismount-DiskImage -ImagePath $iso
 Write-Log "Script has completed successfully. BDR will now Restart."
-Restart-Computer -Force"
+Restart-Computer -Force
 return 0
