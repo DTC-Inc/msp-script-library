@@ -1,6 +1,7 @@
 # Getting input from user if not running from RMM else set variables from RMM.
+# serviceName is the only variable that needs set by the RMM. Everything else is hardcoded.
 
-$scriptLogName = "cw-control-uninstall.log"
+$scriptLogName = "teamviewer-uninstall.log"
 
 if ($rmm -ne 1) {
     $validInput = 0
@@ -14,6 +15,14 @@ if ($rmm -ne 1) {
         } else {
             Write-Output "Invalid input. Please try again."
         }
+
+        $serviceName = Read-Host "Enter the TeamViewer service name"
+        if ($serviceName) {
+            $validInput = 1
+        } else {
+            Write-Output "Invalid input. Please try again."
+        }
+        
     }
     $logPath = "$env:WINDIR\logs\$scriptLogName"
 
