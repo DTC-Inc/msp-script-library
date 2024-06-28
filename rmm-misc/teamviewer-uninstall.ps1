@@ -44,6 +44,8 @@ if ($rmm -ne 1) {
 Start-Transcript -Path $logPath
 
 # Check if the service exists
+ $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+
 if ($service) {
     Write-Output "TeamViewer service found. Disabling..."
 
