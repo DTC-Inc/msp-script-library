@@ -44,8 +44,7 @@ if ($rmm -ne 1) {
 Start-Transcript -Path $logPath
 
 # Check if the service exists
-$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-
+$ser$
 if ($service) {
     Write-Output "TeamViewer service found. Disabling..."
 
@@ -61,10 +60,15 @@ if ($service) {
 } else {
     Write-Output "TeamViewer service not found."
 }
-           # Define the TeamViewer uninstall key
-$uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-$teamViewerKey = Get-ChildItem -Path $uninstallKey | Where-Object {
-    $_.GetValue("DisplayName") -like "*TeamViewer*"
+
+# Define the TeamViewer uninstall key
+$uninstallKey64bit = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+$uninstallKey32bit = "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+
+if ($uninstallKey64bit) {
+    $teamViewerKey = Get-ChildItem -Path $uninstallKey64bit | Where-Object { $_.GetValue("DisplayName") -like "*TeamViewer*" }
+} else { 
+    $teamViewerKey = Get-ChildItem -Path $uninstallKey32bit | Where-Object { $_.GetValue("DisplayName") -like "*TeamViewer*" }
 }
 
 # Check if TeamViewer is installed
@@ -84,5 +88,7 @@ if ($teamViewerKey) {
 } else {
     Write-Output "TeamViewer is not installed."
 }
+
+
 
 Stop-Transcript
