@@ -63,7 +63,7 @@ if ($service) {
 }
 
 $test64Bit = Test-Path $ENV:PROGRAMFILES\TeamViewer\uninstall.exe -PathType Leaf
-$test32Bit = Test-Path $ENV:PROGRAMFILES(X86)\TeamViewer\uninstall.exe -PathType Leaf
+$test32Bit = Test-Path "$ENV:PROGRAMFILES (X86)\TeamViewer\uninstall.exe" -PathType Leaf
 if ($test64Bit) {
 
     & $ENV:PROGRAMFILES\TeamViewer\uninstall.exe /S
