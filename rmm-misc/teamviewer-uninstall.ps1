@@ -70,7 +70,7 @@ if ($test64Bit) {
 }
 
 if ($test32Bit) {
-    & $ENV:PROGRAMFILES(X86)\TeamViewer\uninstall.exe /S
+    & "$ENV:PROGRAMFILES (X86)\TeamViewer\uninstall.exe" /S
 
 }
 
