@@ -62,19 +62,23 @@ if ($service) {
     Write-Output "TeamViewer service not found."
 }
 
+Write-Host "Testing paths to get version of TeamViewer installed."
+
 $test64Bit = Test-Path $ENV:PROGRAMFILES\TeamViewer\uninstall.exe -PathType Leaf
 $test32Bit = Test-Path "$ENV:PROGRAMFILES (X86)\TeamViewer\uninstall.exe" -PathType Leaf
-if ($test64Bit) {
 
+if ($test64Bit) {
+    Write-Host "Uninstalling TeamViewer 64-Bit"
     & $ENV:PROGRAMFILES\TeamViewer\uninstall.exe /S
 }
 
 if ($test32Bit) {
+    Write-Host "Uninstalling TeamViewer 32-Bit"
     & "$ENV:PROGRAMFILES (X86)\TeamViewer\uninstall.exe" /S
 
 }
 
-
+Write-Host "TeamViewer was most likely uninstalled. We are not checking for that here in this script currently."
 
 $osArchitecture = (Get-CimInstance Win32_operatingsystem).OSArchitecture
 
