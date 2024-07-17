@@ -86,3 +86,13 @@ ForEach ($Folder in $Folders) {
     Write-Host "Removing $Folder"
     Remove-Item -Path "$Folder" -Force -Recurse -ErrorAction SilentlyContinue
 }
+
+# Set computer for 'reboot pending' in the registry
+$PendingFileRenameOperationsKey = "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager"
+$PendingFileRenameOperationsValue = "PendingFileRenameOperations"
+
+if (-not (Test-Path -Path $PendingFileRenameOperationsKey)) {
+    New-Item -Path $PendingFileRenameOperationsKey -Force
+}
+
+New-ItemProperty -Path $PendingFileRenameOperationsKey -Name $PendingFileRenameOperationsValue -Value "" -PropertyType MultiString -Force
