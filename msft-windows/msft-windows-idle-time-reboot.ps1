@@ -53,9 +53,9 @@ Write-Host "RMM: $RMM"
 
 $now = Get-Date
 if ($now.DayOfWeek -eq 'Friday' -and $now.Hour -ge 3 -and $now.Hour -lt 5) {
-    Write-Output "It's between 3 AM and 5 AM on Friday. Rebooting the computer..."
-    $randomSleep = Get-Random -Minimum 60 -Maximum 5400
-    Write-Output "Sleeping for $($randomSleep/60) minutes before rebooting..."
+    Write-Host "It's between 3 AM and 5 AM on Friday. Rebooting the computer..."
+    $randomSleep = Get-Random -Minimum 60 -Maximum 120
+    Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
     Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes    
     Restart-Computer -Force
     Start-Sleep -Seconds 3600  # Wait for an hour to avoid multiple reboots within the same time window
