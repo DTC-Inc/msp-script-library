@@ -1,7 +1,7 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
-# $IdleTime is the amount of time in hours for an endpoint to be idle for a reboot to occur.
+# No variables are required for this script besides $Description.
 
 # This script should be scheduled or run on-demand to prevent a mistake reboot.
 
@@ -54,14 +54,13 @@ Write-Host "RMM: $RMM"
 $now = Get-Date
 if ($now.DayOfWeek -eq 'Friday' -and $now.Hour -ge 3 -and $now.Hour -lt 5) {
     Write-Host "It's between 3 AM and 5 AM on Friday. Rebooting the computer..."
-    $randomSleep = Get-Random -Minimum 60 -Maximum 120
+    $randomSleep = Get-Random -Minimum 60 -Maximum 5400
     Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-    Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes    
-    Restart-Computer -Force
-    Start-Sleep -Seconds 3600  # Wait for an hour to avoid multiple reboots within the same time window
+    # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC**   
+    shutdown -r -t $randomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($randomSleep/60) minutes. Reboot time range script."
 
 } else {
-    Write-Host "It is not between 3 AM and 5 AM on a Friday."
+    Write-Host "It is not between 3 AM and 5 AM on a Friday. Not rebooting."
 }
 
 Stop-Transcript
