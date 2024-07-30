@@ -21,8 +21,6 @@ if ($RMM -ne 1) {
         } else {
             Write-Host "Invalid input. Please try again."
         }
-
-        $IdleTime = Read-Host "Please enter the idle time for how long the endpoint need to be idle before reboot in hours"
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 
@@ -52,36 +50,15 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "Idle Time: $IdleTime"
 
-# Function to get idle time in seconds
-function Get-IdleTime {
-    $lastInputInfo = New-Object "Win32.LastInputInfo"
-    $lastInputInfo.cbSize = [System.Runtime.InteropServices.Marshal]::SizeOf($lastInputInfo)
-    [System.Runtime.InteropServices.Marshal]::PtrToStructure([System.Runtime.InteropServices.Marshal]::AllocHGlobal([System.Runtime.InteropServices.Marshal]::SizeOf($lastInputInfo)), [type]::GetType('Win32.LastInputInfo'))
-    [System.Runtime.InteropServices.Marshal]::StructToPtr($lastInputInfo, [System.Runtime.InteropServices.Marshal]::AllocHGlobal([System.Runtime.InteropServices.Marshal]::SizeOf($lastInputInfo)), $false)
-    $lastInputInfo.dwTime = [Environment]::TickCount - [System.Environment]::TickCount
-    return ([Environment]::TickCount - $lastInputInfo.dwTime) / 1000
+$now = Get-Date
+if ($now.DayOfWeek -eq 'Friday' -and $now.Hour -ge 3 -and $now.Hour -lt 5) {
+    Write-Output "It's between 3 AM and 5 AM on Friday. Rebooting the computer..."
+    $randomSleep = Get-Random -Minimum 60 -Maximum 5400
+    Write-Output "Sleeping for $($randomSleep/60) minutes before rebooting..."
+    Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes    
+    Restart-Computer -Force
+    Start-Sleep -Seconds 3600  # Wait for an hour to avoid multiple reboots within the same time window
 }
-
-# Function to check idle time and reboot if necessary
-function Check-IdleTimeAndReboot {
-    $idleTimeInSeconds = Get-IdleTime
-    $idleTimeInHours = $idleTimeInSeconds / 3600
-
-    if ($IdleTime -isnot [int]) {
-        Write-Host "Idle time isn't an integer. Exiting with error."
-        Exit 1
-    }
-
-    if ($idleTimeInHours -ge $IdleTime) {
-        Restart-Computer -Force
-    } else {
-        Write-Host "Idle time is less than 1 hour. No reboot required."
-        Exit 0
-    }
-}
-
-Check-IdleTimeAndReboot
 
 Stop-Transcript
