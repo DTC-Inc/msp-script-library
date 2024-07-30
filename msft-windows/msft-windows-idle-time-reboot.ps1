@@ -69,11 +69,19 @@ function Check-IdleTimeAndReboot {
     $idleTimeInSeconds = Get-IdleTime
     $idleTimeInHours = $idleTimeInSeconds / 3600
 
+    if ($IdleTime -isnot [int]) {
+        Write-Host "Idle time isn't an integer. Exiting with error."
+        Exit 1
+    }
+
     if ($idleTimeInHours -ge $IdleTime) {
         Restart-Computer -Force
     } else {
-        Write-Output "Idle time is less than 1 hour. No reboot required."
+        Write-Host "Idle time is less than 1 hour. No reboot required."
+        Exit 0
     }
 }
+
+Check-IdleTimeAndReboot
 
 Stop-Transcript
