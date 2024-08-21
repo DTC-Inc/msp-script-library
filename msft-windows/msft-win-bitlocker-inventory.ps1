@@ -93,6 +93,7 @@ function BackupRecoveryPassword {
     $domainJoined = Get-DomainJoinStatus
 
     if ($domainJoined) {
+        # Store bitlocker keys in Active Directory computer object
         Backup-BitLockerKeyProtector -MountPoint $DriveLetter
    # The below is commented out as the key protector needs to Azure AD aware for a computer/user object or a group. This functionality is limited at the moment.
    # } else {
