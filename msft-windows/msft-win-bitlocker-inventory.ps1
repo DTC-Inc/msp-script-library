@@ -94,6 +94,7 @@ function BackupRecoveryPassword {
 
     if ($domainJoined) {
         Backup-BitLockerKeyProtector -MountPoint $DriveLetter
+   # The below is commented out as the key protector needs to Azure AD aware for a computer/user object or a group. This functionality is limited at the moment.
    # } else {
    #     Add-BitLockerKeyProtector -MountPoint $DriveLetter -AdAccountOrGroupProtector
     }
@@ -115,8 +116,8 @@ foreach ($volume in $volumes) {
     }
 }
 
-# Output the recovery passwords
-$recoveryPasswords
+# Output the recovery passwords (Disabled for now)
+# $recoveryPasswords
 
 
 Stop-Transcript
