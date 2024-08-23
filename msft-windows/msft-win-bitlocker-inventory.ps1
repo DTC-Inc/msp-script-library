@@ -104,15 +104,77 @@ function BackupRecoveryPassword {
 }
 
 # Function to configure windows for Active Directory Backup
-function Set-BitlockerADBackup {
-    
+function Set-BitLockerADBackupSettings {
+    param (
+        [switch]$Force
+    )
 
+    # Define the registry path for BitLocker settings
+    $registryPath = "HKLM:\SOFTWARE\Policies\Microsoft\FVE"
+
+    # Define the registry values and their corresponding settings
+    $registryValues = @{
+        "ActiveDirectoryBackup"              = 1
+        "ActiveDirectoryInfoToStore"         = 1
+        "FDVActiveDirectoryBackup"           = 1
+        "FDVActiveDirectoryInfoToStore"      = 1
+        "FDVHideRecoveryPage"                = 1
+        "FDVManageDRA"                       = 1
+        "FDVRecovery"                        = 1
+        "FDVRecoveryKey"                     = 2
+        "FDVRecoveryPassword"                = 1
+        "FDVRequireActiveDirectoryBackup"    = 1
+        "OSActiveDirectoryBackup"            = 1
+        "OSActiveDirectoryInfoToStore"       = 1
+        "OSHideRecoveryPage"                 = 1
+        "OSManageDRA"                        = 1
+        "OSRecovery"                         = 1
+        "OSRecoveryKey"                      = 2
+        "OSRecoveryPassword"                 = 1
+        "OSRequireActiveDirectoryBackup"     = 1
+        "RequireActiveDirectoryBackup"       = 1
+        "RDVActiveDirectoryBackup"           = 1
+        "RDVActiveDirectoryInfoToStore"      = 1
+        "RDVHideRecoveryPage"                = 1
+        "RDVManageDRA"                       = 1
+        "RDVRecovery"                        = 1
+        "RDVRecoveryKey"                     = 2
+        "RDVRecoveryPassword"                = 1
+        "RDVRequireActiveDirectoryBackup"    = 1
+    }
+
+    # Create the registry path if it doesn't exist
+    if (-not (Test-Path $registryPath)) {
+        New-Item -Path $registryPath -Force
+    }
+
+    # Iterate through each registry value and set it
+    foreach ($name in $registryValues.Keys) {
+        $value = $registryValues[$name]
+        
+        if (-not (Get-ItemProperty -Path $registryPath -Name $name -ErrorAction SilentlyContinue) -or $Force) {
+            Write-Output "Setting $name to $value in $registryPath"
+            New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType DWORD -Force
+        } else {
+            Write-Output "Registry key $name already exists with the desired value."
+        }
+    }
+
+    Write-Output "BitLocker AD Backup settings have been configured."
 }
+
 
 # Main script
 $volumes = Get-BitLockerVolume
 $recoveryPasswords = @{}
 
+# Configure Bitlocker Active Directory backup if endpoint is joined to an Active Directory domain.
+if (Get-DomainJoinStatus) {
+    Set-BitLockerADBackupSettings -Force
+
+}
+
+# Generate Bitlocker recovery passwords and, or store in Active Directory / Entra ID.
 foreach ($volume in $volumes) {
     $driveLetter = $volume.MountPoint
 
