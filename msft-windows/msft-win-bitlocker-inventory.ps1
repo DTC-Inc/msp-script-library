@@ -154,7 +154,7 @@ function Set-BitLockerADBackupSettings {
         
         if (-not (Get-ItemProperty -Path $registryPath -Name $name -ErrorAction SilentlyContinue) -or $Force) {
             Write-Output "Setting $name to $value in $registryPath"
-            New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType DWORD -Force
+            New-ItemProperty -Path $registryPath -Name $name -Value $value -PropertyType DWORD -Force | Out-Null
         } else {
             Write-Output "Registry key $name already exists with the desired value."
         }
