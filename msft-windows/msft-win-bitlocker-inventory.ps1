@@ -79,8 +79,9 @@ function Get-OrGenerateRecoveryPassword {
         return $recoveryPasswords.RecoveryPassword
     } else {
         # If no recovery password is found, generate a new one
-        $newPassword = Add-BitLockerKeyProtector -MountPoint $DriveLetter -RecoveryPasswordProtector
-        return $newPassword.RecoveryPassword
+        Add-BitLockerKeyProtector -MountPoint $DriveLetter -RecoveryPasswordProtector
+        $recoveryPasswords = Get-BitLockerVolume -MountPoint $DriveLetter | Select-Object -ExpandProperty KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
+        return $recoveryPasswords.RecoveryPassword
     }
 }
 
