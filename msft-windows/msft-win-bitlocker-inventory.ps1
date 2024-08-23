@@ -94,11 +94,19 @@ function BackupRecoveryPassword {
 
     if ($domainJoined) {
         # Store bitlocker keys in Active Directory computer object
-        Backup-BitLockerKeyProtector -MountPoint $DriveLetter
+        $KeyProtectorsToBackup = Get-BitlockerVolume -MountPoint $DriveLetter | Select -Expand KeyProtector | Where { $_.KeyProtectorType -eq 'RecoveryPassword' } | Select -Expand KeyProtectorId        
+        $KeyProtectorsToBackup | ForEach-Object { Backup-BitLockerKeyProtector -MountPoint $DriveLetter -KeyProtectorId $_ }
+
    # The below is commented out as the key protector needs to Azure AD aware for a computer/user object or a group. This functionality is limited at the moment.
    # } else {
    #     Add-BitLockerKeyProtector -MountPoint $DriveLetter -AdAccountOrGroupProtector
     }
+}
+
+# Function to configure windows for Active Directory Backup
+function Set-BitlockerADBackup {
+    
+
 }
 
 # Main script
