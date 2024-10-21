@@ -30,6 +30,7 @@ if (-Not (Test-Path $filePath)) {
 
     # Download the file
     try {
+        $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $fileUrl -OutFile $filePath
         Write-Log "File downloaded successfully to: $filePath"
     } catch {
