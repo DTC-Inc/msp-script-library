@@ -50,17 +50,45 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
+Write-Host "Workstation Reboot Day: $WorkstationRebootDay"
+Write-Host "Server Reboot Day: $ServerRebootDay"
+Write-Host "Hypervisor Reboot Day: $HypervisorRebootDay"
+Write-Host "Reboot Hour Start: $RebootHourStart"
+Write-Host "Reboot Hour End: $RebootHourEnd"
+Write-Host "Reboot Stagger Max: $RebootStaggerMax"
+
+# Get OS information
+$OsInfo = Get-WmiObject -Class Win32_OperatingSystem
+$ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
+
+# Check the OS type
+if ($OsInfo.Caption -match "Windows Server") {
+    if ($ServerRole) {
+        Write-Output "This endpoint is a Hyper-V host (Windows Server with Hyper-V role)."
+        $RebootDay = $HypervisorRebootDay
+    } else {
+        Write-Output "This endpoint is a regular Windows Server."
+        $RebootDay = $ServerRebootDay
+    }
+} elseif ($OsInfo.Caption -match "Windows 10|Windows 11") {
+    Write-Output "This endpoint is a workstation."
+    $RebootDay = $WorkstationRebootDay
+} else {
+    Write-Output "This endpoint type is unknown or unsupported."
+    Exit 0
+}
+
 
 $now = Get-Date
-if ($now.DayOfWeek -eq 'Friday' -and $now.Hour -ge 3 -and $now.Hour -lt 5) {
-    Write-Host "It's between 3 AM and 5 AM on Friday. Rebooting the computer..."
-    $randomSleep = Get-Random -Minimum 60 -Maximum 5400
+if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
+    Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
+    $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
     Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
     # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC**   
-    shutdown -r -t $randomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($randomSleep/60) minutes. Reboot time range script."
+    shutdown -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
 } else {
-    Write-Host "It is not between 3 AM and 5 AM on a Friday. Not rebooting."
+    Write-Host "It is not between $RebootHourStart and $RebootHourEnd on a $RebootDay. Not rebooting."
 }
 
 Stop-Transcript
