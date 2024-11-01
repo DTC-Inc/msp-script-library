@@ -80,7 +80,7 @@ if ($OsInfo.Caption -match "Windows Server") {
 
 
 if ($RebootDay -eq $null) {
-    $RebootDay = Friday
+    $RebootDay = "Friday"
     Write-Host "Reboot Day is null so we are setting the default to $RebootDay."
 }
 
