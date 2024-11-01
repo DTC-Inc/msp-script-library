@@ -79,6 +79,26 @@ if ($OsInfo.Caption -match "Windows Server") {
 }
 
 
+if ($RebootDay -eq $null) {
+    $RebootDay = Friday
+    Write-Host "Reboot Day is null so we are setting the default to $RebootDay."
+}
+
+if ($RebootHourStart -eq $null) {
+    $RebootHourStart = 3
+    Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
+}
+
+if ($RebootHourEnd -eq $null) {
+    $RebootHourEnd = 5
+    Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
+}
+
+if ($RebootStaggerMax -eq $null) {
+    $RebootStaggerMax = 5400
+    Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
+}
+
 $now = Get-Date
 if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
     Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
