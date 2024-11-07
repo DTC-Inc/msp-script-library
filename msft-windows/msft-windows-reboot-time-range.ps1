@@ -50,9 +50,9 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "Workstation Reboot Day: $WorkstationRebootDay"
-Write-Host "Server Reboot Day: $ServerRebootDay"
-Write-Host "Hypervisor Reboot Day: $HypervisorRebootDay"
+Write-Host "Workstation Reboot Day: $WorkstationRebootDayGUID"
+Write-Host "Server Reboot Day: $ServerRebootDayGUID"
+Write-Host "Hypervisor Reboot Day: $HypervisorRebootDayGUID"
 Write-Host "Reboot Hour Start: $RebootHourStart"
 Write-Host "Reboot Hour End: $RebootHourEnd"
 Write-Host "Reboot Stagger Max: $RebootStaggerMax"
@@ -65,17 +65,51 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
 if ($OsInfo.Caption -match "Windows Server") {
     if ($ServerRole) {
         Write-Output "This endpoint is a Hyper-V host (Windows Server with Hyper-V role)."
-        $RebootDay = $HypervisorRebootDay
+        $RebootDayGUID = $HypervisorRebootDayGUID
     } else {
         Write-Output "This endpoint is a regular Windows Server."
-        $RebootDay = $ServerRebootDay
+        $RebootDayGUID = $ServerRebootDayGUID
     }
 } elseif ($OsInfo.Caption -match "Windows 10|Windows 11") {
     Write-Output "This endpoint is a workstation."
-    $RebootDay = $WorkstationRebootDay
+    $RebootDayGUID = $WorkstationRebootDayGUID
 } else {
     Write-Output "This endpoint type is unknown or unsupported."
     Exit 0
+}
+
+# Define a hashtable mapping GUIDs to days of the week for reboot day
+$RebootDayMap = @{
+# workstation reboot days
+    "a4118048-a417-486f-a3e3-c281c0507e40" = "Monday"
+    "54e460ae-fa38-4b17-b7a9-80b7ad7dc2e1" = "Tuesday"
+    "32e6f55e-4b1c-4dac-a941-4e3eab76cde1" = "Wednesday"
+    "563537f3-f201-4547-b323-2d8614d7d628" = "Thursday"
+    "6a7a15ae-ffb8-4cab-b7a8-96ecc6ea71da" = "Friday"
+    "f07a7542-3b1e-4f80-85a0-d81cb90cc493" = "Saturday"
+    "18181b96-58e5-4026-a164-98a57ae265b2" = "Sunday"
+# server reboot days
+    "4268f283-ea0b-478a-9d00-de207023dd32" = "Monday"
+    "434ae7cc-ff3b-427f-8527-01928ba373d7" = "Tuesday"
+    "d684bae7-dcb4-4896-865c-1a7d12248779" = "Wednesday"
+    "bcdd77ef-927e-490f-910d-79d6b40dcea5" = "Thursday"
+    "afcd4c7c-3169-426f-9980-d0cdb815b86d" = "Friday"
+    "57dc1d7a-7b29-4a90-aae5-ec089cb6e26d" = "Saturday"
+    "32ca16da-3f4e-4d0f-932f-b0ed074557e3" = "Sunday"
+# hypervisor reboot days
+    "5c7326bd-3f94-4cd9-9825-d2a98dc3bf1c" = "Monday"
+    "cf0f0b33-7ab9-42f5-8732-b3f93148b168" = "Tuesday"
+    "80426bb8-4c74-4b39-99df-79dc054806cc" = "Wednesday"
+    "6288333f-fdb7-4b49-a0a3-4ffc862fdbb7" = "Thursday"
+    "e0bf1d08-c9b8-44ae-be6c-37df6a02b982" = "Friday"
+    "0b3463ca-5bb0-405d-9c29-0c2089874ff6" = "Saturday"
+    "f1ca5ece-97dd-4196-8540-110f733b2e1b" = "Sunday"
+}
+
+if ($RebootDayMap.ContainsKey($rebootDayGUID)) {
+    $RebootDay = $RebootDayMap[$rebootDayGUID]
+} else {
+    $RebootDay = "GUID not found in mapping."
 }
 
 
