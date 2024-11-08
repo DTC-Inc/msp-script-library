@@ -59,10 +59,10 @@ Write-Host "Reboot Stagger Max: $RebootStaggerMax"
 
 # Get OS information
 $OsInfo = Get-WmiObject -Class Win32_OperatingSystem
-$ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
 
 # Check the OS type
 if ($OsInfo.Caption -match "Windows Server") {
+$ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
     if ($ServerRole) {
         Write-Output "This endpoint is a Hyper-V host (Windows Server with Hyper-V role)."
         $RebootDay = $HypervisorRebootDay
