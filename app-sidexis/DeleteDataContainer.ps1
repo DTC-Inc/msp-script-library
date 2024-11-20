@@ -3,6 +3,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
+
 $ScriptLogName = "DeleteDataContainer.log"
 
 if ($RMM -ne 1) {
@@ -43,6 +44,7 @@ if ($RMM -ne 1) {
 
 # Path to the folder
 $FolderPath = "C:\datacontainer"
+
 
 # Check if the folder exists
 if (-Not (Test-Path -Path $FolderPath)) {
