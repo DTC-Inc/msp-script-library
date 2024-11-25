@@ -2,7 +2,7 @@
 Add-PSSnapin VeeamPSSnapIn -ErrorAction SilentlyContinue
 
 # Get all jobs
-$jobs = Get-VBRJob
+$jobs = Get-VBRJob -WarningAction SilentlyContinue
 
 # Check for disabled jobs
 $disabledJobs = $jobs | Where-Object {$_.IsScheduleEnabled -eq $false}
