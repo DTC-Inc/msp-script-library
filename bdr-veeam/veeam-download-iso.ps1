@@ -1,8 +1,8 @@
 # Define variables
 $folderPath = "C:\VeeamInstall"  # Folder path where the file will be stored
-$fileName = "VeeamBackup&Replication_12.2.0.334_20240824.iso"          # File name to check and download
+$fileName = "VeeamBackup&Replication_12.3.0.310_20241201.iso"          # File name to check and download
 $filePath = Join-Path $folderPath $fileName
-$fileUrl = "https://download2.veeam.com/VBR/v12/VeeamBackup&Replication_12.2.0.334_20240824.iso"  # URL to download the file
+$fileUrl = "https://download2.veeam.com/VBR/v12/VeeamBackup&Replication_12.3.0.310_20241201.iso"  # URL to download the file
 $logFilePath = "C:\logs\veeam_download.log"  # Path for the log file
 
 # Function to write to log file
