@@ -1,5 +1,8 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+# $CurrentComputerName
+# $NewComputerName
+# $RenameNeeded (set to true in RMM if rename needed)
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -63,5 +66,20 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM `n"
+
+# Rename computer if needed
+
+If ($RenameNeeded) {
+   # Rename the computer
+   try {
+       Rename-Computer -NewName $NewComputerName -Force
+       Write-Host "Computer name has been changed to $NewComputerName and will take effect on next reboot"
+   } catch {
+       Write-Host "Failed to rename the computer. Error: $_"
+   }
+} else {
+  # Rename not needed
+  Write-Host "Computer rename not needed. No action taken."
+}
 
 Stop-Transcript
