@@ -1,5 +1,6 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+# CurrentComputerName
 # $NewComputerName
 # $RenameNeeded (set to true in RMM if rename needed)
 
