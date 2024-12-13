@@ -1,8 +1,50 @@
+
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+# $CurrentComputerName
+# $NewComputerName
+# $RenameNeeded (set to true in RMM if rename needed)
+
+# Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "msft-windows-rename-compuer.log"
 
+if ($RMM -ne 1) {
+    $ValidInput = 0
+    # Checking for valid input.
+    while ($ValidInput -ne 1) {
+        # Ask for input here. This is the interactive area for getting variable information. Computer name pulled from environmental variable
+        # Remember to make ValidInput = 1 whenever correct input is given.
+        
+        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
+        if ($Description) {
+            $ValidInput = 1
+        } else {
+            Write-Host "Invalid input. Please try again."
+        }
+        
+        $CurrentComputerName = $env:COMPUTERNAME
+        
+        $NewComputerName = Read-Host "Enter the new computer name. Must be 15 characters or less and only contain letters, numbers and hyphens."
+        if (($NewComputerName.Length -le 15 -and $NewComputerName -match '^[a-zA-Z0-9-]+$')) {
+            $ValidInput = 1
+        } else {
+            Write-Host "Invalid input. Please try again."
+        }
+        
+        $userInput = Read-Host "Please enter 'True' to rename computer or 'False' to keep existing name"
+        # Convert the input to a boolean
+        try {
+            $RenameNeeded = [bool]::Parse($userInput)
+            Write-Host "You entered a valid Boolean value: $RenameNeeded"
+            $ValidInput = 1
+        } catch {
+            Write-Host "Invalid input. Please enter 'True' or 'False'."
+        }
+    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+
+} else { 
     # Store the logs in the RMMScriptPath
     if ($null -eq $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
