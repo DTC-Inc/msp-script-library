@@ -14,18 +14,31 @@ if ($RMM -ne 1) {
     while ($ValidInput -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information. Computer name pulled from environmental variable
         # Remember to make ValidInput = 1 whenever correct input is given.
-        $CurrentComputerName = $env:COMPUTERNAME
+        
         $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
         if ($Description) {
             $ValidInput = 1
         } else {
             Write-Host "Invalid input. Please try again."
         }
+        
+        $CurrentComputerName = $env:COMPUTERNAME
+        
         $NewComputerName = Read-Host "Enter the new computer name. Must be 15 characters or less and only contain letters, numbers and hyphens."
         if (($NewComputerName.Length -le 15 -and $NewComputerName -match '^[a-zA-Z0-9-]+$')) {
             $ValidInput = 1
         } else {
             Write-Host "Invalid input. Please try again."
+        }
+        
+        $userInput = Read-Host "Please enter 'True' to rename computer or 'False' to keep existing name"
+        # Convert the input to a boolean
+        try {
+            $RenameNeeded = [bool]::Parse($userInput)
+            Write-Host "You entered a valid Boolean value: $RenameNeeded"
+            $ValidInput = 1
+        } catch {
+            Write-Host "Invalid input. Please enter 'True' or 'False'."
         }
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
@@ -54,23 +67,19 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM `n"
 
-# This script changes the computer name to a new supplied value
-
-# Variables need set in RMM
-
-# Rename Computer
+# Rename computer if needed
 
 If ($RenameNeeded) {
    # Rename the computer
    try {
-       Renamee-Computer -NewName $NewComputerName -Force
+       Rename-Computer -NewName $NewComputerName -Force
        Write-Host "Computer name has been changed to $NewComputerName and will take effect on next reboot"
    } catch {
        Write-Host "Failed to rename the computer. Error: $_"
    }
 } else {
   # Rename not needed
-  Write-Host "Computer renaming not needed. No action taken."
+  Write-Host "Computer rename not needed. No action taken."
 }
 
 Stop-Transcript
