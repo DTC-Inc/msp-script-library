@@ -55,6 +55,6 @@ Set-ItemProperty -Path $regPath -Name "LegalNoticeCaption" -Value $bannerTitle -
 Set-ItemProperty -Path $regPath -Name "LegalNoticeText" -Value $bannerText -Force
 
 # Confirm the changes
-Write-Host "Login banner set successfully." -ForegroundColor Green
+Write-Host "Login banner set successfully."
 
 Stop-Transcript
