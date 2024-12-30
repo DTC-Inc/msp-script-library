@@ -1,6 +1,9 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
+# This script disables and removes any pre-staging administrative users from a windows endpoint with a specified age of inactivity in days.
+# It also disables any local admin after a specified time period in days. It does not remove other local admins.
+
 # $InstallationUsers needs filled out with comma seperated usernames used from pre-staging/staging. They need removed
 # sooner rather than later
 
@@ -62,7 +65,14 @@ Write-Host "RMM: $RMM"
 #$InstallationUsers = "installadmin,testuser,backupadmin"
 
 # Define a comma-separated string of excluded users
-#$ExcludedUsers = "administrator,superuser"
+# $ExcludedUsers = "administrator,superuser"
+
+# Check if the machine is a domain controller
+$IsDomainController = Get-CimInstance -ClassName Win32_ComputerSystem | Where-Object { $_.DomainRole -eq 4 -or $_.DomainRole -eq 5 }
+if ($IsDomainController) {
+    Write-Output "This machine is a Windows Domain Controller. Exiting script."
+    Exit 0
+}
 
 # Convert the strings into arrays
 $UserNames = $InstallationUsers -split ','
@@ -72,7 +82,7 @@ $ExcludedUserNames = $ExcludedUsers -split ','
 #$InactivityDays = 30
 
 # Define the inactivity period for local administrators
-#$AdminInactivityDays = 90
+# $AdminInactivityDays = 90
 
 # Calculate the cutoff dates for inactivity
 $CutoffDate = (Get-Date).AddDays(-$InactivityDays)
@@ -98,6 +108,12 @@ foreach ($UserName in $AllUsersToCheck) {
     # Skip domain users (users not local)
     if ($UserName -match "\\") {
         Write-Output "Skipping domain user: $UserName"
+        continue
+    }
+
+    # Skip Azure Active Directory users
+    if ($UserName -match "@") {
+        Write-Output "Skipping Azure AD user: $UserName"
         continue
     }
 
