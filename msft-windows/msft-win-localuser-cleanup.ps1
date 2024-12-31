@@ -29,7 +29,7 @@ if ($RMM -ne 1) {
         $ExcludedUsers = Read-Host "Please enter the users you wish to exclude from cleanup."
         $InactivityDays = Read-Host "Please enter the amount of days a user needs to be inactive to be disabled"
         $AdminInactivityDays = Read-Host "PLease enter the amount days all admins must be inative before disabling"
-        Write-Host "Please note, Installation Users will be deleted after InactivityDays * 
+        Write-Host "Please note, Installation Users will be deleted after InactivityDays"
         2"
 
         $ValidInput = 1
@@ -95,10 +95,7 @@ $AdminCutoffDate = (Get-Date).AddDays(-$AdminInactivityDays)
 $DeletionThresholdDate = (Get-Date).AddDays(-($InactivityDays * 2))
 
 # Get all members of the Administrators group
-# Get all members of the Administrators group and clean up names
-$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name | ForEach-Object { $_ -replace '.*\\', '' }
-
-$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name | Where -Property PrincipalSource -ne Local | ForEach-Object { $_ -replace '.*\\, '' }
+$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name | Where -Property PrincipalSource -ne Local | ForEach-Object { $_ -replace '.*\\', '' }
 
 # Combine all users to process: InstallationUsers + Local Administrators (avoiding duplicates)
 $AllUsersToCheck = ($UserNames + $AdminGroupMembers) | Sort-Object -Unique
