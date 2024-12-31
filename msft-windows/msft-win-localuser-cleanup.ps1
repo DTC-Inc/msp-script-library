@@ -30,7 +30,6 @@ if ($RMM -ne 1) {
         $InactivityDays = Read-Host "Please enter the amount of days a user needs to be inactive to be disabled"
         $AdminInactivityDays = Read-Host "PLease enter the amount days all admins must be inative before disabling"
         Write-Host "Please note, Installation Users will be deleted after InactivityDays"
-        2"
 
         $ValidInput = 1
         
