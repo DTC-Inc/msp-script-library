@@ -95,7 +95,7 @@ $AdminCutoffDate = (Get-Date).AddDays(-$AdminInactivityDays)
 $DeletionThresholdDate = (Get-Date).AddDays(-($InactivityDays * 2))
 
 # Get all members of the Administrators group
-$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name
+$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name | Where -Property PrincipalSource -ne Local
 
 # Combine all users to process: InstallationUsers + Local Administrators (avoiding duplicates)
 $AllUsersToCheck = ($UserNames + $AdminGroupMembers) | Sort-Object -Unique
@@ -108,11 +108,12 @@ foreach ($UserName in $AllUsersToCheck) {
         continue
     }
 
+    # Disabling below due to line 98
     # Skip domain users (users not local)
-    if ($UserName -match "\\") {
-        Write-Output "Skipping domain user: $UserName"
-        continue
-    }
+    # if ($UserName -match "\\") {
+        # Write-Output "Skipping domain user: $UserName"
+        # continue
+    # }
 
     # Skip Azure Active Directory users
     if ($UserName -match "@") {
