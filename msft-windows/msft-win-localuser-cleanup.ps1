@@ -31,6 +31,9 @@ if ($RMM -ne 1) {
         $AdminInactivityDays = Read-Host "PLease enter the amount days all admins must be inative before disabling"
         Write-Host "Please note, Installation Users will be deleted after InactivityDays * 
         2"
+
+        $ValidInput = 1
+        
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 
