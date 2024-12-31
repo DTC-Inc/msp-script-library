@@ -95,7 +95,7 @@ $AdminCutoffDate = (Get-Date).AddDays(-$AdminInactivityDays)
 $DeletionThresholdDate = (Get-Date).AddDays(-($InactivityDays * 2))
 
 # Get all members of the Administrators group
-$AdminGroupMembers = (Get-LocalGroupMember -Group "Administrators").Name | Where -Property PrincipalSource -eq Local | ForEach-Object { $_ -replace '.*\\', '' }
+$AdminGroupMembers = Get-LocalGroupMember -Group "Administrators" | Where -Property PrincipalSource -eq Local | Select -Expand Name | ForEach-Object { $_ -replace '.*\\', '' }
 
 # Combine all users to process: InstallationUsers + Local Administrators (avoiding duplicates)
 $AllUsersToCheck = ($UserNames + $AdminGroupMembers) | Sort-Object -Unique
