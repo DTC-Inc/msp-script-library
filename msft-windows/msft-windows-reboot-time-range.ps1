@@ -1,5 +1,13 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+# $WorkstationRebootDay needs declared in RMM, else defaults to Everyday
+# $ServerRebootDay needs declared in RMM, else defaults to Everyday
+# $HypervisorRebootDay needs declared in RMM, else defaults to Everyday
+# $RebootHourStart needs declared in RMM, else defaults to 3 AM
+# $RebootHourEnd needs declared in RMM, else defaults to 5 AM
+# $RebootStaggerMax, needs declared in RMM, else defaults to 5400
+# $RebootThreshold needs declared in RMM ,else defaults to 50
+# $RebootCount must be available, not declared. This scripts adds to this counter until it hits 1 less than the RebootThreshold.
 
 # No variables are required for this script besides $Description.
 
@@ -56,6 +64,8 @@ Write-Host "Hypervisor Reboot Day: $HypervisorRebootDay"
 Write-Host "Reboot Hour Start: $RebootHourStart"
 Write-Host "Reboot Hour End: $RebootHourEnd"
 Write-Host "Reboot Stagger Max: $RebootStaggerMax"
+Write-Host "Reboot Threshold: $RebootThreshold"
+Write-Host "Reboot Count: $RebootCount"
 
 # Get OS information
 $OsInfo = Get-WmiObject -Class Win32_OperatingSystem
@@ -80,17 +90,17 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
 
 
 if ($RebootDay -eq $null) {
-    $RebootDay = "Friday"
+    $RebootDay = "Everyday"
     Write-Host "Reboot Day is null so we are setting the default to $RebootDay."
 }
 
 if ($RebootHourStart -eq $null) {
-    $RebootHourStart = 3
+    $RebootHourStart = 12
     Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
 }
 
 if ($RebootHourEnd -eq $null) {
-    $RebootHourEnd = 5
+    $RebootHourEnd = 23
     Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
 }
 
@@ -100,7 +110,7 @@ if ($RebootStaggerMax -eq $null) {
 }
 
 $now = Get-Date
-if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
+if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd -and $RebootCount -lt $RebootThreshold) {
     Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
     $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
     Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
@@ -108,8 +118,21 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
     $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
     & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
+    $RebootCount = $RebootCount + 1
+
+} elseif ($RebootDay -eq "Everyday" -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd -and $RebootCount -lt $RebootThreshold) {
+    Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
+    $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
+    Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
+    # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
+    $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+    & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+
+    $RebootCount = $RebootCount + 1
+
 } else {
     Write-Host "It is not between $RebootHourStart and $RebootHourEnd on a $RebootDay. Not rebooting."
+
 }
 
 Stop-Transcript
