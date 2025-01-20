@@ -92,15 +92,15 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
     if ($RebootDay -eq $null){
         $RebootDay = "Everyday"
     }
-} elseif ($RebootDay -eq "Manual") {
-    Write-Host "Reboots are done manually for this endpoint. Exiting."
-    Exit 0
-}
 } else {
     Write-Output "This endpoint type is unknown or unsupported."
     Exit 0
 }
 
+if ($RebootDay -eq "Manual") {
+    Write-Host "Reboots are done manually for this endpoint. Exiting."
+    Exit 0
+}
 
 if ($RebootDay -eq $null) {
     $RebootDay = "Everyday"
