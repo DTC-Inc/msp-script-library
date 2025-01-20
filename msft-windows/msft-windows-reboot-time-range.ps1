@@ -1,8 +1,8 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 # $WorkstationRebootDay needs declared in RMM, else defaults to Everyday
-# $ServerRebootDay needs declared in RMM, else defaults to Everyday
-# $HypervisorRebootDay needs declared in RMM, else defaults to Everyday
+# $ServerRebootDay needs declared in RMM, else defaults to Saturday
+# $HypervisorRebootDay needs declared in RMM, else defaults to Tuesday
 # $RebootHourStart needs declared in RMM, else defaults to 3 AM
 # $RebootHourEnd needs declared in RMM, else defaults to 5 AM
 # $RebootStaggerMax, needs declared in RMM, else defaults to 5400
