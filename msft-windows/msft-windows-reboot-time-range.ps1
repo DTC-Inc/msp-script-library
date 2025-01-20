@@ -82,7 +82,7 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
     } else {
         Write-Output "This endpoint is a regular Windows Server."
         $RebootDay = $ServerRebootDay
-        if ($RebootDay -eq $nulll) {
+        if ($RebootDay -eq $null) {
             $RebootDay = "Saturday"
         }
     }
@@ -140,7 +140,7 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
         $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
         & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-        $RebootCount = $RebootCount + 1
+        #$RebootCount = $RebootCount + 1
     } else {
         Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
     }
@@ -154,7 +154,7 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
         $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
         & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-        $RebootCount = $RebootCount + 1
+        #$RebootCount = $RebootCount + 1
     } else {
         Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
     }
