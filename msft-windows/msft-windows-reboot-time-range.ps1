@@ -15,7 +15,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "msft-windows-idle-time-reboot.log"
+$ScriptLogName = "msft-windows-reboot-maintenance-window.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -107,6 +107,11 @@ if ($RebootHourEnd -eq $null) {
 if ($RebootStaggerMax -eq $null) {
     $RebootStaggerMax = 5400
     Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
+}
+
+if ($RebootThreshold -eq $null) {
+    $RebootThreshold = 50
+    Write-Host "Reboot threshold was null, setting this to 50."
 }
 
 if ($RebootCount -eq $null) {
