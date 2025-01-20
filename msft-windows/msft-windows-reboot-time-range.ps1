@@ -123,7 +123,7 @@ Write-Host "The reboot day for this endpoint is $RebootDay"
 
 $now = Get-Date
 if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
-    if ($RebootCount -gt $RebootThreshold) {
+    if ($RebootCount -le $RebootThreshold) {
         Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
         Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
@@ -137,7 +137,7 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
     }
 
 } elseif ($RebootDay -eq "Everyday" -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
-    if ($RebootCount -gt $RebootThreshold) {
+    if ($RebootCount -le $RebootThreshold) {
         Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
         Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
