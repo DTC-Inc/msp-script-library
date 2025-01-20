@@ -76,13 +76,22 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
     if ($ServerRole) {
         Write-Output "This endpoint is a Hyper-V host (Windows Server with Hyper-V role)."
         $RebootDay = $HypervisorRebootDay
+        if ($RebootDay -eq $null) {
+            $RebootDay = "Tuesday"
+        }
     } else {
         Write-Output "This endpoint is a regular Windows Server."
         $RebootDay = $ServerRebootDay
+        if ($RebootDay -eq $nulll) {
+            $RebootDay = "Saturday"
+        }
     }
 } elseif ($OsInfo.Caption -match "Windows 10|Windows 11") {
     Write-Output "This endpoint is a workstation."
     $RebootDay = $WorkstationRebootDay
+    if ($RebootDay -eq $null){
+        $RebootDay = "Everyday"
+    }
 } else {
     Write-Output "This endpoint type is unknown or unsupported."
     Exit 0
@@ -95,12 +104,12 @@ if ($RebootDay -eq $null) {
 }
 
 if ($RebootHourStart -eq $null) {
-    $RebootHourStart = 12
+    $RebootHourStart = 3
     Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
 }
 
 if ($RebootHourEnd -eq $null) {
-    $RebootHourEnd = 23
+    $RebootHourEnd = 5
     Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
 }
  
