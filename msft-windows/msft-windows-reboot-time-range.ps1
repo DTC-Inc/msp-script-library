@@ -95,7 +95,7 @@ if ($RebootDay -eq $null) {
 }
 
 if ($RebootHourStart -eq $null) {
-    $RebootHourStart = 0
+    $RebootHourStart = 12
     Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
 }
 
@@ -103,10 +103,15 @@ if ($RebootHourEnd -eq $null) {
     $RebootHourEnd = 23
     Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
 }
-
+ 
 if ($RebootStaggerMax -eq $null) {
     $RebootStaggerMax = 5400
     Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
+}
+
+if ($RebootCount -eq $null) {
+    $RebootCount = 0
+    Write-Host "Reboot count was null, setting this to 0."
 }
 
 $now = Get-Date
