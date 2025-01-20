@@ -114,26 +114,36 @@ if ($RebootCount -eq $null) {
     Write-Host "Reboot count was null, setting this to 0."
 }
 
+Write-Host "The reboot day for this endpoint is $RebootDay"
+
 $now = Get-Date
-if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd -and $RebootCount -lt $RebootThreshold) {
-    Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
-    $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
-    Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-    # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
-    $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
-    & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
+    if ($RebootCount -lt $RebootThreshold) {
+        Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
+        Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
+        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
+        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-    $RebootCount = $RebootCount + 1
+        $RebootCount = $RebootCount + 1
+    } else {
+        Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
+    }
 
-} elseif ($RebootDay -eq "Everyday" -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd -and $RebootCount -lt $RebootThreshold) {
-    Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
-    $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
-    Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-    # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
-    $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
-    & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+} elseif ($RebootDay -eq "Everyday" -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
+    if ($RebootCount -lt $RebootThreshold) {
+        Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
+        Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
+        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
+        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-    $RebootCount = $RebootCount + 1
+        $RebootCount = $RebootCount + 1
+    } else {
+        Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
+    }
 
 } else {
     Write-Host "It is not between $RebootHourStart and $RebootHourEnd on a $RebootDay. Not rebooting."
