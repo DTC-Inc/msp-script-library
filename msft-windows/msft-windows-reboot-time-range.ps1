@@ -95,7 +95,7 @@ if ($RebootDay -eq $null) {
 }
 
 if ($RebootHourStart -eq $null) {
-    $RebootHourStart = 12
+    $RebootHourStart = 0
     Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
 }
 
