@@ -76,6 +76,7 @@ If ($RenameNeeded) {
        Write-Host "Computer name has been changed to $NewComputerName and will take effect on next reboot"
    } catch {
        Write-Host "Failed to rename the computer. Error: $_"
+       Exit 1
    }
 } else {
   # Rename not needed
