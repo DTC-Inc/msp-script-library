@@ -1,5 +1,13 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+# $WorkstationRebootDay needs declared in RMM, else defaults to Everyday
+# $ServerRebootDay needs declared in RMM, else defaults to Saturday
+# $HypervisorRebootDay needs declared in RMM, else defaults to Tuesday
+# $RebootHourStart needs declared in RMM, else defaults to 3 AM
+# $RebootHourEnd needs declared in RMM, else defaults to 5 AM
+# $RebootStaggerMax, needs declared in RMM, else defaults to 5400
+# $RebootThreshold needs declared in RMM ,else defaults to 50
+# $RebootCount must be available, not declared. This scripts adds to this counter until it hits 1 less than the RebootThreshold.
 
 # No variables are required for this script besides $Description.
 
@@ -7,7 +15,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "msft-windows-idle-time-reboot.log"
+$ScriptLogName = "msft-windows-reboot-maintenance-window.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -56,6 +64,8 @@ Write-Host "Hypervisor Reboot Day: $HypervisorRebootDay"
 Write-Host "Reboot Hour Start: $RebootHourStart"
 Write-Host "Reboot Hour End: $RebootHourEnd"
 Write-Host "Reboot Stagger Max: $RebootStaggerMax"
+Write-Host "Reboot Threshold: $RebootThreshold"
+Write-Host "Reboot Count: $RebootCount"
 
 # Get OS information
 $OsInfo = Get-WmiObject -Class Win32_OperatingSystem
@@ -66,21 +76,34 @@ $ServerRole = (Get-WindowsFeature -Name Hyper-V).Installed
     if ($ServerRole) {
         Write-Output "This endpoint is a Hyper-V host (Windows Server with Hyper-V role)."
         $RebootDay = $HypervisorRebootDay
+        if ($RebootDay -eq $null) {
+            $RebootDay = "Tuesday"
+        }
     } else {
         Write-Output "This endpoint is a regular Windows Server."
         $RebootDay = $ServerRebootDay
+        if ($RebootDay -eq $null) {
+            $RebootDay = "Saturday"
+        }
     }
 } elseif ($OsInfo.Caption -match "Windows 10|Windows 11") {
     Write-Output "This endpoint is a workstation."
     $RebootDay = $WorkstationRebootDay
+    if ($RebootDay -eq $null){
+        $RebootDay = "Everyday"
+    }
 } else {
     Write-Output "This endpoint type is unknown or unsupported."
     Exit 0
 }
 
+if ($RebootDay -eq "Manual") {
+    Write-Host "Reboots are done manually for this endpoint. Exiting."
+    Exit 0
+}
 
 if ($RebootDay -eq $null) {
-    $RebootDay = "Friday"
+    $RebootDay = "Everyday"
     Write-Host "Reboot Day is null so we are setting the default to $RebootDay."
 }
 
@@ -93,23 +116,56 @@ if ($RebootHourEnd -eq $null) {
     $RebootHourEnd = 5
     Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
 }
-
+ 
 if ($RebootStaggerMax -eq $null) {
     $RebootStaggerMax = 5400
     Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
 }
 
+if ($RebootThreshold -eq $null) {
+    $RebootThreshold = 50
+    Write-Host "Reboot threshold was null, setting this to 50."
+}
+
+if ($RebootCount -eq $null) {
+    $RebootCount = 0
+    Write-Host "Reboot count was null, setting this to 0."
+}
+
+Write-Host "The reboot day for this endpoint is $RebootDay"
+
 $now = Get-Date
 if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
-    Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. Rebooting the computer..."
-    $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
-    Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-    # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
-    $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
-    & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+    if ($RebootCount -le $RebootThreshold) {
+        Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
+        Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
+        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
+        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+
+        #$RebootCount = $RebootCount + 1
+    } else {
+        Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
+    }
+
+} elseif ($RebootDay -eq "Everyday" -and $now.Hour -ge $RebootHourStart -and $now.Hour -lt $RebootHourEnd) {
+    if ($RebootCount -le $RebootThreshold) {
+        Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
+        Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
+        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
+        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+
+        #$RebootCount = $RebootCount + 1
+    } else {
+        Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
+    }
 
 } else {
     Write-Host "It is not between $RebootHourStart and $RebootHourEnd on a $RebootDay. Not rebooting."
+
 }
 
 Stop-Transcript
