@@ -118,7 +118,7 @@ if ($RebootHourEnd -eq $null) {
 }
  
 if ($RebootStaggerMax -eq $null) {
-    $RebootStaggerMax = 5400
+    $RebootStaggerMax = 3600
     Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
 }
 
@@ -140,11 +140,12 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
         Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
         Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
-        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
-        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+        Start-Sleep -Seconds $RandomSleep  # Sleep for a random duration between 1 and 60 minutes **LEGACY LOGIC** 
+        Restart-Computer -Force
+        ## DISABLED LEGACY LOGIC $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        ## DISABLED LEGACY LOGIC & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-        #$RebootCount = $RebootCount + 1
+        # Disabled until RMM supports cross organization Reboot Count field $RebootCount = $RebootCount + 1
     } else {
         Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
     }
@@ -154,11 +155,12 @@ if ($now.DayOfWeek -eq '$RebootDay' -and $now.Hour -ge $RebootHourStart -and $no
         Write-Host "It's between $RebootHourStart and $RebootHourEnd on $RebootDay. We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
         Write-Host "Sleeping for $($randomSleep/60) minutes before rebooting..."
-        # Start-Sleep -Seconds $randomSleep  # Sleep for a random duration between 1 and 90 minutes **LEGACY LOGIC** 
-        $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
-        & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
+        Start-Sleep -Seconds $RandomSleep  # Sleep for a random duration between 1 and 60 minutes
+        Restart-Computer -Force
+        ## DISABLED LEGACY LOGIC $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
+        ## DISABLED LEGACY LOGIC & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
-        #$RebootCount = $RebootCount + 1
+        # Disabled until RMM supports cross organization Reboot Count field $RebootCount = $RebootCount + 1
     } else {
         Write-Host "Reboot threshold has been meant. Not rebooting. Reboot Count: $RebootCount. Reboot Threshold: $RebootThreshold."
     }
