@@ -217,7 +217,7 @@ if ($now.DayOfWeek -eq '$RebootDay') {
 
         # Get random time to hold the reboot
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
-       
+        
         # Calculate Time Difference with Random Sleep
         $RebootHoldTime = $TimeDifference.TotalSeconds + $RandomSleep
 
