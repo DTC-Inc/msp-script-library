@@ -146,11 +146,6 @@ if ($RebootHourStart -eq $null) {
     Write-Host "Reboot Hour Start is null so we are setting the default to $RebootHourStart."
 }
 
-if ($RebootHourEnd -eq $null) {
-    $RebootHourEnd = 5
-    Write-Host "Reboot Hour End is null so we are setting the default to $RebootHourEnd."
-}
- 
 if ($RebootStaggerMax -eq $null) {
     $RebootStaggerMax = 3600
     Write-Host "Reboot Stagger Max is null sow we are setting the default to $RebootStaggerMax."
@@ -197,8 +192,8 @@ if ($now.DayOfWeek -eq '$RebootDay') {
         $RebootHoldTime = $TimeDifference.TotalSeconds + $RandomSleep
 
         # Sleep for the reboot hold time
-        Start-Sleep -Seconds $RebootHoldTime
-        Write-Host "Sleeping for $($RebootHoldTime/60) minutes before rebooting..."
+        Write-Host "Holding reboot for $($RebootHoldTime.Hours), $($RebootHoldTime.Minutes)"
+        Start-Sleep -Seconds $RebootHoldTime.TotalSeconds
 
         # Restart the endpoint
         Restart-Computer -Force
@@ -220,14 +215,14 @@ if ($now.DayOfWeek -eq '$RebootDay') {
         
         # Calculate Time Difference with Random Sleep
         $RebootHoldTime = $TimeDifference.TotalSeconds + $RandomSleep
-
+        
         # Sleep for the reboot hold time
-        Start-Sleep -Seconds $RebootHoldTime
-        Write-Host "Sleeping for $($RebootHoldTime/60) minutes before rebooting..."
+        Write-Host "Holding reboot for $($RebootHoldTime.Hours), $($RebootHoldTime.Minutes)"
+        Start-Sleep -Seconds $RebootHoldTime.TotalSeconds
 
         # Restart the endpoint
         Restart-Computer -Force
-        
+
         ## DISABLED LEGACY LOGIC $ShutdownPath = $ENV:WINDIR + "\System32\shutdown.exe"  
         ## DISABLED LEGACY LOGIC & $ShutdownPath -r -t $RandomSleep -f -c "Your MSP is rebooting this endpoint for pending maintenance in $($RandomSleep/60) minutes. Reboot time range script."
 
