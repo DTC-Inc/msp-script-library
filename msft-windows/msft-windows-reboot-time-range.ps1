@@ -232,7 +232,7 @@ if ($now.DayOfWeek -eq '$RebootDay') {
     }
 
 } else {
-    Write-Host "It is not between $RebootHourStart and $RebootHourEnd on a $RebootDay. Not rebooting."
+    Write-Host "It is not $RebootHourStart on a $RebootDay. Not rebooting."
 
 }
 
