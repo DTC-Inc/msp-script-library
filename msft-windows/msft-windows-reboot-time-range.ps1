@@ -189,11 +189,11 @@ if ($now.DayOfWeek -eq '$RebootDay') {
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
        
         # Calculate Time Difference with Random Sleep
-        $RebootHoldTime = $TimeDifference.TotalSeconds + $RandomSleep
+        $RebootHoldTime = $($TimeDifference.TotalSeconds) + $RandomSleep
 
         # Sleep for the reboot hold time
-        Write-Host "Holding reboot for $($RebootHoldTime.Hours), $($RebootHoldTime.Minutes)"
-        Start-Sleep -Seconds $RebootHoldTime.TotalSeconds
+        Write-Host "Holding reboot for $RebootHoldTime seconds."
+        Start-Sleep -Seconds $RebootHoldTime
 
         # Restart the endpoint
         Restart-Computer -Force
@@ -212,13 +212,13 @@ if ($now.DayOfWeek -eq '$RebootDay') {
 
         # Get random time to hold the reboot
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
-        
+       
         # Calculate Time Difference with Random Sleep
-        $RebootHoldTime = $TimeDifference.TotalSeconds + $RandomSleep
-        
+        $RebootHoldTime = $($TimeDifference.TotalSeconds) + $RandomSleep
+
         # Sleep for the reboot hold time
-        Write-Host "Holding reboot for $($RebootHoldTime.Hours), $($RebootHoldTime.Minutes)"
-        Start-Sleep -Seconds $RebootHoldTime.TotalSeconds
+        Write-Host "Holding reboot for $RebootHoldTime seconds."
+        Start-Sleep -Seconds $RebootHoldTime
 
         # Restart the endpoint
         Restart-Computer -Force
