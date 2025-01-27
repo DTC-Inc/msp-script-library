@@ -183,7 +183,7 @@ Write-Host "Time difference: $($TimeDifference.Hours) hours, $($TimeDifference.M
 
 if ($now.DayOfWeek -eq '$RebootDay') {
     if ($RebootCount -le $RebootThreshold) {
-        Write-Host "We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        Write-Host "We're under the $RebootThreshold with reboot count $RebootCount. Rebooting the computer..."
 
         # Get random time to hold the reboot
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
@@ -208,7 +208,7 @@ if ($now.DayOfWeek -eq '$RebootDay') {
 
 } elseif ($RebootDay -eq "Everyday") {
     if ($RebootCount -le $RebootThreshold) {
-        Write-Host "We're under the $RebootThresholdl with reboot count $RebootCount. Rebooting the computer..."
+        Write-Host "We're under the $RebootThreshold with reboot count $RebootCount. Rebooting the computer..."
 
         # Get random time to hold the reboot
         $RandomSleep = Get-Random -Minimum 60 -Maximum $RebootStaggerMax
