@@ -47,7 +47,7 @@ Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 Write-Host "InstallerURL: $installerUrl"
-Write-Host "InstallerPath: $installerPath
+Write-Host "InstallerPath: $installerPath"
 
 $serviceName = "CynetLauncher"
 
