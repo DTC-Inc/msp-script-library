@@ -65,42 +65,6 @@ Write-Host "Reboot Stagger Max: $RebootStaggerMax"
 Write-Host "Reboot Threshold: $RebootThreshold"
 Write-Host "Reboot Count: $RebootCount"
 
-$IsRebootPending = $false
-
-# Check PendingFileRenameOperations registry key
-$pendingFileRename = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name "PendingFileRenameOperations" -ErrorAction SilentlyContinue
-if ($pendingFileRename.PendingFileRenameOperations) {
-    $IsRebootPending = $true
-}
-
-# Check RebootRequired registry key
-$rebootRequired = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update" -Name "RebootRequired" -ErrorAction SilentlyContinue
-if ($rebootRequired.RebootRequired) {
-    $IsRebootPending = $true
-}
-
-# Check PendingComputerRename registry key
-$pendingRename = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\ComputerName\ActiveComputerName" -Name "PendingComputerRename" -ErrorAction SilentlyContinue
-if ($pendingRename.PendingComputerRename) {
-    $IsRebootPending = $true
-}
-
-# Check Windows Installer InProgress registry key
-$installerInProgress = Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\InProgress" -ErrorAction SilentlyContinue
-if ($installerInProgress) {
-    $IsRebootPending = $true
-}
-
-# Output the result
-Write-Host "Rebood pending: $IsRebootPending"
-
-if ($IsRebootPending -eq $False) {
-    Write-Host "No reboot is pending. Exiting normally."
-    Exit 0
-
-}
-
-
 # Get OS information
 $OsInfo = Get-WmiObject -Class Win32_OperatingSystem
 
