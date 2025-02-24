@@ -29,7 +29,7 @@ if ($thirdPartyAVs.Count -gt 0) {
         }
         Write-Host "Name: $($product.displayName) - Product State: $($product.productState) - Timestamp: $timestamp"
     }
-    Write-Host "Skipping Windows Defender status check and enable section because a third-party AV is active."
+    Write-Host "Skipping Windows Defender status check because a third-party AV is active."
     exit
 }
 
