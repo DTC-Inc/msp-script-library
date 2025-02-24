@@ -2,7 +2,32 @@
 # This script retrieves the current status of Windows Defender protections,
 # attempts to enable any feature that is disabled (for which a Set-MpPreference parameter exists),
 # and then displays the updated status.
+# Additionally, if a third-party antivirus product is detected, it reports that product's status
+# instead of the Windows Defender status and skips the enable section.
 # Note: Run PowerShell as Administrator. Some settings may be controlled by Group Policy and might not change.
+
+# Check for existing third-party antivirus products via SecurityCenter2
+$avProducts = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct
+$thirdPartyAVs = @()
+
+if ($avProducts) {
+    foreach ($product in $avProducts) {
+        # Exclude Windows Defender / Microsoft Defender
+        if ($product.displayName -notmatch "defender" -and $product.displayName -notmatch "microsoft defender") {
+            $thirdPartyAVs += $product
+        }
+    }
+}
+
+if ($thirdPartyAVs.Count -gt 0) {
+    Write-Host "Detected third-party antivirus product(s):" -ForegroundColor Yellow
+    foreach ($product in $thirdPartyAVs) {
+        Write-Host "Name: $($product.displayName) - Product State: $($product.productState)"
+    }
+    Write-Host "Skipping Windows Defender status check and enable section because a third-party AV is active."
+	Pause
+    exit
+}
 
 # Retrieve the current status of Windows Defender
 $status = Get-MpComputerStatus
@@ -24,6 +49,7 @@ if ($status.AntivirusEnabled -and $status.AntispywareEnabled -and `
     $status.RealTimeProtectionEnabled -and $status.BehaviorMonitorEnabled -and `
     $status.OnAccessProtectionEnabled) {
     Write-Host "All Windows Defender protections are enabled. No updates performed."
+	Pause
     exit
 }
 
