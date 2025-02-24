@@ -2,8 +2,8 @@
 # This script retrieves the current status of Windows Defender protections,
 # attempts to enable any feature that is disabled (for which a Set-MpPreference parameter exists),
 # and then displays the updated status.
-# Additionally, if a third-party antivirus product is detected, it reports that product's status
-# instead of the Windows Defender status and skips the enable section.
+# Additionally, if a third-party antivirus product is detected, it reports that product's status,
+# including its timestamp, and skips the Defender section.
 # Note: Run PowerShell as Administrator. Some settings may be controlled by Group Policy and might not change.
 
 # Check for existing third-party antivirus products via SecurityCenter2
@@ -22,7 +22,12 @@ if ($avProducts) {
 if ($thirdPartyAVs.Count -gt 0) {
     Write-Host "Detected third-party antivirus product(s):" -ForegroundColor Yellow
     foreach ($product in $thirdPartyAVs) {
-        Write-Host "Name: $($product.displayName) - Product State: $($product.productState)"
+        # Attempt to retrieve the timestamp property, if available.
+        $timestamp = $null
+        if ($product.PSObject.Properties.Name -contains "timestamp") {
+            $timestamp = $product.timestamp
+        }
+        Write-Host "Name: $($product.displayName) - Product State: $($product.productState) - Timestamp: $timestamp"
     }
     Write-Host "Skipping Windows Defender status check and enable section because a third-party AV is active."
     exit
