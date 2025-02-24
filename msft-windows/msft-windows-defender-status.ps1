@@ -25,7 +25,6 @@ if ($thirdPartyAVs.Count -gt 0) {
         Write-Host "Name: $($product.displayName) - Product State: $($product.productState)"
     }
     Write-Host "Skipping Windows Defender status check and enable section because a third-party AV is active."
-	Pause
     exit
 }
 
@@ -49,7 +48,6 @@ if ($status.AntivirusEnabled -and $status.AntispywareEnabled -and `
     $status.RealTimeProtectionEnabled -and $status.BehaviorMonitorEnabled -and `
     $status.OnAccessProtectionEnabled) {
     Write-Host "All Windows Defender protections are enabled. No updates performed."
-	Pause
     exit
 }
 
