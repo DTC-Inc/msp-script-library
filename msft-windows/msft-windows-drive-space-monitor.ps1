@@ -1,6 +1,6 @@
 # Get all logical drives that are internal, not network, and fixed drives
 $drives = Get-WmiObject Win32_LogicalDisk | Where-Object {
-    $_.DriveType -eq 3 -and $_.Size -gt 10GB
+    $_.DriveType -eq 3 -and $_.Size -gt 20GB
 }
 
 $lowSpaceDrives = @()
