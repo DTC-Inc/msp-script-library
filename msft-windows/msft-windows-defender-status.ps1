@@ -1,12 +1,30 @@
 # Windows Defender Protection Check and Enable Script
-# This script retrieves the current status of Windows Defender protections,
-# attempts to enable any feature that is disabled (for which a Set-MpPreference parameter exists),
-# and then displays the updated status.
-# Additionally, if a third-party antivirus product is detected, it reports that product's status,
-# including its timestamp, and skips the Defender section.
-# Note: Run PowerShell as Administrator. Some settings may be controlled by Group Policy and might not change.
+# This script checks for third-party antivirus, verifies Windows Defender status,
+# removes registry keys that disable Windows Defender, and enables protection if necessary.
+# Note: Run PowerShell as Administrator.
 
-# Check for existing third-party antivirus products via SecurityCenter2
+# Function to check and remove registry keys
+function Remove-DefenderRegistryKeys {
+    $registryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender"
+    $keysToCheck = @("DisableAntiSpyware", "DisableAntiVirus")
+
+    foreach ($key in $keysToCheck) {
+        if (Test-Path "$registryPath") {
+            $value = Get-ItemProperty -Path "$registryPath" -Name $key -ErrorAction SilentlyContinue
+            if ($value) {
+                Write-Host "Found registry key: $key. Removing..."
+                try {
+                    Remove-ItemProperty -Path "$registryPath" -Name $key -ErrorAction Stop
+                    Write-Host "Successfully removed $key."
+                } catch {
+                    Write-Host ("Error removing {0}: {1}" -f $key, $_.Exception.Message)
+                }
+            }
+        }
+    }
+}
+
+# Check for existing third-party antivirus products
 $avProducts = Get-CimInstance -Namespace root/SecurityCenter2 -ClassName AntivirusProduct
 $thirdPartyAVs = @()
 
@@ -29,9 +47,12 @@ if ($thirdPartyAVs.Count -gt 0) {
         }
         Write-Host "Name: $($product.displayName) - Product State: $($product.productState) - Timestamp: $timestamp"
     }
-    Write-Host "Skipping Windows Defender status check because a third-party AV is active."
+    Write-Host "Skipping Windows Defender status check and enable section because a third-party AV is active."
     exit
 }
+
+# Check and remove registry keys that disable Windows Defender
+Remove-DefenderRegistryKeys
 
 # Retrieve the current status of Windows Defender
 $status = Get-MpComputerStatus
@@ -63,7 +84,7 @@ if (-not $status.RealTimeProtectionEnabled) {
         Set-MpPreference -DisableRealtimeMonitoring $false -ErrorAction Stop
         Write-Host "Real-Time Protection enabled successfully."
     } catch {
-        Write-Host "Error enabling Real-Time Protection: $($_.Exception.Message)"
+        Write-Host ("Error enabling Real-Time Protection: {0}" -f $_.Exception.Message)
     }
 }
 
@@ -74,7 +95,7 @@ if (-not $status.BehaviorMonitorEnabled) {
         Set-MpPreference -DisableBehaviorMonitoring $false -ErrorAction Stop
         Write-Host "Behavior Monitoring enabled successfully."
     } catch {
-        Write-Host "Error enabling Behavior Monitoring: $($_.Exception.Message)"
+        Write-Host ("Error enabling Behavior Monitoring: {0}" -f $_.Exception.Message)
     }
 }
 
