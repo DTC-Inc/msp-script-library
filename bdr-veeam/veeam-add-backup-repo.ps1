@@ -62,7 +62,7 @@ if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
     $connect = Connect-VBRAmazonS3CompatibleService -Account $account -CustomRegionId $regionId -ServicePoint $endpoint
     $bucket = Get-VBRAmazonS3Bucket -Connection $connect -Name $bucketName
     $folder = New-VBRAmazonS3Folder -Name $folderName -Connection $connect -Bucket $bucket
-    Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "S3 $FolderName" -EnableBackupImmutability -ImmutabilityPeriod $immutabilityPeriod -Description "$description $bucketName"
+    Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "S3 $FolderName" -EnableBackupImmutability -ImmutabilityPeriod $immutabilityPeriod -Description "$description $bucketName" -EnableBucketAutoProvision:$false
     
     # Display the added repository details
     $repository
