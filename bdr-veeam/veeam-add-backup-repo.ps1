@@ -53,8 +53,9 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 # REMOVED TO MAKE FOLDERNAME LOCATION GUID $folderName = $timeStamp
 
 
-if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
+if ($repositoryType -eq 1 -Or $repositoryType -eq 3) {
     Write-Host "Creating S3 Repository: S3 $FolderName"
+
     # Add the S3 Account
     $account = Add-VBRAmazonAccount -AccessKey $accessKey -SecretKey $secretKey -Description "$description $bucketName"
 
@@ -62,13 +63,34 @@ if ($repositoryType -eq 1 -Or $repositoryType -eq 3){
     $connect = Connect-VBRAmazonS3CompatibleService -Account $account -CustomRegionId $regionId -ServicePoint $endpoint
     $bucket = Get-VBRAmazonS3Bucket -Connection $connect -Name $bucketName
     $folder = New-VBRAmazonS3Folder -Name $folderName -Connection $connect -Bucket $bucket
-    Add-VBRAmazonS3CompatibleRepository -AmazonS3Folder $folder -Connection $connect -Name "S3 $FolderName" -EnableBackupImmutability -ImmutabilityPeriod $immutabilityPeriod -Description "$description $bucketName" -EnableBucketAutoProvision:$false
-    
+
+    # Get Veeam server version from DLL and convert to [version]
+    $veeamVersion = [version](Get-Item 'C:\Program Files\Veeam\Backup and Replication\Backup\Packages\VeeamDeploymentDll.dll').VersionInfo.ProductVersion
+    $requiredVersion = [version]"12.3.1.1139"
+
+    # Conditionally run the appropriate command based on version
+    if ($veeamVersion -ge $requiredVersion) {
+        Add-VBRAmazonS3CompatibleRepository `
+            -AmazonS3Folder $folder `
+            -Connection $connect `
+            -Name "S3 $FolderName" `
+            -EnableBackupImmutability `
+            -ImmutabilityPeriod $immutabilityPeriod `
+            -Description "$description $bucketName" `
+            -EnableBucketAutoProvision:$false
+    } else {
+        Add-VBRAmazonS3CompatibleRepository `
+            -AmazonS3Folder $folder `
+            -Connection $connect `
+            -Name "S3 $FolderName" `
+            -EnableBackupImmutability `
+            -ImmutabilityPeriod $immutabilityPeriod `
+            -Description "$description $bucketName"
+    }
+
     # Display the added repository details
     $repository
-
 }
-
 
 
 if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
