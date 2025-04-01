@@ -19,10 +19,10 @@ if ($RMM -ne 1) {
         }
 
         $DisableShutdownUi = Read-Host "Enter Y to enable shutdown, enter N to disable shutdown"
-        if $DisableShutdownUi -eq "Y" {
+        if ($DisableShutdownUi -eq "Y") {
             $DisableShutdownUi = $True
             $ValidInput = 1
-        } elseif $DisableShutdownUi -eq "N" {
+        } elseif ($DisableShutdownUi -eq "N") {
             $DisableShutdownUi = $False
             $ValidInput = 1
         } else { 
