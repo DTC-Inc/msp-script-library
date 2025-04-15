@@ -71,7 +71,7 @@ if ($service) {
         Write-Host "Download successful. Proceeding with installation..."
     
         # Install the Teramind silently
-        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, 'TMROUTER=dentalcpas.us.teramind.co', '/qn', '/norestart') -NoNewWindow -Wait
+        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, 'TMROUTER=dentalcpas.us.teramind.co', 'TMINSTANCE=dentalcpas', '/qn') -NoNewWindow -Wait
     
         # Check if the service exists
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
