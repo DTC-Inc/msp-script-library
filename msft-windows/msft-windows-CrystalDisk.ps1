@@ -1,6 +1,6 @@
 # --- Start of DownloadCrystalDisk.ps1 ---
 # URL of the compressed file to download
-$url = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/tools/win/CrystalDiskInfo9_6_3.zip"
+$url = $downloadURL
 
 # Location where you want to save the downloaded file
 $downloadLocation = "C:\CrystalDiskInfo\CrystalDiskInfo9_6_3.zip"
