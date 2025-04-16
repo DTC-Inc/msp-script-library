@@ -1,5 +1,7 @@
 # --- Start of DownloadCrystalDisk.ps1 ---
 # URL of the compressed file to download
+Write-Host "URL: '$downloadurl'"
+
 $url = $downloadURL
 
 # Location where you want to save the downloaded file
