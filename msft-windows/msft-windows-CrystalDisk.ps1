@@ -70,5 +70,13 @@ $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
         "Temp"     = $temps[$i]
         "Features" = $feats[$i]
     }
+    
+        # Output to console
+    Write-Host "`nDrive $i:"
+    Write-Host "Model: $($drive.Model)"
+    Write-Host "Firmware: $($drive.Firmware)"
+    Write-Host "Health: $($drive.Health)"
+    Write-Host "Letter: $($drive.Letter)"
+    Write-Host "Temp: $($drive.Temp)"
 }
 $Drives
