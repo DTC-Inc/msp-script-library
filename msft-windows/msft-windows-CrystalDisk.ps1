@@ -72,7 +72,6 @@ $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
     }
     
         # Output to console
-    Write-Host "`nDrive $i:"
     Write-Host "Model: $($drive.Model)"
     Write-Host "Firmware: $($drive.Firmware)"
     Write-Host "Health: $($drive.Health)"
