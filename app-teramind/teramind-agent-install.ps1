@@ -1,8 +1,8 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
-# $installerUrl
-# $installerPath
+# $installerUrl - Teramind install URL
+# $installerPath - Local path and filename of Teramind installer
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
