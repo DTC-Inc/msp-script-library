@@ -12,20 +12,46 @@ if (Test-Path -Path $folderPath) {
     # Calculate the cutoff date based on the threshold
     $cutoffDate = $currentDate.AddDays(-$daysThreshold)
     
-    # Get items older than the threshold
-    $oldItems = Get-ChildItem -Path $folderPath -Recurse | Where-Object { $_.LastWriteTime -lt $cutoffDate }
+    # Get all items older than the threshold
+    $allOldItems = Get-ChildItem -Path $folderPath -Recurse | Where-Object { $_.LastWriteTime -lt $cutoffDate }
     
     # If there are items to delete
-    if ($oldItems.Count -gt 0) {
-        Write-Host "Found $($oldItems.Count) items older than $daysThreshold days. Deleting..."
+    if ($allOldItems.Count -gt 0) {
+        Write-Host "Found $($allOldItems.Count) items older than $daysThreshold days."
         
-        # Remove the items
-        foreach ($item in $oldItems) {
-            Remove-Item -Path $item.FullName -Force -Recurse -ErrorAction SilentlyContinue
-            if ($?) {
-                Write-Host "Deleted: $($item.FullName)"
-            } else {
-                Write-Host "Failed to delete: $($item.FullName)" -ForegroundColor Red
+        # Separate files and folders
+        $oldFiles = $allOldItems | Where-Object { -not $_.PSIsContainer }
+        $oldFolders = $allOldItems | Where-Object { $_.PSIsContainer }
+        
+        # Sort folders by depth (deepest first) to avoid the error
+        $oldFolders = $oldFolders | Sort-Object -Property FullName -Descending
+        
+        # Delete files first
+        if ($oldFiles.Count -gt 0) {
+            Write-Host "Deleting $($oldFiles.Count) files..."
+            foreach ($file in $oldFiles) {
+                try {
+                    Remove-Item -Path $file.FullName -Force -ErrorAction Stop
+                    Write-Host "Deleted file: $($file.FullName)"
+                } catch {
+                    Write-Host "Failed to delete file: $($file.FullName) - $($_.Exception.Message)" -ForegroundColor Red
+                }
+            }
+        }
+        
+        # Then delete folders (deepest first)
+        if ($oldFolders.Count -gt 0) {
+            Write-Host "Deleting $($oldFolders.Count) folders..."
+            foreach ($folder in $oldFolders) {
+                try {
+                    # Check if folder still exists (might have been deleted as part of parent folder)
+                    if (Test-Path -Path $folder.FullName) {
+                        Remove-Item -Path $folder.FullName -Force -ErrorAction Stop
+                        Write-Host "Deleted folder: $($folder.FullName)"
+                    }
+                } catch {
+                    Write-Host "Failed to delete folder: $($folder.FullName) - $($_.Exception.Message)" -ForegroundColor Red
+                }
             }
         }
         
