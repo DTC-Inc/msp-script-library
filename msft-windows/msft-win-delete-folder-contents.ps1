@@ -1,8 +1,8 @@
 # Define the folder path to check
-$folderPath = "C:\Path\To\Your\Folder"
+$folderPath = "$FolderLocation"
 
 # Define the age threshold in days
-$daysThreshold = 90
+$daysThreshold = $NumberOfDays
 
 # Check if the folder exists
 if (Test-Path -Path $folderPath) {
