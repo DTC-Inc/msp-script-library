@@ -1,8 +1,10 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
-# $installerUrl - Teramind install URL
+# $installerUrl - Teramind install URL for your instance
 # $installerPath - Local path and filename of Teramind installer
+# $tmRouter - Teramind TMROUTER value for your instance
+# $tmInstance - Teramind TMINSTANCE value for your instance
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -71,7 +73,7 @@ if ($service) {
         Write-Host "Download successful. Proceeding with installation..."
     
         # Install the Teramind silently
-        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, 'TMROUTER=dentalcpas.us.teramind.co', 'TMINSTANCE=dentalcpas', '/qn') -NoNewWindow -Wait
+        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, "TMROUTER=$tmRouter", "TMINSTANCE=$tmInstance", '/qn') -NoNewWindow -Wait
     
         # Check if the service exists
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
