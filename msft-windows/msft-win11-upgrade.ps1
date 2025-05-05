@@ -130,7 +130,7 @@ Show-Progress -Percent 75 -Stage "SetupStart"
 Write-Output "Launching Windows 11 setup (quiet, no reboot)..."
 Start-Process `
     -FilePath "$driveLetter\setup.exe" `
-    -ArgumentList "/quiet","/noreboot","/auto Upgrade"
+    -ArgumentList "/quiet","/noreboot","/auto Upgrade","/eula accept"
 
 Write-Output "Setup launched; the machine will reboot and complete the upgrade."
 # script ends here; Setup handles reboot & ISO cleanup
