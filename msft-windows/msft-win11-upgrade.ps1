@@ -97,16 +97,42 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit
 }
 
-### ————— DOWNLOAD ISO —————
+### ————— FAST ISO DOWNLOAD —————
 Show-Progress -Percent 25 -Stage "Downloading"
 Write-Output "Downloading ISO from $isoUrl..."
+
 try {
-    Invoke-WebRequest -Uri $isoUrl -OutFile $isoPath -UseBasicParsing -ErrorAction Stop
+    $clientHandler = [System.Net.Http.HttpClientHandler]::new()
+    $clientHandler.AllowAutoRedirect = $true
+    $httpClient = [System.Net.Http.HttpClient]::new($clientHandler)
+    
+    $response = $httpClient.GetAsync($isoUrl, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead).Result
+    $response.EnsureSuccessStatusCode()
+
+    $totalBytes = $response.Content.Headers.ContentLength
+    $stream = $response.Content.ReadAsStreamAsync().Result
+    $fileStream = [System.IO.File]::Create($isoPath)
+
+    $buffer = New-Object byte[] 81920
+    $totalRead = 0
+    $read = 0
+
+    while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+        $fileStream.Write($buffer, 0, $read)
+        $totalRead += $read
+
+        $percent = if ($totalBytes -gt 0) { [int](($totalRead / $totalBytes) * 100) } else { 0 }
+        Show-Progress -Percent $percent -Stage "Downloading"
+    }
+
+    $fileStream.Close()
+    $stream.Close()
 } catch {
     Write-Error "Download failed: $_"
     Show-Progress -Percent 0 -Stage "DownloadFailed"
     exit 1
 }
+
 
 ### ————— MOUNT ISO —————
 Write-Output "Mounting ISO..."
