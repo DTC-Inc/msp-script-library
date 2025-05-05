@@ -3,7 +3,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "EnterLogNameHere.log"
+$ScriptLogName = "msft-win11-upgrade.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
