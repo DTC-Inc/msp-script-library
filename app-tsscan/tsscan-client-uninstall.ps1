@@ -3,7 +3,7 @@
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
-$ScriptLogName = "tsprint-install.log"
+$ScriptLogName = "tsscan-client-uninstall.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
