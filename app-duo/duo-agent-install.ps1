@@ -65,7 +65,7 @@ $duoPath = "C:\Program Files\Duo Security\WindowsLogon"
 # Check if Duo intall path exists
 
 if (Test-Path $duoPath) {
-    Write-Host "Duo already installed. '$serviceName' service exists."
+    Write-Host "Duo already installed. '$duoPath' exists."
     exit 0
 } else {
     Write-Host "'$duoPath' not found. Downloading Duo installer."
