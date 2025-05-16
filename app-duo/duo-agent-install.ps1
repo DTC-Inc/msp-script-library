@@ -89,19 +89,19 @@ if ($service) {
     
         if ($service) {
             Write-Host "Duo installed successfully."
+            
+            # Apply reg file
+            regedit.exe /S $regPath
+
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Registry import was successful."
+            } else {
+              Write-Host "Registry import failed with exit code $LASTEXITCODE."
+            }
         } else {
             Write-Host "Duo install failed. '$serviceName' not detected."
         }
-
-       # Apply reg file
-       regedit.exe /S $regPath
-
-       if ($LASTEXITCODE -eq 0) {
-         Write-Host "Registry import was successful."
-       } else {
-         Write-Host "Registry import failed with exit code $LASTEXITCODE."
-       }
-           
+         
        # Remove the installer file
        Write-Host "Removing $installerPath"
        Remove-Item -Path $installerPath -Force
