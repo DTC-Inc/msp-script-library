@@ -2,14 +2,11 @@
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
 # $installerUrl - Duo installer URL
-# $transformURL - Transform file URL
-# $regFileURL - .reg file URL
 # $installerPath - Local path and filename of Duo installer
+# $transformURL - Transform file URL
 # $transformPath - Local path and filename of Transform file
+# $regFileURL - .reg file URL
 # $regPath - local path and filename of reg file
-
-# $tmRouter - Teramind TMROUTER value for your instance
-# $tmInstance - Teramind TMINSTANCE value for your instance
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -57,9 +54,13 @@ Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 Write-Host "InstallerURL: $installerUrl"
 Write-Host "InstallerPath: $installerPath"
+Write-Host "TransformURL: $transformURL"
+Write-Host "TransformPath: $transformPath"
+Write-Host "RegFileURL: $regFileURL"
+Write-Host "RegPath: $regPath"
 
 # Define service name
-$serviceName = "DuoAuthervice"
+$serviceName = "DuoAuthService"
 
 # Check if the service exists
 $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
@@ -73,28 +74,41 @@ if ($service) {
     # Download the installer
     # Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath 
     Start-BitsTransfer -Source $installerURL -Destination $installerPath
-    Start-BitsTransfer -Source $transformURL -Destination
-    Start-BitsTransfer -Source $regfileURL - Destination
+    Start-BitsTransfer -Source $transformURL -Destination $transformPath
+    Start-BitsTransfer -Source $regfileURL -Destination $regPath
     
     # Verify if the installer was downloaded
-    if (Test-Path $installerPath) {
+    if ((Test-Path $installerPath) -and ($transformPath) -and ($regPath)) {
         Write-Host "Download successful. Proceeding with installation..."
     
-        # Install the Teramind silently
-        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, "TMROUTER=$tmRouter", "TMINSTANCE=$tmInstance", '/qn') -NoNewWindow -Wait
+        # Install Duo silently
+        Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, '/qn', '/norestart', "TRANSFORMS=$transformPath") -NoNewWindow -Wait
     
         # Check if the service exists
         $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
     
         if ($service) {
-            Write-Host "Teramind installed successfully."
+            Write-Host "Duo installed successfully."
         } else {
-            Write-Host "Teramind install failed. '$serviceName' not detected."
+            Write-Host "Duo install failed. '$serviceName' not detected."
         }
-    
+
+       # Apply reg file
+       regedit.exe /S $regPath
+
+       if ($LASTEXITCODE -eq 0) {
+         Write-Host "Registry import was successful."
+       } else {
+         Write-Host "Registry import failed with exit code $LASTEXITCODE."
+       }
+           
        # Remove the installer file
        Write-Host "Removing $installerPath"
        Remove-Item -Path $installerPath -Force
+       Write-Host "Removing $transformPath"
+       Remove-Item -Path $transformPath -Force
+       Write-Host "Removing $regPath"
+       Remove-Item -Path $regPath -Force
     
     } else {
         Write-Host "Download failed. Please check the URL and try again."
