@@ -59,20 +59,18 @@ Write-Host "TransformPath: $transformPath"
 Write-Host "RegURL: $regURL"
 Write-Host "RegPath: $regPath"
 
-# Define service name
-$serviceName = "DuoAuthService"
+# Define Duo install path
+$duoPath = "C:\Program Files\Duo Security\WindowsLogon"
 
-# Check if the service exists
-$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+# Check if Duo intall path exists
 
-if ($service) {
+if (Test-Path $duoPath) {
     Write-Host "Duo already installed. '$serviceName' service exists."
     exit 0
 } else {
-    Write-Host "'$serviceName' service not found. Downloading Duo installer."
+    Write-Host "'$duoPath' not found. Downloading Duo installer."
     
     # Download the installer
-    # Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath 
     Start-BitsTransfer -Source $installerURL -Destination $installerPath
     Start-BitsTransfer -Source $transformURL -Destination $transformPath
     Start-BitsTransfer -Source $regURL -Destination $regPath
@@ -84,10 +82,8 @@ if ($service) {
         # Install Duo silently
         Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, '/qn', '/norestart', "TRANSFORMS=$transformPath") -NoNewWindow -Wait
     
-        # Check if the service exists
-        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-    
-        if ($service) {
+        # Check if Duo install path exists 
+        if (Test-Path $duoPath) {
             Write-Host "Duo installed successfully."
             
             # Apply reg file
@@ -98,8 +94,9 @@ if ($service) {
             } else {
               Write-Host "Registry import failed with exit code $LASTEXITCODE."
             }
+            
         } else {
-            Write-Host "Duo install failed. '$serviceName' not detected."
+            Write-Host "Duo install failed. '$duoPath' not detected."
         }
          
        # Remove the installer file
