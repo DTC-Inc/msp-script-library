@@ -5,7 +5,7 @@
 # $installerPath - Local path and filename of Duo installer
 # $transformURL - Transform file URL
 # $transformPath - Local path and filename of Transform file
-# $regURL - .reg file URL
+# $regURL - Reg file URL
 # $regPath - local path and filename of reg file
 
 # Getting input from user if not running from RMM else set variables from RMM.
