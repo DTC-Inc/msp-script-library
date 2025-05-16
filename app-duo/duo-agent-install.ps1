@@ -5,7 +5,7 @@
 # $installerPath - Local path and filename of Duo installer
 # $transformURL - Transform file URL
 # $transformPath - Local path and filename of Transform file
-# $regFileURL - .reg file URL
+# $regURL - .reg file URL
 # $regPath - local path and filename of reg file
 
 # Getting input from user if not running from RMM else set variables from RMM.
@@ -56,7 +56,7 @@ Write-Host "InstallerURL: $installerUrl"
 Write-Host "InstallerPath: $installerPath"
 Write-Host "TransformURL: $transformURL"
 Write-Host "TransformPath: $transformPath"
-Write-Host "RegFileURL: $regFileURL"
+Write-Host "RegURL: $regURL"
 Write-Host "RegPath: $regPath"
 
 # Define service name
@@ -75,7 +75,7 @@ if ($service) {
     # Invoke-WebRequest -Uri $installerUrl -OutFile $installerPath 
     Start-BitsTransfer -Source $installerURL -Destination $installerPath
     Start-BitsTransfer -Source $transformURL -Destination $transformPath
-    Start-BitsTransfer -Source $regfileURL -Destination $regPath
+    Start-BitsTransfer -Source $regURL -Destination $regPath
     
     # Verify if the installer was downloaded
     if ((Test-Path $installerPath) -and ($transformPath) -and ($regPath)) {
