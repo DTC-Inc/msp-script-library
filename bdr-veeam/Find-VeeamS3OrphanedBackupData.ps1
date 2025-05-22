@@ -82,13 +82,13 @@ function Get-VeeamS3Repositories {
             $s3Repos = Get-VBRBackupRepository | Where-Object { 
                 $_.Name -like "*$RepositoryName*" -and 
                 ($_.Type -eq "AmazonS3" -or $_.Type -eq "S3Compatible" -or 
-                 $_.Type -match "S3" -or $_.IsAmazonRepository())
+                 $_.Type -match "S3")
             }
         }
         else {
             $s3Repos = Get-VBRBackupRepository | Where-Object { 
                 $_.Type -eq "AmazonS3" -or $_.Type -eq "S3Compatible" -or 
-                $_.Type -match "S3" -or $_.IsAmazonRepository()
+                $_.Type -match "S3"
             }
         }
         
