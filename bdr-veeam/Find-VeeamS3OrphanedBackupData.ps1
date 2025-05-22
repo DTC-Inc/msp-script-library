@@ -203,13 +203,6 @@ function Get-OrphanedRepositoryData {
                     continue
                 }
                 
-                # Get metadata file list
-                $backupMetadata = [Veeam.Backup.Core.CBackupMetadataEx]::Get($backup.Id)
-                if (-not $backupMetadata) {
-                    Write-Host "    No metadata available for this backup" -ForegroundColor DarkGray
-                    continue
-                }
-                
                 $allFiles = @()
                 $activeFiles = @()
                 
@@ -226,44 +219,39 @@ function Get-OrphanedRepositoryData {
                     }
                 }
                 
-                # Get complete file list from backup metadata
+                # Direct repository path scanning method
                 try {
-                    $vbrBackupSession = [Veeam.Backup.Core.CBackupSession]::GetByBackup($backup.Id)
-                    if ($vbrBackupSession) {
-                        $allStorageFiles = $vbrBackupSession.FindStorage($Repository.Id)
-                        if ($allStorageFiles) {
-                            $allFiles = $allStorageFiles
+                    # Get repository path and scan for backup files
+                    $repoPath = $Repository.Path
+                    if (-not $repoPath -or -not (Test-Path $repoPath)) {
+                        Write-Host "    Repository path not accessible: $repoPath" -ForegroundColor DarkGray
+                        continue
+                    }
+                    
+                    Write-Host "    Scanning repository path: $repoPath" -ForegroundColor DarkGray
+                    $backupFiles = Get-ChildItem -Path $repoPath -Recurse -File -Include "*.vbk", "*.vib", "*.vrb", "*.vbm", "*.vbo" -ErrorAction SilentlyContinue
+                    
+                    if ($backupFiles) {
+                        foreach ($file in $backupFiles) {
+                            $fileObj = [PSCustomObject]@{
+                                Name = $file.Name
+                                Path = $file.FullName
+                                Size = $file.Length
+                                CreationTime = $file.CreationTime
+                            }
+                            $allFiles += $fileObj
                         }
+                        
+                        Write-Host "    Found $($allFiles.Count) total files in repository" -ForegroundColor DarkGray
+                    }
+                    else {
+                        Write-Host "    No backup files found in repository path" -ForegroundColor DarkGray
+                        continue
                     }
                 }
                 catch {
-                    Write-Host "    Unable to retrieve complete file list: $_" -ForegroundColor DarkGray
-                }
-                
-                # Alternative method to get files - check directory
-                if (-not $allFiles -or $allFiles.Count -eq 0) {
-                    Write-Host "    Attempting to scan repository directly..." -ForegroundColor DarkGray
-                    try {
-                        # Get repository path and scan for VBK/VIB/VBM files
-                        $repoPath = $Repository.GetRepositoryPath()
-                        if ($repoPath -and (Test-Path $repoPath)) {
-                            $backupFiles = Get-ChildItem -Path $repoPath -Recurse -File -Include "*.vbk", "*.vib", "*.vrb", "*.vbm"
-                            if ($backupFiles) {
-                                foreach ($file in $backupFiles) {
-                                    $fileObj = [PSCustomObject]@{
-                                        Name = $file.Name
-                                        Path = $file.FullName
-                                        Size = $file.Length
-                                        CreationTime = $file.CreationTime
-                                    }
-                                    $allFiles += $fileObj
-                                }
-                            }
-                        }
-                    }
-                    catch {
-                        Write-Host "    Unable to scan repository directly: $_" -ForegroundColor DarkGray
-                    }
+                    Write-Host "    Unable to scan repository directly: $_" -ForegroundColor DarkGray
+                    continue
                 }
                 
                 # Find orphaned files by comparing active files with all files
@@ -272,6 +260,8 @@ function Get-OrphanedRepositoryData {
                         $file = $_
                         -not ($activeFiles | Where-Object { $_.Name -eq $file.Name })
                     }
+                    
+                    Write-Host "    Found $($activeFiles.Count) active files and $($orphanedFiles.Count) potentially orphaned files" -ForegroundColor DarkGray
                     
                     if ($orphanedFiles) {
                         foreach ($file in $orphanedFiles) {
