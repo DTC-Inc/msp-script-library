@@ -192,40 +192,112 @@ function Get-OrphanedRepositoryData {
         $orphanedData = @()
         
         foreach ($backup in $repoBackups) {
-            # Get all files from storage
-            $allBackupFiles = $backup.GetAllStorageFiles()
+            Write-Host "  Processing backup: $($backup.Name)" -ForegroundColor DarkGray
             
-            # Get files from the active points
-            $activePoints = $backup.GetPoints()
-            $activeFiles = @()
-            
-            foreach ($point in $activePoints) {
-                $pointFiles = $point.GetStorageFiles()
-                $activeFiles += $pointFiles
-            }
-            
-            # Find orphaned files
-            $orphanedFiles = $allBackupFiles | Where-Object { 
-                $file = $_
-                -not ($activeFiles | Where-Object { $_.Name -eq $file.Name })
-            }
-            
-            if ($orphanedFiles) {
-                foreach ($file in $orphanedFiles) {
-                    $orphanObject = [PSCustomObject]@{
-                        JobName = $backup.JobName
-                        BackupName = $backup.Name
-                        FileName = $file.Name
-                        FileSize = [Math]::Round($file.Size / 1GB, 2)
-                        FileSizeBytes = $file.Size
-                        Path = $file.Path
-                        CreationTime = $file.CreationTime
-                        Source = "Repository"
-                        RepositoryName = $Repository.Name
+            try {
+                # Get all restore points
+                $activePoints = $backup.GetPoints()
+                
+                if (-not $activePoints -or $activePoints.Count -eq 0) {
+                    Write-Host "    No restore points found for this backup" -ForegroundColor DarkGray
+                    continue
+                }
+                
+                # Get metadata file list
+                $backupMetadata = [Veeam.Backup.Core.CBackupMetadataEx]::Get($backup.Id)
+                if (-not $backupMetadata) {
+                    Write-Host "    No metadata available for this backup" -ForegroundColor DarkGray
+                    continue
+                }
+                
+                $allFiles = @()
+                $activeFiles = @()
+                
+                # For each restore point, get its storage files
+                foreach ($point in $activePoints) {
+                    try {
+                        $pointFiles = $point.GetStorageFiles()
+                        if ($pointFiles) {
+                            $activeFiles += $pointFiles
+                        }
+                    }
+                    catch {
+                        Write-Host "    Error getting files for restore point: $_" -ForegroundColor DarkGray
+                    }
+                }
+                
+                # Get complete file list from backup metadata
+                try {
+                    $vbrBackupSession = [Veeam.Backup.Core.CBackupSession]::GetByBackup($backup.Id)
+                    if ($vbrBackupSession) {
+                        $allStorageFiles = $vbrBackupSession.FindStorage($Repository.Id)
+                        if ($allStorageFiles) {
+                            $allFiles = $allStorageFiles
+                        }
+                    }
+                }
+                catch {
+                    Write-Host "    Unable to retrieve complete file list: $_" -ForegroundColor DarkGray
+                }
+                
+                # Alternative method to get files - check directory
+                if (-not $allFiles -or $allFiles.Count -eq 0) {
+                    Write-Host "    Attempting to scan repository directly..." -ForegroundColor DarkGray
+                    try {
+                        # Get repository path and scan for VBK/VIB/VBM files
+                        $repoPath = $Repository.GetRepositoryPath()
+                        if ($repoPath -and (Test-Path $repoPath)) {
+                            $backupFiles = Get-ChildItem -Path $repoPath -Recurse -File -Include "*.vbk", "*.vib", "*.vrb", "*.vbm"
+                            if ($backupFiles) {
+                                foreach ($file in $backupFiles) {
+                                    $fileObj = [PSCustomObject]@{
+                                        Name = $file.Name
+                                        Path = $file.FullName
+                                        Size = $file.Length
+                                        CreationTime = $file.CreationTime
+                                    }
+                                    $allFiles += $fileObj
+                                }
+                            }
+                        }
+                    }
+                    catch {
+                        Write-Host "    Unable to scan repository directly: $_" -ForegroundColor DarkGray
+                    }
+                }
+                
+                # Find orphaned files by comparing active files with all files
+                if ($allFiles.Count -gt 0 -and $activeFiles.Count -gt 0) {
+                    $orphanedFiles = $allFiles | Where-Object { 
+                        $file = $_
+                        -not ($activeFiles | Where-Object { $_.Name -eq $file.Name })
                     }
                     
-                    $orphanedData += $orphanObject
+                    if ($orphanedFiles) {
+                        foreach ($file in $orphanedFiles) {
+                            $fileSize = if ($file.Size) { $file.Size } else { 0 }
+                            $orphanObject = [PSCustomObject]@{
+                                JobName = $backup.JobName
+                                BackupName = $backup.Name
+                                FileName = $file.Name
+                                FileSize = [Math]::Round($fileSize / 1GB, 2)
+                                FileSizeBytes = $fileSize
+                                Path = if ($file.Path) { $file.Path } else { "Unknown" }
+                                CreationTime = if ($file.CreationTime) { $file.CreationTime } else { Get-Date }
+                                Source = "Repository"
+                                RepositoryName = $Repository.Name
+                            }
+                            
+                            $orphanedData += $orphanObject
+                        }
+                    }
                 }
+                else {
+                    Write-Host "    Insufficient data to identify orphaned files" -ForegroundColor DarkGray
+                }
+            }
+            catch {
+                Write-Host "    Error processing backup $($backup.Name): $_" -ForegroundColor DarkGray
             }
         }
         
