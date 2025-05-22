@@ -203,7 +203,6 @@ function Get-OrphanedRepositoryData {
                     continue
                 }
                 
-                $allFiles = @()
                 $activeFiles = @()
                 
                 # For each restore point, get its storage files
@@ -219,71 +218,117 @@ function Get-OrphanedRepositoryData {
                     }
                 }
                 
-                # Direct repository path scanning method
+                # For S3 repositories, we can't scan the files directly
+                # Instead, we can use the backup's FindAllStorages method if available
                 try {
-                    # Get repository path and scan for backup files
-                    $repoPath = $Repository.Path
-                    if (-not $repoPath -or -not (Test-Path $repoPath)) {
-                        Write-Host "    Repository path not accessible: $repoPath" -ForegroundColor DarkGray
-                        continue
-                    }
+                    $potentialOrphans = @()
                     
-                    Write-Host "    Scanning repository path: $repoPath" -ForegroundColor DarkGray
-                    $backupFiles = Get-ChildItem -Path $repoPath -Recurse -File -Include "*.vbk", "*.vib", "*.vrb", "*.vbm", "*.vbo" -ErrorAction SilentlyContinue
+                    # Get all files from backup object
+                    Write-Host "    Checking for orphaned files in backup metadata..." -ForegroundColor DarkGray
                     
-                    if ($backupFiles) {
-                        foreach ($file in $backupFiles) {
-                            $fileObj = [PSCustomObject]@{
-                                Name = $file.Name
-                                Path = $file.FullName
-                                Size = $file.Length
-                                CreationTime = $file.CreationTime
-                            }
-                            $allFiles += $fileObj
+                    # Use reflection to see if GetAllStorages method exists
+                    $backupType = $backup.GetType()
+                    $getAllStoragesMethod = $backupType.GetMethod("GetAllStorages")
+                    
+                    if ($getAllStoragesMethod) {
+                        $allStorages = $getAllStoragesMethod.Invoke($backup, $null)
+                        if ($allStorages) {
+                            $potentialOrphans = $allStorages | Where-Object { $_.RepositoryId -eq $Repository.Id }
+                            Write-Host "    Found $($potentialOrphans.Count) potential storage items in backup metadata" -ForegroundColor DarkGray
                         }
-                        
-                        Write-Host "    Found $($allFiles.Count) total files in repository" -ForegroundColor DarkGray
                     }
                     else {
-                        Write-Host "    No backup files found in repository path" -ForegroundColor DarkGray
-                        continue
-                    }
-                }
-                catch {
-                    Write-Host "    Unable to scan repository directly: $_" -ForegroundColor DarkGray
-                    continue
-                }
-                
-                # Find orphaned files by comparing active files with all files
-                if ($allFiles.Count -gt 0 -and $activeFiles.Count -gt 0) {
-                    $orphanedFiles = $allFiles | Where-Object { 
-                        $file = $_
-                        -not ($activeFiles | Where-Object { $_.Name -eq $file.Name })
+                        Write-Host "    GetAllStorages method not available on backup object" -ForegroundColor DarkGray
                     }
                     
-                    Write-Host "    Found $($activeFiles.Count) active files and $($orphanedFiles.Count) potentially orphaned files" -ForegroundColor DarkGray
-                    
-                    if ($orphanedFiles) {
-                        foreach ($file in $orphanedFiles) {
-                            $fileSize = if ($file.Size) { $file.Size } else { 0 }
+                    # Compare active files with all potential storages to find orphans
+                    if ($potentialOrphans.Count -gt 0 -and $activeFiles.Count -gt 0) {
+                        $orphanedFiles = $potentialOrphans | Where-Object { 
+                            $file = $_
+                            -not ($activeFiles | Where-Object { $_.Id -eq $file.Id -or $_.Name -eq $file.Name })
+                        }
+                        
+                        Write-Host "    Found $($activeFiles.Count) active files and $($orphanedFiles.Count) potentially orphaned files" -ForegroundColor DarkGray
+                        
+                        if ($orphanedFiles) {
+                            foreach ($file in $orphanedFiles) {
+                                $fileSize = if ($file.Size) { $file.Size } else { 0 }
+                                $orphanObject = [PSCustomObject]@{
+                                    JobName = $backup.JobName
+                                    BackupName = $backup.Name
+                                    FileName = $file.Name
+                                    FileSize = [Math]::Round($fileSize / 1GB, 2)
+                                    FileSizeBytes = $fileSize
+                                    Path = if ($file.Path) { $file.Path } else { "S3 Storage" }
+                                    CreationTime = if ($file.CreationTime) { $file.CreationTime } else { Get-Date }
+                                    Source = "Repository"
+                                    RepositoryName = $Repository.Name
+                                }
+                                
+                                $orphanedData += $orphanObject
+                            }
+                        }
+                    }
+                    else {
+                        # Alternative approach - try to detect orphans based on point data
+                        Write-Host "    Using alternative approach to detect orphaned files..." -ForegroundColor DarkGray
+                        
+                        # Get info from property bag if available
+                        $storageData = $null
+                        
+                        try {
+                            if ($backup.PSObject.Properties['Info'] -and $backup.Info.PSObject.Properties['Storage']) {
+                                $storageData = $backup.Info.Storage
+                            }
+                        }
+                        catch {
+                            Write-Host "    Cannot access storage info properties: $_" -ForegroundColor DarkGray
+                        }
+                        
+                        if ($storageData) {
+                            # Analyze storage data
+                            Write-Host "    Found storage data in backup info" -ForegroundColor DarkGray
+                            
+                            # Extract any useful information from storage data
+                            # This is very version-dependent, so we're providing basic information
                             $orphanObject = [PSCustomObject]@{
                                 JobName = $backup.JobName
                                 BackupName = $backup.Name
-                                FileName = $file.Name
-                                FileSize = [Math]::Round($fileSize / 1GB, 2)
-                                FileSizeBytes = $fileSize
-                                Path = if ($file.Path) { $file.Path } else { "Unknown" }
-                                CreationTime = if ($file.CreationTime) { $file.CreationTime } else { Get-Date }
+                                FileName = "See Veeam console for details"
+                                FileSize = 0
+                                FileSizeBytes = 0
+                                Path = "S3 Storage"
+                                CreationTime = Get-Date
                                 Source = "Repository"
                                 RepositoryName = $Repository.Name
+                                AdditionalInfo = "Unable to directly scan S3 storage. Check Veeam console for detailed information."
                             }
                             
                             $orphanedData += $orphanObject
                         }
+                        else {
+                            Write-Host "    No storage data found for this backup" -ForegroundColor DarkGray
+                        }
                     }
                 }
-                else {
-                    Write-Host "    Insufficient data to identify orphaned files" -ForegroundColor DarkGray
+                catch {
+                    Write-Host "    Error analyzing backup storages: $_" -ForegroundColor DarkGray
+                    
+                    # Provide information about inability to analyze S3 repository
+                    $orphanObject = [PSCustomObject]@{
+                        JobName = $backup.JobName
+                        BackupName = $backup.Name
+                        FileName = "N/A"
+                        FileSize = 0
+                        FileSizeBytes = 0
+                        Path = "S3 Storage"
+                        CreationTime = Get-Date
+                        Source = "Repository"
+                        RepositoryName = $Repository.Name
+                        AdditionalInfo = "Cannot analyze S3 repository directly. Use Veeam console to manually check for orphaned backups."
+                    }
+                    
+                    $orphanedData += $orphanObject
                 }
             }
             catch {
