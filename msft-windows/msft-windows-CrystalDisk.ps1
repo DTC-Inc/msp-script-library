@@ -54,12 +54,13 @@ if (-Not (Test-Path $outputFile)) {
 }
 
 $s = Get-Content $outputFile
-$models    = ($s | Select-String "           Model : ").Line -replace "           Model : ", ""
-$firmwares = ($s | Select-String "        Firmware : ").Line -replace "        Firmware : ", ""
-$healths   = ($s | Select-String "   Health Status : ").Line -replace "   Health Status : ", ""
-$dletters  = ($s | Select-String "    Drive Letter : ").Line -replace "    Drive Letter : ", ""
-$temps     = ($s | Select-String "     Temperature : ").Line -replace "     Temperature : ", ""
-$feats     = ($s | Select-String "        Features : ").Line -replace "        Features : ", ""
+$models    = ($s | Select-String "           Model : ") | ForEach-Object { $_.Line -replace "           Model : ", "" }
+$firmwares = ($s | Select-String "        Firmware : ") | ForEach-Object { $_.Line -replace "        Firmware : ", "" }
+$healths   = ($s | Select-String "   Health Status : ") | ForEach-Object { $_.Line -replace "   Health Status : ", "" }
+$dletters  = ($s | Select-String "    Drive Letter : ") | ForEach-Object { $_.Line -replace "    Drive Letter : ", "" }
+$temps     = ($s | Select-String "     Temperature : ") | ForEach-Object { $_.Line -replace "     Temperature : ", "" }
+$feats     = ($s | Select-String "        Features : ") | ForEach-Object { $_.Line -replace "        Features : ", "" }
+
 
 $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
     [PSCustomObject]@{
@@ -73,4 +74,4 @@ $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
     
 
 }
-$Drives
+$Drives | Format-Table -AutoSize
