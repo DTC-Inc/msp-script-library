@@ -54,12 +54,12 @@ if (-Not (Test-Path $outputFile)) {
 }
 
 $s = Get-Content $outputFile
-$models = ($s | Select-String "           Model : ") -replace "           Model : ", ""
-$firmwares = ($s | Select-String "        Firmware : ") -replace "        Firmware : ", ""
-$healths = ($s | Select-String "   Health Status : ") -replace "   Health Status : ", ""
-$dletters = ($s | Select-String "    Drive Letter : ") -replace "    Drive Letter : ", ""
-$temps = ($s | Select-String "     Temperature : ") -replace "     Temperature : ", ""
-$feats = ($s | Select-String "        Features : ") -replace "        Features : ", ""
+$models    = ($s | Select-String "           Model : ").Line -replace "           Model : ", ""
+$firmwares = ($s | Select-String "        Firmware : ").Line -replace "        Firmware : ", ""
+$healths   = ($s | Select-String "   Health Status : ").Line -replace "   Health Status : ", ""
+$dletters  = ($s | Select-String "    Drive Letter : ").Line -replace "    Drive Letter : ", ""
+$temps     = ($s | Select-String "     Temperature : ").Line -replace "     Temperature : ", ""
+$feats     = ($s | Select-String "        Features : ").Line -replace "        Features : ", ""
 
 $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
     [PSCustomObject]@{
