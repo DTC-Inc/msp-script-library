@@ -54,24 +54,23 @@ if (-Not (Test-Path $outputFile)) {
 }
 
 $s = Get-Content $outputFile
-$models    = ($s | Select-String "           Model : ") | ForEach-Object { $_.Line -replace "           Model : ", "" }
-$firmwares = ($s | Select-String "        Firmware : ") | ForEach-Object { $_.Line -replace "        Firmware : ", "" }
-$healths   = ($s | Select-String "   Health Status : ") | ForEach-Object { $_.Line -replace "   Health Status : ", "" }
-$dletters  = ($s | Select-String "    Drive Letter : ") | ForEach-Object { $_.Line -replace "    Drive Letter : ", "" }
-$temps     = ($s | Select-String "     Temperature : ") | ForEach-Object { $_.Line -replace "     Temperature : ", "" }
-$feats     = ($s | Select-String "        Features : ") | ForEach-Object { $_.Line -replace "        Features : ", "" }
 
+$models    = ($s | Select-String "           Model : ")    | ForEach-Object { $_.Line -replace "           Model : ", "" }
+$firmwares = ($s | Select-String "        Firmware : ")    | ForEach-Object { $_.Line -replace "        Firmware : ", "" }
+$healths   = ($s | Select-String "   Health Status : ")    | ForEach-Object { $_.Line -replace "   Health Status : ", "" }
+$dletters  = ($s | Select-String "    Drive Letter : ")    | ForEach-Object { $_.Line -replace "    Drive Letter : ", "" }
+$temps     = ($s | Select-String "     Temperature : ")    | ForEach-Object { $_.Line -replace "     Temperature : ", "" }
+$feats     = ($s | Select-String "        Features : ")    | ForEach-Object { $_.Line -replace "        Features : ", "" }
 
 $Drives = for ($i = 0; $i -lt $models.Count; $i++) {
     [PSCustomObject]@{
-        "Model"    = $models[$i]
-        "Firmware" = $firmwares[$i]
-        "Health"   = $healths[$i]
-        "Letter"   = $dletters[$i]
-        "Temp"     = $temps[$i]
-        "Features" = $feats[$i]
+        "Model"    = $models
+        "Firmware" = $firmwares
+        "Health"   = $healths
+        "Letter"   = $dletters
+        "Temp"     = $temps
+        "Features" = $feats
     }
-    
-
 }
-$Drives | Format-Table -AutoSize
+
+$Drives
