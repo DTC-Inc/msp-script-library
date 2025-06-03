@@ -1,14 +1,13 @@
-# PowerShell Script to Restart DentrixAceServer and Verify Status with Logging
-# Requires elevation for service management
+# PowerShell Script to Restart DentrixAceServer - Optimized for NinjaOne
+# NinjaOne automatically runs with SYSTEM privileges
 
 param(
-    [int]$TimeoutSeconds = 30,
-    [switch]$Verbose
+    [int]$TimeoutSeconds = 30
 )
 
 $serviceName = "DentrixAceServer"
-$logDirectory = "C:\Logs"
-$logFile = Join-Path -Path $logDirectory -ChildPath "DentrixAceServer_Restart.log"
+$logDirectory = "C:\ProgramData\NinjaRMM\Logs"
+$logFile = Join-Path -Path $logDirectory -ChildPath "DentrixAceServer_Restart_$(Get-Date -Format 'yyyy-MM-dd').log"
 
 # Ensure the log directory exists
 if (-not (Test-Path -Path $logDirectory)) {
@@ -16,12 +15,13 @@ if (-not (Test-Path -Path $logDirectory)) {
         New-Item -Path $logDirectory -ItemType Directory -Force | Out-Null
     }
     catch {
-        Write-Error "Failed to create log directory: $_"
-        exit 1
+        # Fallback to temp directory if NinjaRMM directory fails
+        $logDirectory = $env:TEMP
+        $logFile = Join-Path -Path $logDirectory -ChildPath "DentrixAceServer_Restart_$(Get-Date -Format 'yyyy-MM-dd').log"
     }
 }
 
-# Function to log messages
+# Function to log messages and output to NinjaOne
 function Write-Log {
     param (
         [string]$Message,
@@ -31,14 +31,18 @@ function Write-Log {
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     $entry = "$timestamp [$Level] $Message"
     
+    # Write to log file
     try {
-        Add-Content -Path $logFile -Value $entry -ErrorAction Stop
+        Add-Content -Path $logFile -Value $entry -ErrorAction SilentlyContinue
     }
     catch {
-        Write-Warning "Failed to write to log file: $_"
+        # Silent fail for logging - don't break script execution
     }
     
-    # Color-coded console output
+    # Output for NinjaOne console - use Write-Output for proper capture
+    Write-Output $entry
+    
+    # Also use Write-Host for immediate visibility during execution
     switch ($Level) {
         "SUCCESS" { Write-Host $entry -ForegroundColor Green }
         "WARNING" { Write-Host $entry -ForegroundColor Yellow }
@@ -47,37 +51,52 @@ function Write-Log {
     }
 }
 
-# Check if running as administrator
-function Test-Administrator {
-    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent()
-    $principal = New-Object Security.Principal.WindowsPrincipal($currentUser)
-    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+# Function to set NinjaOne custom fields (if needed for monitoring)
+function Set-NinjaCustomField {
+    param(
+        [string]$FieldName,
+        [string]$Value
+    )
+    try {
+        # NinjaOne custom field setting (adjust field names as needed)
+        if (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue) {
+            & Ninja-Property-Set $FieldName $Value
+        }
+    }
+    catch {
+        # Silent fail if custom fields aren't configured
+    }
 }
 
 # Main execution
-try {
-    Write-Log "=== DentrixAceServer Restart Script Started ==="
-    
-    # Verify administrator privileges
-    if (-not (Test-Administrator)) {
-        Write-Log "This script requires administrator privileges to manage services." "ERROR"
-        Write-Log "Please run PowerShell as Administrator and try again." "ERROR"
-        exit 1
-    }
+$scriptStartTime = Get-Date
 
+try {
+    Write-Log "=== DentrixAceServer Restart Script Started (NinjaOne) ==="
+    Write-Log "Script executed from: $($env:COMPUTERNAME)"
+    Write-Log "Execution context: $($env:USERNAME)"
+    
     Write-Log "Checking if service '$serviceName' exists..."
     
     # Check if the service exists
     $service = Get-Service -Name $serviceName -ErrorAction Stop
-    Write-Log "Service '$serviceName' found. Current status: $($service.Status)"
+    $initialStatus = $service.Status
+    Write-Log "Service '$serviceName' found. Current status: $initialStatus"
+    
+    # Set initial status in NinjaOne custom field (optional)
+    Set-NinjaCustomField "DentrixServiceStatus" $initialStatus
     
     # Log initial service state
-    if ($service.Status -eq 'Running') {
-        Write-Log "Service is currently running. Proceeding with restart..."
-    } elseif ($service.Status -eq 'Stopped') {
-        Write-Log "Service is currently stopped. Will start the service..." "WARNING"
-    } else {
-        Write-Log "Service is in '$($service.Status)' state. Attempting restart..." "WARNING"
+    switch ($initialStatus) {
+        'Running' { 
+            Write-Log "Service is currently running. Proceeding with restart..."
+        }
+        'Stopped' { 
+            Write-Log "Service is currently stopped. Will start the service..." "WARNING"
+        }
+        default { 
+            Write-Log "Service is in '$initialStatus' state. Attempting restart..." "WARNING"
+        }
     }
     
     # Restart the service
@@ -93,58 +112,83 @@ try {
         Start-Sleep -Seconds 2
         $service = Get-Service -Name $serviceName -ErrorAction Stop
         
-        if ($Verbose) {
-            Write-Log "Current status: $($service.Status)" "INFO"
-        }
-        
         if ($service.Status -eq 'Running') {
             break
         }
         
+        # Progress indicator for NinjaOne
+        $elapsedSeconds = [math]::Round($stopwatch.Elapsed.TotalSeconds, 0)
+        Write-Log "Status check: $($service.Status) (${elapsedSeconds}s elapsed)"
+        
     } while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds)
     
     $stopwatch.Stop()
+    $restartDuration = [math]::Round($stopwatch.Elapsed.TotalSeconds, 2)
     
     # Final status check
     $service = Get-Service -Name $serviceName -ErrorAction Stop
+    $finalStatus = $service.Status
     
-    if ($service.Status -eq 'Running') {
-        Write-Log "SUCCESS: Service '$serviceName' is running. Startup time: $([math]::Round($stopwatch.Elapsed.TotalSeconds, 2)) seconds" "SUCCESS"
+    if ($finalStatus -eq 'Running') {
+        $successMessage = "SUCCESS: Service '$serviceName' is running. Restart duration: ${restartDuration} seconds"
+        Write-Log $successMessage "SUCCESS"
         
-        # Additional verification - check if service is responding
-        Write-Log "Performing additional service health check..."
+        # Additional stability check
+        Write-Log "Performing service stability check..."
         Start-Sleep -Seconds 3
         $serviceCheck = Get-Service -Name $serviceName
         
         if ($serviceCheck.Status -eq 'Running') {
-            Write-Log "Service health check passed - '$serviceName' is stable and running." "SUCCESS"
+            Write-Log "Service stability check passed - '$serviceName' is stable and running." "SUCCESS"
+            Set-NinjaCustomField "DentrixServiceStatus" "Running"
+            Set-NinjaCustomField "DentrixLastRestart" (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
             $exitCode = 0
         } else {
-            Write-Log "Service health check failed - service status changed to: $($serviceCheck.Status)" "ERROR"
+            $errorMessage = "Service stability check failed - status changed to: $($serviceCheck.Status)"
+            Write-Log $errorMessage "ERROR"
+            Set-NinjaCustomField "DentrixServiceStatus" $serviceCheck.Status
             $exitCode = 1
         }
     } else {
-        Write-Log "FAILED: Service '$serviceName' is not running after restart attempt. Current status: $($service.Status)" "ERROR"
-        Write-Log "Check Windows Event Logs for service-specific error details." "ERROR"
+        $errorMessage = "FAILED: Service '$serviceName' is not running after restart. Status: $finalStatus"
+        Write-Log $errorMessage "ERROR"
+        Write-Log "Recommendation: Check Windows Event Logs (System/Application) for service errors." "ERROR"
+        Set-NinjaCustomField "DentrixServiceStatus" $finalStatus
         $exitCode = 1
     }
 }
 catch [Microsoft.PowerShell.Commands.ServiceCommandException] {
-    Write-Log "Service error: $($_.Exception.Message)" "ERROR"
+    $errorMessage = "Service error: $($_.Exception.Message)"
+    Write-Log $errorMessage "ERROR"
+    
     if ($_.Exception.Message -like "*Cannot find any service with service name*") {
         Write-Log "The service '$serviceName' does not exist on this system." "ERROR"
-        Write-Log "Please verify the service name and ensure Dentrix is properly installed." "ERROR"
+        Write-Log "Verify Dentrix installation and service name." "ERROR"
+        Set-NinjaCustomField "DentrixServiceStatus" "NotFound"
+    } else {
+        Set-NinjaCustomField "DentrixServiceStatus" "Error"
     }
-    $exitCode = 1
+    $exitCode = 2
 }
 catch {
-    Write-Log "Unexpected error occurred: $($_.Exception.Message)" "ERROR"
-    Write-Log "Stack trace: $($_.ScriptStackTrace)" "ERROR"
-    $exitCode = 1
+    $errorMessage = "Unexpected error: $($_.Exception.Message)"
+    Write-Log $errorMessage "ERROR"
+    Set-NinjaCustomField "DentrixServiceStatus" "Error"
+    $exitCode = 3
 }
 finally {
-    Write-Log "=== Script execution completed ==="
-    Write-Log "Log file location: $logFile"
+    $totalDuration = [math]::Round(((Get-Date) - $scriptStartTime).TotalSeconds, 2)
+    Write-Log "=== Script execution completed in ${totalDuration} seconds ==="
+    Write-Log "Log file: $logFile"
+    
+    # Final output for NinjaOne activity log
+    Write-Output "SCRIPT_RESULT: Exit Code $exitCode"
+    if ($exitCode -eq 0) {
+        Write-Output "SCRIPT_RESULT: DentrixAceServer restart completed successfully"
+    } else {
+        Write-Output "SCRIPT_RESULT: DentrixAceServer restart failed - see logs for details"
+    }
 }
 
+# Return exit code for NinjaOne monitoring
 exit $exitCode
