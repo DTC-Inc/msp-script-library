@@ -57,7 +57,7 @@ Write-Host "TransformPath: $transformPath"
 Write-Host "RegURL: $regURL"
 Write-Host "RegPath: $regPath"
 
-# Define Duo variable
+# Define variable to check for Duo install
 $programName = "Duo Authentication for Windows Logon x64"
 
 # Check if Duo installed
