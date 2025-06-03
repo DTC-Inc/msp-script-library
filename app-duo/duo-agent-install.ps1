@@ -59,16 +59,18 @@ Write-Host "TransformPath: $transformPath"
 Write-Host "RegURL: $regURL"
 Write-Host "RegPath: $regPath"
 
-# Define Duo install path
-$duoPath = "C:\Program Files\Duo Security\WindowsLogon"
+# Define Duo variable
+$programName = "Duo Authentication for Windows logon x64"
 
-# Check if Duo intall path exists
+# Check if Duo installed
 
-if (Test-Path $duoPath) {
-    Write-Host "Duo already installed. '$duoPath' exists."
+$installed = winget list --name "$programName" --accept-source-agreements 2>$null | select-string "$programName"
+
+if ($installed) {
+    Write-Host "$programName is installed."
     exit 0
 } else {
-    Write-Host "'$duoPath' not found. Downloading Duo installer."
+    Write-Host "$programName not found. Downloading Duo installer."
     
     # Download the installer
     Start-BitsTransfer -Source $installerURL -Destination $installerPath
@@ -82,8 +84,10 @@ if (Test-Path $duoPath) {
         # Install Duo silently
         Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, '/qn', '/norestart', "TRANSFORMS=$transformPath") -NoNewWindow -Wait
     
-        # Check if Duo install path exists 
-        if (Test-Path $duoPath) {
+        # Check if Duo installed
+        $installed = winget list --name "$programName" --accept-source-agreements 2>$null | select-string "$programName"
+        
+        if ($installed) {
             Write-Host "Duo installed successfully."
             
             # Apply reg file
@@ -96,7 +100,7 @@ if (Test-Path $duoPath) {
             }
             
         } else {
-            Write-Host "Duo install failed. '$duoPath' not detected."
+            Write-Host "Duo install failed. '$programName' not detected."
         }
          
        # Remove the installer file
