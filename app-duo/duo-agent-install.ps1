@@ -60,11 +60,12 @@ Write-Host "RegURL: $regURL"
 Write-Host "RegPath: $regPath"
 
 # Define Duo variable
-$programName = "Duo Authentication for Windows logon x64"
+$programName = "Duo Authentication for Windows Logon x64"
 
 # Check if Duo installed
 
-$installed = winget list --name "$programName" --accept-source-agreements 2>$null | select-string "$programName"
+$installed = Get-WmiObject -Class Win32_Product | Where-Object {
+    $_.Name -like "*$programName*"
 
 if ($installed) {
     Write-Host "$programName is installed."
