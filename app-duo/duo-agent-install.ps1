@@ -85,7 +85,9 @@ if ($installed) {
         Start-Process 'msiexec.exe' -ArgumentList @('/I', $installerPath, '/qn', '/norestart', "TRANSFORMS=$transformPath") -NoNewWindow -Wait
     
         # Check if Duo installed
-        $installed = winget list --name "$programName" --accept-source-agreements 2>$null | select-string "$programName"
+        $installed = Get-WmiObject -Class Win32_Product | Where-Object {
+            $_.Name -like "*$programName*"
+        }
         
         if ($installed) {
             Write-Host "Duo installed successfully."
