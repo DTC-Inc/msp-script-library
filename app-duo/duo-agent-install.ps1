@@ -67,7 +67,7 @@ $installed = Get-WmiObject -Class Win32_Product | Where-Object {
 }
 
 if ($installed) {
-    Write-Host "$programName is installed."
+    Write-Host "$programName is already installed."
     exit 0
 } else {
     Write-Host "$programName not found. Downloading Duo installer."
