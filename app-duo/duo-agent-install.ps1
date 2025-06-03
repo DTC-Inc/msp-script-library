@@ -32,11 +32,9 @@ if ($RMM -ne 1) {
 } else { 
     # Store the logs in the RMMScriptPath
     if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
+        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"      
     } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
+        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
     }
 
     if ($null -eq $Description) {
