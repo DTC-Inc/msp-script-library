@@ -75,10 +75,7 @@ function Write-Log {
         # Silent fail for logging - don't break script execution
     }
     
-    # Output for NinjaOne console - use Write-Output for proper capture
-    Write-Output $entry
-    
-    # Also use Write-Host for immediate visibility during execution
+    # Single output for NinjaOne console with color coding
     switch ($Level) {
         "SUCCESS" { Write-Host $entry -ForegroundColor Green }
         "WARNING" { Write-Host $entry -ForegroundColor Yellow }
@@ -96,7 +93,7 @@ function Set-NinjaCustomField {
     try {
         # NinjaOne custom field setting (adjust field names as needed)
         if (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue) {
-            & Ninja-Property-Set $FieldName $Value
+            & Ninja-Property-Set $FieldName $Value 2>$null
         }
     }
     catch {
@@ -111,6 +108,10 @@ try {
     Write-Log "=== DentrixAceServer Restart Script Started (NinjaOne) ==="
     Write-Log "Script executed from: $($env:COMPUTERNAME)"
     Write-Log "Execution context: $($env:USERNAME)"
+    
+    # Clean up old log files first
+    Write-Log "Starting log file cleanup..."
+    Remove-OldLogFiles -LogDirectory $logDirectory -RetentionDays 5
     
     Write-Log "Checking if service '$serviceName' exists..."
     
