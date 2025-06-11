@@ -1,8 +1,7 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 #$profileRegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
-#$localUser = 'dtcadmin'
 #$logDir = 'C:\Windows\Logs'
-#$logFile = Join-Path $logDir 'dtcadmin_profile_cleanup.log'
+#$logFile = Join-Path $logDir 'localuser_profile_cleanup.log'
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
 # Getting input from user if not running from RMM else set variables from RMM.
@@ -46,9 +45,8 @@ if ($RMM -ne 1) {
 # Start the script logic here. This is the part that actually gets done what you need done.
 # Configuration
 #$profileRegPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList'
-#$localUser = 'dtcadmin'
 #$logDir = 'C:\Windows\Logs'
-#$logFile = Join-Path $logDir 'dtcadmin_profile_cleanup.log'
+#$logFile = Join-Path $logDir 'profile_cleanup.log'
 
 # Ensure log directory exists
 if (-not (Test-Path $logDir)) {
@@ -62,30 +60,22 @@ function Write-Log {
     "$timestamp - $message" | Out-File -FilePath $logFile -Append -Encoding UTF8
 }
 
-Write-Log "---- Starting dtcadmin profile cleanup ----"
+Write-Log "---- Starting local profile cleanup ----"
 
-try {
-    # Resolve the actual SID of the dtcadmin account
-    $dtcadminSID = (New-Object System.Security.Principal.NTAccount($localUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
-    Write-Log "Resolved SID for $localUser: $dtcadminSID"
-} catch {
-    Write-Log "ERROR: Failed to resolve SID for $localUser. $_"
-    exit 1
-}
+$profiles = @()
 
-# Find all ProfileList entries pointing to dtcadmin
-$matchedProfiles = @()
-
+# Collect all user profile entries
 Get-ChildItem -Path $profileRegPath | ForEach-Object {
     $sid = $_.PSChildName
     try {
         $props = Get-ItemProperty -Path $_.PSPath
-        if ($props.ProfileImagePath -like "*\$localUser") {
-            $matchedProfiles += [PSCustomObject]@{
+        if ($props.ProfileImagePath -like 'C:\Users\*') {
+            $username = Split-Path $props.ProfileImagePath -Leaf
+            $profiles += [PSCustomObject]@{
                 SID = $sid
+                Username = $username
                 ProfileImagePath = $props.ProfileImagePath
                 RegistryPath = $_.PSPath
-                IsValidSID = ($sid -eq $dtcadminSID)
             }
         }
     } catch {
@@ -93,27 +83,54 @@ Get-ChildItem -Path $profileRegPath | ForEach-Object {
     }
 }
 
-# Handle profile matches
-if ($matchedProfiles.Count -eq 0) {
-    Write-Log "No profile keys found for $localUser"
-} elseif ($matchedProfiles.Count -eq 1) {
-    Write-Log "Only one profile key found for $localUser — no action needed"
-} else {
-    foreach ($profile in $matchedProfiles) {
-        if ($profile.IsValidSID) {
-            Write-Log "Keeping valid profile key for SID $($profile.SID)"
-        } else {
+# Group profiles by base username
+$grouped = $profiles | Group-Object { ($_).Username -replace '\..*$', '' }
+
+foreach ($group in $grouped) {
+    $baseUsername = $group.Name
+    $userProfiles = $group.Group
+
+    if ($userProfiles.Count -le 1) {
+        Write-Log "Only one profile found for $baseUsername — no cleanup needed."
+        continue
+    }
+
+    Write-Log "Multiple profiles found for $baseUsername:"
+    foreach ($profile in $userProfiles) {
+        Write-Log "`t$($profile.SID) - $($profile.ProfileImagePath)"
+    }
+
+    # Attempt to resolve local account SID only
+    try {
+        $resolvedSID = (New-Object System.Security.Principal.NTAccount(".\$baseUsername")).Translate([System.Security.Principal.SecurityIdentifier]).Value
+
+        # Ensure it's a true local user SID (starts with S-1-5-21 and NOT domain)
+        if ($resolvedSID -notmatch '^S-1-5-21-\d+-\d+-\d+-\d+$') {
+            Write-Log "Skipping $baseUsername — resolved SID is not a local user SID: $resolvedSID"
+            continue
+        }
+
+        Write-Log "Resolved local SID for $baseUsername: $resolvedSID"
+    } catch {
+        Write-Log "Could not resolve local user SID for $baseUsername. Skipping."
+        continue
+    }
+
+    foreach ($profile in $userProfiles) {
+        if ($profile.SID -ne $resolvedSID) {
             try {
                 Remove-Item -Path $profile.RegistryPath -Recurse -Force
                 Write-Log "Removed duplicate profile key for SID $($profile.SID) at path $($profile.ProfileImagePath)"
             } catch {
                 Write-Log "ERROR: Failed to remove SID $($profile.SID). $_"
             }
+        } else {
+            Write-Log "Keeping valid local profile SID $($profile.SID)"
         }
     }
 }
 
-Write-Log "---- Completed dtcadmin profile cleanup ----"
+Write-Log "---- Completed local profile cleanup ----"
 
 Start-Transcript -Path $LogPath
 
