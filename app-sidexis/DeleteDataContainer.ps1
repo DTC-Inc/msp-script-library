@@ -4,7 +4,7 @@
 # Getting input from user if not running from RMM else set variables from RMM.
 
 
-$ScriptLogName = "DeleteDataContainer.log"
+$ScriptLogName = "CleanupDataContainer.log"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -42,27 +42,75 @@ if ($RMM -ne 1) {
 
 # Start the script logic here. This is the part that actually gets done what you need done.
 
-# Path to the folder
-$FolderPath = "C:\datacontainer"
+# Script to clean up old X-ray images from datacontainer folder
+# Author: Claude
+# Date: 2024
 
+# Define log file path
+$logPath = "C:\Windows\Logs\DataContainerCleanup"
+$logFile = Join-Path -Path $logPath -ChildPath "DataContainerCleanup_$(Get-Date -Format 'yyyyMMdd_HHmmss').log"
 
-# Check if the folder exists
-if (-Not (Test-Path -Path $FolderPath)) {
-    Write-Output "Folder '$FolderPath' does not exist. Exiting script."
-    Exit
+# Create log directory if it doesn't exist
+if (-not (Test-Path -Path $logPath)) {
+    New-Item -Path $logPath -ItemType Directory -Force | Out-Null
 }
 
-# Get the current date minus 30 days
-$DateThreshold = (Get-Date).AddDays(-30)
-
-# Delete folders older than 30 days
-Get-ChildItem -Path $FolderPath -Directory | Where-Object { $_.LastWriteTime -lt $DateThreshold } | ForEach-Object {
-    Write-Output "Deleting folder: $($_.FullName)"
-    Remove-Item -Path $_.FullName -Recurse -Force
+# Function to write to both console and log file
+function Write-Log {
+    param($Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $logMessage = "[$timestamp] $Message"
+    Write-Host $logMessage
+    Add-Content -Path $logFile -Value $logMessage
 }
 
-Write-Output "Cleanup completed for folder '$FolderPath'."
+Write-Log "Starting DataContainer cleanup process"
 
+# Get the system drive
+$systemDrive = $env:SYSTEMDRIVE
+
+# Define the datacontainer path
+$dataContainerPath = Join-Path -Path $systemDrive -ChildPath "datacontainer"
+
+# Check if the datacontainer folder exists
+if (-not (Test-Path -Path $dataContainerPath)) {
+    Write-Log "DataContainer folder not found at: $dataContainerPath"
+    exit
+}
+
+# Get current date
+$currentDate = Get-Date
+
+# Get all folders in datacontainer
+$folders = Get-ChildItem -Path $dataContainerPath -Directory
+
+# Counter for deleted folders
+$deletedCount = 0
+
+# Process each folder
+foreach ($folder in $folders) {
+    # Check if folder name starts with 8 digits (yyyyMMdd)
+    if ($folder.Name -match '^(\d{8})_') {
+        $dateString = $matches[1]
+        try {
+            # Parse the date from the first 8 digits
+            $folderDate = [DateTime]::ParseExact($dateString, "yyyyMMdd", $null)
+            # Calculate the age of the folder
+            $age = $currentDate - $folderDate
+            # If folder is older than 7 days, delete it
+            if ($age.Days -gt 7) {
+                Write-Log "Deleting folder: $($folder.FullName) (Age: $($age.Days) days)"
+                Remove-Item -Path $folder.FullName -Recurse -Force
+                $deletedCount++
+            }
+        }
+        catch {
+            Write-Log "Error processing folder $($folder.Name): $_"
+        }
+    }
+}
+
+Write-Log "Cleanup completed. Deleted $deletedCount folders." 
 
 Start-Transcript -Path $LogPath
 
