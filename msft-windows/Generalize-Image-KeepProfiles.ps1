@@ -2,6 +2,15 @@
 # Run as Administrator!
 # This version keeps all user profiles intact.
 
+# Prompt for local admin username
+$localAdminUser = Read-Host "Enter the local admin username to create"
+$currentYear = (Get-Date).Year
+$localAdminPassword = "DTC@$currentYear"
+
+# Use environment variables for paths
+$unattendPath = Join-Path $env:SystemRoot "System32\Sysprep\unattend.xml"
+$ninjaFolder = Join-Path $env:ProgramData "NinjaRMMAgent"
+
 # 1. Remove specific registry value for NinjaRMM
 $regPath = 'HKLM:\Software\Wow6432Node\NinjaRMM LLC\NinjaRMMAgent\Agent'
 $regValue = 'MachineId'
@@ -10,9 +19,8 @@ if (Test-Path $regPath) {
 }
 
 # 2. Remove specific ProgramData folder for NinjaRMMAgent
-$folder = 'C:\ProgramData\NinjaRMMAgent'
-if (Test-Path $folder) {
-    Remove-Item -Path $folder -Recurse -Force
+if (Test-Path $ninjaFolder) {
+    Remove-Item -Path $ninjaFolder -Recurse -Force
 }
 
 # 3. (Skipped) User profiles are kept in this version.
@@ -93,19 +101,19 @@ $unattendContent = @"
       <UserAccounts>
         <LocalAccounts>
           <LocalAccount wcm:action="add">
-            <Name>installadmin</Name>
+            <Name>$localAdminUser</Name>
             <Group>Administrators</Group>
             <Password>
-              <Value>DTC@dental2025</Value>
+              <Value>$localAdminPassword</Value>
               <PlainText>true</PlainText>
             </Password>
           </LocalAccount>
         </LocalAccounts>
       </UserAccounts>
       <AutoLogon>
-        <Username>installadmin</Username>
+        <Username>$localAdminUser</Username>
         <Password>
-          <Value>DTC@dental2025</Value>
+          <Value>$localAdminPassword</Value>
           <PlainText>true</PlainText>
         </Password>
         <Enabled>true</Enabled>
@@ -131,6 +139,5 @@ $unattendContent = @"
 </unattend>
 "@
 
-$unattendPath = "C:\Windows\System32\Sysprep\unattend.xml"
 $unattendContent | Set-Content -Path $unattendPath -Encoding UTF8
 Write-Host "unattend.xml created at $unattendPath" 
