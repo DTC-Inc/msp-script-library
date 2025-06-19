@@ -20,7 +20,7 @@ Write-Log "Script started."
 
 # Check if the file exists
 if (-Not (Test-Path $filePath)) {
-    Write-Log "File not found: $filePath. Creating folder and downloading file."
+    Write-Log "File not found: $filePath. Creating folder and downloading file. $fileUrl"
 
     # Check if the folder exists, if not, create it
     if (-Not (Test-Path $folderPath)) {
