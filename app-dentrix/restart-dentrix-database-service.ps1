@@ -21,6 +21,42 @@ if (-not (Test-Path -Path $logDirectory)) {
     }
 }
 
+# Clean up old log files (older than 5 days)
+function Remove-OldLogFiles {
+    param(
+        [string]$LogDirectory,
+        [int]$RetentionDays = 5
+    )
+    
+    try {
+        $cutoffDate = (Get-Date).AddDays(-$RetentionDays)
+        $logPattern = "DentrixAceServer_Restart_*.log"
+        
+        $oldLogFiles = Get-ChildItem -Path $LogDirectory -Filter $logPattern -ErrorAction SilentlyContinue | 
+                      Where-Object { $_.LastWriteTime -lt $cutoffDate }
+        
+        if ($oldLogFiles) {
+            $removedCount = 0
+            foreach ($file in $oldLogFiles) {
+                try {
+                    Remove-Item -Path $file.FullName -Force -ErrorAction Stop
+                    $removedCount++
+                    Write-Log "Removed old log file: $($file.Name)" "INFO"
+                }
+                catch {
+                    Write-Log "Failed to remove log file $($file.Name): $($_.Exception.Message)" "WARNING"
+                }
+            }
+            Write-Log "Log cleanup completed. Removed $removedCount old log files (older than $RetentionDays days)." "INFO"
+        } else {
+            Write-Log "No old log files found for cleanup." "INFO"
+        }
+    }
+    catch {
+        Write-Log "Error during log cleanup: $($_.Exception.Message)" "WARNING"
+    }
+}
+
 # Function to log messages and output to NinjaOne
 function Write-Log {
     param (
@@ -39,10 +75,7 @@ function Write-Log {
         # Silent fail for logging - don't break script execution
     }
     
-    # Output for NinjaOne console - use Write-Output for proper capture
-    Write-Output $entry
-    
-    # Also use Write-Host for immediate visibility during execution
+    # Single output for NinjaOne console with color coding
     switch ($Level) {
         "SUCCESS" { Write-Host $entry -ForegroundColor Green }
         "WARNING" { Write-Host $entry -ForegroundColor Yellow }
@@ -60,7 +93,7 @@ function Set-NinjaCustomField {
     try {
         # NinjaOne custom field setting (adjust field names as needed)
         if (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue) {
-            & Ninja-Property-Set $FieldName $Value
+            & Ninja-Property-Set $FieldName $Value 2>$null
         }
     }
     catch {
@@ -75,6 +108,10 @@ try {
     Write-Log "=== DentrixAceServer Restart Script Started (NinjaOne) ==="
     Write-Log "Script executed from: $($env:COMPUTERNAME)"
     Write-Log "Execution context: $($env:USERNAME)"
+    
+    # Clean up old log files first
+    Write-Log "Starting log file cleanup..."
+    Remove-OldLogFiles -LogDirectory $logDirectory -RetentionDays 5
     
     Write-Log "Checking if service '$serviceName' exists..."
     
