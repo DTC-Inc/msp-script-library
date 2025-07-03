@@ -4,6 +4,7 @@ $fileName = $savefile          # File name to check and download
 $filePath = Join-Path $folderPath $fileName
 $fileUrl = $downloadurl  # URL to download the file
 $logFilePath = "C:\logs\veeam_download.log"  # Path for the log file
+$daysThreshold = 60  # Files older than this many days will be deleted
 
 # Function to write to log file
 function Write-Log {
@@ -15,28 +16,30 @@ function Write-Log {
     Add-Content -Path $logFilePath -Value $logMessage
 }
 
-# Function to clean up existing ISO files (except the target file)
-function Remove-ExistingIsoFiles {
+# Function to clean up old ISO files (older than specified days)
+function Remove-OldIsoFiles {
     param (
         [string]$folderPath,
-        [string]$targetFileName
+        [int]$daysThreshold
     )
     
     if (Test-Path $folderPath) {
-        $existingIsoFiles = Get-ChildItem -Path $folderPath -Filter "*.iso" | Where-Object { $_.Name -ne $targetFileName }
+        $cutoffDate = (Get-Date).AddDays(-$daysThreshold)
+        $existingIsoFiles = Get-ChildItem -Path $folderPath -Filter "*.iso" | Where-Object { $_.LastWriteTime -lt $cutoffDate }
         
         if ($existingIsoFiles.Count -gt 0) {
-            Write-Log "Found $($existingIsoFiles.Count) existing ISO file(s) to remove:"
+            Write-Log "Found $($existingIsoFiles.Count) ISO file(s) older than $daysThreshold days to remove:"
             foreach ($file in $existingIsoFiles) {
                 try {
+                    $fileAge = ((Get-Date) - $file.LastWriteTime).Days
                     Remove-Item -Path $file.FullName -Force
-                    Write-Log "Removed existing ISO file: $($file.Name)"
+                    Write-Log "Removed old ISO file: $($file.Name) (Age: $fileAge days)"
                 } catch {
                     Write-Log "Failed to remove ISO file $($file.Name): $_"
                 }
             }
         } else {
-            Write-Log "No existing ISO files found to remove."
+            Write-Log "No ISO files older than $daysThreshold days found to remove."
         }
     }
 }
@@ -44,17 +47,19 @@ function Remove-ExistingIsoFiles {
 # Start logging
 Write-Log "Script started."
 
-# Clean up existing ISO files before proceeding
-Remove-ExistingIsoFiles -folderPath $folderPath -targetFileName $fileName
+# Clean up old ISO files before proceeding
+Remove-OldIsoFiles -folderPath $folderPath -daysThreshold $daysThreshold
 
 # Check if the file exists
 if (-Not (Test-Path $filePath)) {
     Write-Log "File not found: $filePath. Creating folder and downloading file. $fileUrl"
+    
     # Check if the folder exists, if not, create it
     if (-Not (Test-Path $folderPath)) {
         New-Item -ItemType Directory -Path $folderPath | Out-Null
         Write-Log "Folder created: $folderPath"
     }
+    
     # Download the file
     try {
         $ProgressPreference = 'SilentlyContinue'
