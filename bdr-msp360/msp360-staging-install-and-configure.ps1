@@ -460,36 +460,51 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
                 }
                 
                 Write-Host "`nRemoving existing backup plan to recreate with correct settings..." -ForegroundColor Yellow
-                try {
-                    # Try different parameter patterns for Remove-MBSBackupPlan
-                    if (Get-Command Remove-MBSBackupPlan -ErrorAction SilentlyContinue) {
-                        # Try with -Name parameter first
+                
+                # Simplified removal logic - try methods sequentially
+                $removalSucceeded = $false
+                $removalError = ""
+                
+                if (Get-Command Remove-MBSBackupPlan -ErrorAction SilentlyContinue) {
+                    # Method 1: Try with -Name parameter
+                    if (-not $removalSucceeded) {
                         try {
                             Remove-MBSBackupPlan -Name $existingPlan.Name -Force -ErrorAction Stop
                             Write-Host "✓ Successfully removed existing backup plan via -Name parameter." -ForegroundColor Green
+                            $removalSucceeded = $true
                             $planNeedsUpdate = $true
                         } catch {
-                            # Try with plan object directly
-                            try {
-                                Remove-MBSBackupPlan $existingPlan -Force -ErrorAction Stop
-                                Write-Host "✓ Successfully removed existing backup plan via plan object." -ForegroundColor Green
-                                $planNeedsUpdate = $true
-                            } catch {
-                                # Try with -BackupPlan parameter
-                                try {
-                                    Remove-MBSBackupPlan -BackupPlan $existingPlan -Force -ErrorAction Stop
-                                    Write-Host "✓ Successfully removed existing backup plan via -BackupPlan parameter." -ForegroundColor Green
-                                    $planNeedsUpdate = $true
-                                } catch {
-                                    throw "All removal methods failed: $($_.Exception.Message)"
-                                }
-                            }
+                            $removalError = $_.Exception.Message
                         }
-                    } else {
-                        throw "Remove-MBSBackupPlan cmdlet not available"
                     }
-                } catch {
-                    Write-Host "❌ Failed to remove existing plan via PowerShell: $($_.Exception.Message)" -ForegroundColor Red
+                    
+                    # Method 2: Try with plan object directly
+                    if (-not $removalSucceeded) {
+                        try {
+                            Remove-MBSBackupPlan $existingPlan -Force -ErrorAction Stop
+                            Write-Host "✓ Successfully removed existing backup plan via plan object." -ForegroundColor Green
+                            $removalSucceeded = $true
+                            $planNeedsUpdate = $true
+                        } catch {
+                            $removalError = $_.Exception.Message
+                        }
+                    }
+                    
+                    # Method 3: Try with -BackupPlan parameter
+                    if (-not $removalSucceeded) {
+                        try {
+                            Remove-MBSBackupPlan -BackupPlan $existingPlan -Force -ErrorAction Stop
+                            Write-Host "✓ Successfully removed existing backup plan via -BackupPlan parameter." -ForegroundColor Green
+                            $removalSucceeded = $true
+                            $planNeedsUpdate = $true
+                        } catch {
+                            $removalError = $_.Exception.Message
+                        }
+                    }
+                }
+                
+                if (-not $removalSucceeded) {
+                    Write-Host "❌ Failed to remove existing plan via PowerShell: $removalError" -ForegroundColor Red
                     Write-Host "Will attempt to remove via CBB executable..." -ForegroundColor Yellow
                     $planNeedsUpdate = $true
                 }
