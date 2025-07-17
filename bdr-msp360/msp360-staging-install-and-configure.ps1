@@ -13,6 +13,10 @@
 # $OrganizationName = "YourOrgName" (Organization name for backup prefix)
 # $SiteName = "YourSiteName" (Site name for backup prefix)
 # $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management") (Service names to check)
+# $UseLocalStorage = 0 (Set to 1 to use network share storage instead of cloud storage, 0 for cloud storage)
+# $LocalStoragePath = "\\server\share\MSP360LocalBackups" (Network share path when UseLocalStorage is 1)
+# $NetworkShareUsername = "domain\username" (Optional: Username for network share authentication)
+# $NetworkSharePassword = "password" (Optional: Password for network share authentication)
 
 # Function to sanitize strings for DNS/URL friendly format
 function ConvertTo-DNSFriendly {
@@ -93,6 +97,33 @@ if ($RMM -ne 1) {
             }
         } else {
             $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management")
+        }
+        
+        # Get storage configuration
+        Write-Host "`nStorage Configuration:" -ForegroundColor Cyan
+        Write-Host "By default, the script will use cloud storage for backups." -ForegroundColor White
+        $useLocalStorageInput = Read-Host "Use network share storage instead of cloud storage? (0 = Cloud, 1 = Network Share)"
+        
+        if ($useLocalStorageInput -eq "1") {
+            $UseLocalStorage = 1
+            $LocalStoragePath = Read-Host "Enter network share path (e.g., \\server\share\MSP360LocalBackups)"
+            if (-not $LocalStoragePath) {
+                $LocalStoragePath = "\\server\share\MSP360LocalBackups"
+            }
+            
+            # Get network share credentials if needed
+            Write-Host "`nNetwork Share Authentication (optional):" -ForegroundColor Cyan
+            $NetworkShareUsername = Read-Host "Enter username for network share (leave blank if not required)"
+            if ($NetworkShareUsername) {
+                $NetworkSharePasswordSecure = Read-Host "Enter password for network share" -AsSecureString
+            }
+            
+            Write-Host "Network share storage will be used with 'Staging Job Local' backup plan at 10 PM daily with monthly full backups" -ForegroundColor Green
+        } else {
+            $UseLocalStorage = 0
+            $LocalStoragePath = ""
+            $NetworkShareUsername = ""
+            Write-Host "Cloud storage will be used with 'Staging Job' backup plan at 12 AM daily" -ForegroundColor Green
         }
         
         if ($Description -and $MSPAccountPasswordSecure -and $BackupEncryptionPasswordSecure) {
@@ -184,6 +215,64 @@ if ($RMM -ne 1) {
         } else {
             $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management")
         }
+    } else {
+        # Ensure ServiceNames is properly converted to array if it came as a string from RMM
+        if ($ServiceNames -is [string]) {
+            # Handle string representation of array from RMM
+            if ($ServiceNames.StartsWith('@(') -and $ServiceNames.EndsWith(')')) {
+                # Remove @( and ) and split by comma, then clean up quotes
+                $serviceString = $ServiceNames.Substring(2, $ServiceNames.Length - 3)
+                $ServiceNames = $serviceString -split ',' | ForEach-Object { $_.Trim().Trim('"') }
+            } else {
+                # Single service name
+                $ServiceNames = @($ServiceNames)
+            }
+        }
+        # Ensure it's always an array
+        $ServiceNames = @($ServiceNames)
+    }
+    
+    # Handle network share storage configuration
+    if ($null -eq $UseLocalStorage) {
+        Write-Host "Network Share Storage Configuration not provided by RMM." -ForegroundColor Yellow
+        Write-Host "By default, the script will use cloud storage for backups." -ForegroundColor White
+        $useLocalStorageInput = Read-Host "Use network share storage instead of cloud storage? (0 = Cloud, 1 = Network Share)"
+        
+        if ($useLocalStorageInput -eq "1") {
+            $UseLocalStorage = 1
+        } else {
+            $UseLocalStorage = 0
+        }
+    }
+    
+    # Ensure UseLocalStorage is an integer
+    $UseLocalStorage = [int]$UseLocalStorage
+    
+    if ($UseLocalStorage -eq 1 -and ($null -eq $LocalStoragePath)) {
+        $LocalStoragePath = Read-Host "Network Share Path not provided by RMM. Enter network share path (e.g., \\server\share\MSP360LocalBackups)"
+        if (-not $LocalStoragePath) {
+            $LocalStoragePath = "\\server\share\MSP360LocalBackups"
+        }
+    }
+    
+    # Handle network share credentials if using network share storage
+    if ($UseLocalStorage -eq 1) {
+        if ($null -eq $NetworkShareUsername) {
+            $NetworkShareUsername = Read-Host "Network Share Username not provided by RMM. Enter username for network share (leave blank if not required)"
+        }
+        
+        if ($NetworkShareUsername -and ($null -eq $NetworkSharePassword)) {
+            $NetworkSharePasswordSecure = Read-Host "Network Share Password not provided by RMM. Enter password for network share" -AsSecureString
+        } elseif ($NetworkShareUsername -and $NetworkSharePassword) {
+            # Convert password to SecureString if provided as plain text from RMM
+            $NetworkSharePasswordSecure = ConvertTo-SecureString -String $NetworkSharePassword -AsPlainText -Force
+        }
+    }
+    
+    # Set default values if not using network share storage
+    if ($UseLocalStorage -ne 1) {
+        $LocalStoragePath = ""
+        $NetworkShareUsername = ""
     }
 }
 
@@ -194,6 +283,20 @@ $BackupPrefix = @(
     (ConvertTo-DNSFriendly $SiteName),
     (ConvertTo-DNSFriendly $ComputerName)
 ) -join '-'
+
+# Set backup plan name and schedule based on storage type
+if ($UseLocalStorage -eq 1) {
+    $BackupPlanName = "Staging Job Local"
+    $BackupScheduleTime = "22:00"  # 10 PM
+    $StorageDisplayName = "Network Share Storage"
+} else {
+    # Use the original backup plan name if not overridden
+    if (-not $BackupPlanName) {
+        $BackupPlanName = "Staging Job"
+    }
+    $BackupScheduleTime = "00:00"  # 12 AM (midnight)
+    $StorageDisplayName = "Staging Storage"
+}
 
 # Start the script logic here.
 
@@ -210,6 +313,16 @@ Write-Host "Computer: $ComputerName"
 Write-Host "Backup Prefix: $BackupPrefix"
 Write-Host "CBB Executable Path: $CBBPath"
 Write-Host "Service Names: $($ServiceNames -join ', ')"
+Write-Host "Storage Type: $(if ($UseLocalStorage -eq 1) { 'Network Share Storage' } else { 'Cloud Storage' })" -ForegroundColor $(if ($UseLocalStorage -eq 1) { 'Yellow' } else { 'Cyan' })
+if ($UseLocalStorage -eq 1) {
+    Write-Host "Network Share Path: $LocalStoragePath" -ForegroundColor Yellow
+    if ($NetworkShareUsername) {
+        Write-Host "Network Share Username: $NetworkShareUsername" -ForegroundColor Yellow
+    }
+    Write-Host "Backup Schedule: Daily at 10:00 PM with monthly full backups" -ForegroundColor Yellow
+} else {
+    Write-Host "Backup Schedule: Daily at 12:00 AM (Midnight)" -ForegroundColor Cyan
+}
 Write-Host "Backup Encryption: Enabled" -ForegroundColor Green
 
 try {
@@ -223,22 +336,69 @@ try {
     
     # Check if MSP360 agent is installed
     try {
+        # First try to import the module
+        Import-Module MSP360 -Force -ErrorAction SilentlyContinue
         $agentInfo = Get-MBSAgent -ErrorAction SilentlyContinue
         if ($agentInfo) {
             $agentInstalled = $true
             Write-Host "MSP360 Agent is installed (Version: $($agentInfo.Version))" -ForegroundColor Green
+        } else {
+            Write-Host "MSP360 Agent not detected via Get-MBSAgent." -ForegroundColor Yellow
         }
     } catch {
         Write-Host "MSP360 Agent not detected or PowerShell module not available." -ForegroundColor Yellow
     }
     
+    # Fallback: Check for MSP360 installation via registry or file system
+    if (-not $agentInstalled) {
+        Write-Host "Checking for MSP360 installation via alternative methods..." -ForegroundColor White
+        
+        # Check common installation paths
+        $msp360Paths = @(
+            "${env:ProgramFiles}\MSP360\MSP360 (CloudBerry) Backup",
+            "${env:ProgramFiles(x86)}\MSP360\MSP360 (CloudBerry) Backup",
+            "${env:ProgramFiles}\CloudBerry Backup",
+            "${env:ProgramFiles(x86)}\CloudBerry Backup"
+        )
+        
+        foreach ($path in $msp360Paths) {
+            if (Test-Path $path) {
+                $agentInstalled = $true
+                Write-Host "MSP360 Agent installation found at: $path" -ForegroundColor Green
+                break
+            }
+        }
+        
+        # Check for MSP360 services as additional verification
+        if (-not $agentInstalled) {
+            $msp360Services = Get-Service -Name "*MSP360*", "*CloudBerry*" -ErrorAction SilentlyContinue
+            if ($msp360Services) {
+                $agentInstalled = $true
+                Write-Host "MSP360 Agent detected via services: $($msp360Services.Name -join ', ')" -ForegroundColor Green
+            }
+        }
+    }
+    
     # Check service status if agent is installed
     if ($agentInstalled) {
         Write-Host "Checking services: $($ServiceNames -join ', ')" -ForegroundColor White
+        
+        # Debug: Show all MSP360/CloudBerry services detected on system
+        Write-Host "All MSP360/CloudBerry services detected on system:" -ForegroundColor Gray
+        $detectedServices = Get-Service -Name "*MSP360*", "*CloudBerry*" -ErrorAction SilentlyContinue
+        if ($detectedServices) {
+            foreach ($svc in $detectedServices) {
+                Write-Host "  - $($svc.Name) (Status: $($svc.Status))" -ForegroundColor Gray
+            }
+        } else {
+            Write-Host "  - No MSP360/CloudBerry services detected" -ForegroundColor Gray
+        }
+        
         $serviceHealthy = $false
         $servicesRunning = 0
         
         foreach ($serviceName in $ServiceNames) {
+            Write-Host "Checking service: $serviceName" -ForegroundColor Gray
             $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
             if ($service) {
                 Write-Host "Found service: $serviceName (Status: $($service.Status))" -ForegroundColor White
@@ -280,12 +440,19 @@ try {
         if (-not $serviceHealthy) {
             Write-Host "MSP360 services are not healthy. Will proceed with installation." -ForegroundColor Yellow
             $needsInstallation = $true
+        } else {
+            Write-Host "MSP360 services are healthy. No installation needed." -ForegroundColor Green
         }
     } else {
         $needsInstallation = $true
     }
     
     # Install only if needed
+    Write-Host "Installation Decision Summary:" -ForegroundColor Cyan
+    Write-Host "  - Agent Installed: $agentInstalled" -ForegroundColor White
+    Write-Host "  - Services Healthy: $serviceHealthy" -ForegroundColor White
+    Write-Host "  - Needs Installation: $needsInstallation" -ForegroundColor White
+    
     if ($needsInstallation) {
         Write-Host "Installing MSP360 Agent..." -ForegroundColor Yellow
         
@@ -357,42 +524,200 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
         Write-Host "Account configuration will need to be done manually." -ForegroundColor Yellow
     }
     
-    # Step 3: Get Storage Account via CBB
-    Write-Host "Step 3: Getting storage account information via CBB..." -ForegroundColor Yellow
+    # Step 3: Configure Storage Account
+    Write-Host "Step 3: Configuring storage account..." -ForegroundColor Yellow
     
-    # Use CBB to list storage accounts instead of PowerShell cmdlets
-    $StorageAccount = $null
-    if ($CBBPath -and (Test-Path $CBBPath)) {
+    if ($UseLocalStorage -eq 1) {
+        Write-Host "Configuring network share storage endpoint..." -ForegroundColor Yellow
+        
+        # Test network share accessibility with proper authentication
+        Write-Host "Testing network share accessibility: $LocalStoragePath" -ForegroundColor White
+        
+        $networkShareAccessible = $false
+        
+        # Note: Network credentials will be added via CBB nwcAdd command after storage account creation
+        Write-Host "Network credentials will be configured via CBB after storage account creation." -ForegroundColor Gray
+        
+        # Test network share accessibility
         try {
-            $storageListResult = & $CBBPath "listStorageAccounts" 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "Available storage accounts detected via CBB." -ForegroundColor Green
-                # For now, we'll use "Staging Storage" as the default name
-                # CBB will validate this when creating the backup plan
-                $StorageAccount = [PSCustomObject]@{
-                    DisplayName = "Staging Storage"
-                }
-                Write-Host "Using storage account: Staging Storage" -ForegroundColor Green
+            if (Test-Path $LocalStoragePath) {
+                Write-Host "✓ Network share is accessible: $LocalStoragePath" -ForegroundColor Green
+                $networkShareAccessible = $true
             } else {
-                Write-Host "CBB storage account listing failed. Will proceed with manual specification." -ForegroundColor Yellow
-                $StorageAccount = [PSCustomObject]@{
-                    DisplayName = "Staging Storage"
+                Write-Host "⚠ Network share path does not exist: $LocalStoragePath" -ForegroundColor Yellow
+                Write-Host "Attempting to create network share directory..." -ForegroundColor White
+                try {
+                    New-Item -Path $LocalStoragePath -ItemType Directory -Force | Out-Null
+                    Write-Host "✓ Network share directory created successfully." -ForegroundColor Green
+                    $networkShareAccessible = $true
+                } catch {
+                    Write-Host "❌ Failed to create network share directory: $($_.Exception.Message)" -ForegroundColor Red
+                    Write-Host "Note: Network share may require manual creation or proper permissions." -ForegroundColor Yellow
                 }
             }
         } catch {
-            Write-Host "Error checking storage accounts via CBB: $($_.Exception.Message)" -ForegroundColor Yellow
+            Write-Host "❌ Error testing network share: $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "Note: Network share may require authentication or proper permissions." -ForegroundColor Yellow
+        }
+        
+        if (-not $networkShareAccessible) {
+            Write-Host "⚠ Network share is not accessible. Backup plan creation may fail." -ForegroundColor Yellow
+            Write-Host "Please ensure:" -ForegroundColor White
+            Write-Host "  - Network share path is correct: $LocalStoragePath" -ForegroundColor White
+            Write-Host "  - Proper credentials are provided" -ForegroundColor White
+            Write-Host "  - Network share permissions allow access" -ForegroundColor White
+        }
+        
+        # Configure network share storage account via CBB
+        if ($CBBPath -and (Test-Path $CBBPath)) {
+            try {
+                Write-Host "Adding network share storage account via CBB..." -ForegroundColor White
+                
+                # Build CBB command arguments for network share storage
+                # Use addAccount for network shares - this is the correct CBB command for adding storage accounts
+                $cbbStorageArgs = @(
+                    "addAccount",
+                    "-d", "`"$StorageDisplayName`"",
+                    "-st", "FileSystem",
+                    "-c", "`"$LocalStoragePath`"",
+                    "-bp", "`"$BackupPrefix`""
+                )
+                
+                Write-Host "Note: Network share credentials will be added separately using nwcAdd command" -ForegroundColor Gray
+                
+                Write-Host "Executing CBB command: $CBBPath $($cbbStorageArgs -join ' ')" -ForegroundColor Gray
+                $addStorageResult = & $CBBPath $cbbStorageArgs 2>&1
+                Write-Host "CBB Command Result:" -ForegroundColor Gray
+                Write-Host "  - Exit Code: $LASTEXITCODE" -ForegroundColor Gray
+                Write-Host "  - Output: $addStorageResult" -ForegroundColor Gray
+                
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "✓ Network share storage account added successfully." -ForegroundColor Green
+                    
+                    # Add network credentials if provided
+                    if ($NetworkShareUsername -and $NetworkSharePasswordSecure) {
+                        Write-Host "Adding network credentials for the storage account..." -ForegroundColor White
+                        $NetworkSharePasswordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NetworkSharePasswordSecure))
+                        
+                        $cbbCredentialsArgs = @(
+                            "nwcAdd",
+                            "-n", "`"$LocalStoragePath`"",
+                            "-l", "`"$NetworkShareUsername`"",
+                            "-p", "`"$NetworkSharePasswordPlain`""
+                        )
+                        
+                        Write-Host "Executing CBB command: $CBBPath $($cbbCredentialsArgs -join ' ' -replace $NetworkSharePasswordPlain, '[PASSWORD]')" -ForegroundColor Gray
+                        $addCredentialsResult = & $CBBPath $cbbCredentialsArgs 2>&1
+                        Write-Host "CBB Credentials Command Result:" -ForegroundColor Gray
+                        Write-Host "  - Exit Code: $LASTEXITCODE" -ForegroundColor Gray
+                        Write-Host "  - Output: $addCredentialsResult" -ForegroundColor Gray
+                        
+                        if ($LASTEXITCODE -eq 0) {
+                            Write-Host "✓ Network share credentials added successfully." -ForegroundColor Green
+                        } else {
+                            Write-Host "⚠ Network share credentials may already exist or CBB command failed (exit code: $LASTEXITCODE)" -ForegroundColor Yellow
+                        }
+                        
+                        # Clear sensitive password from memory
+                        $NetworkSharePasswordPlain = $null
+                    } else {
+                        Write-Host "No network credentials provided - storage account added without authentication." -ForegroundColor Yellow
+                    }
+                    
+                } else {
+                    Write-Host "⚠ Network share storage account may already exist or CBB command failed (exit code: $LASTEXITCODE)" -ForegroundColor Yellow
+                    
+                    # Check if storage account was actually added despite error
+                    try {
+                        $listResult = & $CBBPath "listStorageAccounts" 2>&1
+                        if ($listResult -like "*$StorageDisplayName*") {
+                            Write-Host "✓ Storage account appears to be available despite error message." -ForegroundColor Green
+                            
+                            # Try to add credentials even if storage account addition showed error
+                            if ($NetworkShareUsername -and $NetworkSharePasswordSecure) {
+                                Write-Host "Attempting to add network credentials despite storage account error..." -ForegroundColor White
+                                $NetworkSharePasswordPlain = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NetworkSharePasswordSecure))
+                                
+                                $cbbCredentialsArgs = @(
+                                    "nwcAdd",
+                                    "-n", "`"$LocalStoragePath`"",
+                                    "-l", "`"$NetworkShareUsername`"",
+                                    "-p", "`"$NetworkSharePasswordPlain`""
+                                )
+                                
+                                $addCredentialsResult = & $CBBPath $cbbCredentialsArgs 2>&1
+                                if ($LASTEXITCODE -eq 0) {
+                                    Write-Host "✓ Network share credentials added successfully." -ForegroundColor Green
+                                } else {
+                                    Write-Host "⚠ Network share credentials addition failed (exit code: $LASTEXITCODE)" -ForegroundColor Yellow
+                                }
+                                
+                                # Clear sensitive password from memory
+                                $NetworkSharePasswordPlain = $null
+                            }
+                        } else {
+                            Write-Host "❌ Storage account not found in storage account list." -ForegroundColor Red
+                        }
+                    } catch {
+                        Write-Host "Could not verify storage account addition." -ForegroundColor Yellow
+                    }
+                }
+                
+                # Password was already cleared above after net use command
+                
+            } catch {
+                Write-Host "⚠ Error adding network share storage via CBB: $($_.Exception.Message)" -ForegroundColor Yellow
+                Write-Host "Network share storage may already be configured." -ForegroundColor White
+            }
+        } else {
+            Write-Host "❌ CBB executable not available for network share storage configuration." -ForegroundColor Red
+            throw "CBB executable required for network share storage configuration"
+        }
+        
+        $StorageAccount = [PSCustomObject]@{
+            DisplayName = $StorageDisplayName
+            Path = $LocalStoragePath
+        }
+        
+        Write-Host "✓ Network share storage configuration ready: $($StorageAccount.DisplayName) -> $($StorageAccount.Path)" -ForegroundColor Green
+        
+    } else {
+        Write-Host "Configuring cloud storage account..." -ForegroundColor Yellow
+        
+        # Use CBB to list storage accounts instead of PowerShell cmdlets
+        $StorageAccount = $null
+        if ($CBBPath -and (Test-Path $CBBPath)) {
+            try {
+                $storageListResult = & $CBBPath "listStorageAccounts" 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Available storage accounts detected via CBB." -ForegroundColor Green
+                    # For now, we'll use "Staging Storage" as the default name
+                    # CBB will validate this when creating the backup plan
+                    $StorageAccount = [PSCustomObject]@{
+                        DisplayName = $StorageDisplayName
+                    }
+                    Write-Host "Using cloud storage account: $StorageDisplayName" -ForegroundColor Green
+                } else {
+                    Write-Host "CBB storage account listing failed. Will proceed with manual specification." -ForegroundColor Yellow
+                    $StorageAccount = [PSCustomObject]@{
+                        DisplayName = $StorageDisplayName
+                    }
+                }
+            } catch {
+                Write-Host "Error checking storage accounts via CBB: $($_.Exception.Message)" -ForegroundColor Yellow
+                $StorageAccount = [PSCustomObject]@{
+                    DisplayName = $StorageDisplayName
+                }
+            }
+        } else {
+            Write-Host "CBB executable not available for storage account validation." -ForegroundColor Yellow
             $StorageAccount = [PSCustomObject]@{
-                DisplayName = "Staging Storage"
+                DisplayName = $StorageDisplayName
             }
         }
-    } else {
-        Write-Host "CBB executable not available for storage account validation." -ForegroundColor Yellow
-        $StorageAccount = [PSCustomObject]@{
-            DisplayName = "Staging Storage"
-        }
+        
+        Write-Host "✓ Cloud storage account configuration ready: $($StorageAccount.DisplayName)" -ForegroundColor Green
     }
-    
-    Write-Host "✓ Storage account configuration ready." -ForegroundColor Green
     
     # Step 4: Check for Existing Backup Plan and Validate Settings
     Write-Host "Step 4: Checking for existing backup plan '$BackupPlanName'..." -ForegroundColor Yellow
@@ -544,9 +869,21 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
     if (-not $shouldCreatePlan -and -not $planNeedsUpdate) {
         Write-Host "`n=== MSP360 Staging Configuration Summary ===" -ForegroundColor Cyan
         Write-Host "Account: $MSPAccountEmail" -ForegroundColor White
-        Write-Host "Storage Account: $($StorageAccount.DisplayName)" -ForegroundColor White
+            Write-Host "Storage Type: $(if ($UseLocalStorage -eq 1) { 'Network Share Storage' } else { 'Cloud Storage' })" -ForegroundColor $(if ($UseLocalStorage -eq 1) { 'Yellow' } else { 'Cyan' })
+    Write-Host "Storage Account: $($StorageAccount.DisplayName)" -ForegroundColor White
+    if ($UseLocalStorage -eq 1) {
+        Write-Host "Network Share Path: $($StorageAccount.Path)" -ForegroundColor Yellow
+        if ($NetworkShareUsername) {
+            Write-Host "Network Share Username: $NetworkShareUsername" -ForegroundColor Yellow
+        }
+    }
         Write-Host "Backup Plan: $BackupPlanName (Already Configured)" -ForegroundColor Green
         Write-Host "Backup Prefix (User Account Level): $BackupPrefix" -ForegroundColor Cyan
+        if ($UseLocalStorage -eq 1) {
+            Write-Host "Schedule: Daily at 10:00 PM with monthly full backups" -ForegroundColor Yellow
+        } else {
+            Write-Host "Schedule: Daily at 12:00 AM" -ForegroundColor Cyan
+        }
         Write-Host "Status: Validated - No Changes Required" -ForegroundColor Green
         Write-Host "=======================================" -ForegroundColor Cyan
         
@@ -614,13 +951,23 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
                     Write-Host "Please create an image-based backup plan with these settings:" -ForegroundColor Yellow
         Write-Host "  - Plan Name: $BackupPlanName" -ForegroundColor White
         Write-Host "  - Storage: $($StorageAccount.DisplayName)" -ForegroundColor White
-        Write-Host "  - Schedule: Daily at 12:00 AM" -ForegroundColor White
-        Write-Host "  - Volumes: System Required (Internal volumes only)" -ForegroundColor White
+        if ($UseLocalStorage -eq 1) {
+            Write-Host "  - Network Share Path: $($StorageAccount.Path)" -ForegroundColor White
+            Write-Host "  - Schedule: Daily at 10:00 PM with monthly full backups" -ForegroundColor White
+        } else {
+            Write-Host "  - Schedule: Daily at 12:00 AM" -ForegroundColor White
+        }
+        Write-Host "  - Volumes: Fixed Drives Only (or All Volumes if not available)" -ForegroundColor White
         Write-Host "  - Compression: Enabled" -ForegroundColor White
         Write-Host "  - Encryption: AES256 with password" -ForegroundColor White
         Write-Host "  - New Backup Format: Enabled" -ForegroundColor White
-        Write-Host "  - Forever Forward Incremental: Enabled" -ForegroundColor White
-        Write-Host "  - Retention: Purge versions older than 7 days" -ForegroundColor White
+        if ($UseLocalStorage -ne 1) {
+            Write-Host "  - Forever Forward Incremental: Enabled" -ForegroundColor White
+        } else {
+            Write-Host "  - Forever Forward Incremental: Not supported (Network Share)" -ForegroundColor White
+            Write-Host "  - Monthly Full Backups: Enabled" -ForegroundColor White
+        }
+        Write-Host "  - Retention: Purge versions older than 3 months" -ForegroundColor White
         Write-Host "  - VSS: System VSS enabled" -ForegroundColor White
         Write-Host "  - Bad Sectors: Ignore enabled" -ForegroundColor White
         Write-Host "  - Notifications: Disabled" -ForegroundColor White
@@ -643,20 +990,32 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
                 "addBackupIBBPlan",
                 "-a", "`"$($StorageAccount.DisplayName)`"",
                 "-n", "`"$BackupPlanName`"",
-                "-r",                           # System required volumes only (internal volumes)
+                "-allVolumes",                  # All volumes
                 "-c", "yes",                    # Use compression
                 "-useSystemVss", "yes",         # Use system VSS
                 "-ignoreBadSectors", "yes",     # Ignore bad sectors
                 "-ea", "AES256",                # Encryption algorithm (AES256, not AES_256)
                 "-ep", "`"$BackupEncryptionPasswordPlain`"", # Encryption password
-                "-nbf",                         # New backup format (required for FFI)
-                "-ffi", "yes",                  # Forever Forward Incremental
+                "-nbf",                         # New backup format (enabled for both storage types)
                 "-every", "day",                # Daily schedule
-                "-at", "00:00",                 # At midnight (12:00 AM)
-                "-purge", "7d",                 # Purge versions older than 7 days
+                "-at", "$BackupScheduleTime",   # Schedule time (22:00 for local, 00:00 for cloud)
+                "-purge", "3m",                 # Purge versions older than 3 months
+                "-runMissed", "yes",            # Run missed backups (required for all jobs)
                 "-notification", "no",          # Disable email notifications
                 "-winLog", "on"                 # Add to Windows Event Log
             )
+            
+            # Add Forever Forward Incremental only for cloud storage (not supported by network shares)
+            if ($UseLocalStorage -ne 1) {
+                $cbbArgs += "-ffi", "yes"       # Forever Forward Incremental
+                Write-Host "Forever Forward Incremental enabled for cloud storage" -ForegroundColor Green
+            } else {
+                # Add monthly full backup for network share storage to ensure retention works
+                $cbbArgs += "-syncbeforerun", "yes"  # Sync before run
+                $cbbArgs += "-useBlockLevelBackup", "yes"  # Use block level backup
+                $cbbArgs += "-full", "month"     # Monthly full backup
+                Write-Host "Forever Forward Incremental not supported for network share storage - using standard incremental with monthly full backups" -ForegroundColor Yellow
+            }
                 
                 Write-Host "Running CBB command: $CBBPath $($cbbArgs -join ' ')" -ForegroundColor Gray
                 
@@ -668,13 +1027,23 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
                                     Write-Host "Backup plan configured with:" -ForegroundColor Cyan
                 Write-Host "  - Plan Name: $BackupPlanName" -ForegroundColor White
                 Write-Host "  - Storage: $($StorageAccount.DisplayName)" -ForegroundColor White
-                Write-Host "  - Schedule: Daily at 12:00 AM" -ForegroundColor White
-                Write-Host "  - Volumes: System Required (Internal volumes only)" -ForegroundColor White
+                if ($UseLocalStorage -eq 1) {
+                    Write-Host "  - Network Share Path: $($StorageAccount.Path)" -ForegroundColor White
+                    Write-Host "  - Schedule: Daily at 10:00 PM with monthly full backups" -ForegroundColor White
+                } else {
+                    Write-Host "  - Schedule: Daily at 12:00 AM" -ForegroundColor White
+                }
+                Write-Host "  - Volumes: All Volumes" -ForegroundColor White
                 Write-Host "  - Compression: Enabled" -ForegroundColor White
                 Write-Host "  - Encryption: AES256 with custom password" -ForegroundColor White
                 Write-Host "  - New Backup Format: Enabled" -ForegroundColor White
-                Write-Host "  - Forever Forward Incremental: Enabled" -ForegroundColor White
-                Write-Host "  - Retention: Purge versions older than 7 days" -ForegroundColor White
+                if ($UseLocalStorage -ne 1) {
+                    Write-Host "  - Forever Forward Incremental: Enabled" -ForegroundColor White
+                } else {
+                    Write-Host "  - Forever Forward Incremental: Not supported (Network Share)" -ForegroundColor Yellow
+                    Write-Host "  - Monthly Full Backups: Enabled" -ForegroundColor Yellow
+                }
+                Write-Host "  - Retention: Purge versions older than 3 months" -ForegroundColor White
                 Write-Host "  - VSS: System VSS enabled" -ForegroundColor White
                 Write-Host "  - Bad Sectors: Ignore enabled" -ForegroundColor White
                 Write-Host "  - Notifications: Disabled" -ForegroundColor White
@@ -691,27 +1060,50 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
                     "addBackupIBBPlan",
                     "-a", "`"$($StorageAccount.DisplayName)`"",
                     "-n", "`"$BackupPlanName`"",
-                    "-r",                           # System required volumes only
+                    "-allVolumes",                  # All volumes
                     "-c", "yes",                    # Use compression
-                    "-nbf",                         # New backup format (required for FFI)
-                    "-ffi", "yes",                  # Forever Forward Incremental
+                    "-useSystemVss", "yes",         # Use system VSS
+                    "-ignoreBadSectors", "yes",     # Ignore bad sectors
+                    "-ea", "AES256",                # Encryption algorithm (REQUIRED)
+                    "-ep", "`"$BackupEncryptionPasswordPlain`"", # Encryption password (REQUIRED)
+                    "-nbf",                         # New backup format (enabled for both storage types)
                     "-every", "day",                # Daily schedule
-                    "-at", "00:00",                 # At midnight (12:00 AM)
-                    "-purge", "7d"                  # Purge versions older than 7 days
+                    "-at", "$BackupScheduleTime",   # Schedule time (22:00 for local, 00:00 for cloud)
+                    "-purge", "3m",                 # Purge versions older than 3 months
+                    "-runMissed", "yes",            # Run missed backups (required for all jobs)
+                    "-notification", "no",          # Disable email notifications
+                    "-winLog", "on"                 # Add to Windows Event Log
                 )
+                
+                # Add Forever Forward Incremental only for cloud storage (not supported by network shares)
+                if ($UseLocalStorage -ne 1) {
+                    $simpleCbbArgs += "-ffi", "yes" # Forever Forward Incremental
+                } else {
+                    # Add monthly full backup for network share storage
+                    $simpleCbbArgs += "-full", "month"  # Monthly full backup
+                }
                     
                     $result2 = & $CBBPath $simpleCbbArgs 2>&1
                     
                     if ($LASTEXITCODE -eq 0) {
                                             Write-Host "✓ Successfully created simplified image backup plan!" -ForegroundColor Green
-                    Write-Host "Configured: Daily schedule, compression, new backup format, forever forward incremental, 7-day retention" -ForegroundColor Green
+                    $ffiStatus = if ($UseLocalStorage -eq 1) { ", monthly full backups" } else { ", forever forward incremental" }
+                    Write-Host "Configured: Daily schedule $(if ($UseLocalStorage -eq 1) { 'at 10:00 PM' } else { 'at 12:00 AM' }), compression, encryption, VSS, new backup format$ffiStatus, 3-month retention" -ForegroundColor Green
+                    Write-Host "NOTE: Using simplified command with all volumes" -ForegroundColor Yellow
                     Write-Host "Backup prefix '$BackupPrefix' is set at user account level." -ForegroundColor Cyan
-                    Write-Host "NOTE: Please manually configure in MSP360 console:" -ForegroundColor Yellow
-                    Write-Host "  - Encryption: AES256 with password '$BackupEncryptionPasswordPlain'" -ForegroundColor Yellow
-                    Write-Host "  - VSS: Enable System VSS" -ForegroundColor Yellow
-                    Write-Host "  - Bad Sectors: Set to ignore" -ForegroundColor Yellow
-                    Write-Host "  - Notifications: Disable email notifications" -ForegroundColor Yellow
-                    Write-Host "  - Windows Event Log: Enable" -ForegroundColor Yellow
+                    Write-Host "✓ All required settings configured including:" -ForegroundColor Green
+                    Write-Host "  - Encryption: AES256 with custom password" -ForegroundColor Green
+                    Write-Host "  - VSS: System VSS enabled" -ForegroundColor Green
+                    Write-Host "  - Bad Sectors: Ignore enabled" -ForegroundColor Green
+                    Write-Host "  - Notifications: Disabled" -ForegroundColor Green
+                    Write-Host "  - Windows Event Log: Enabled" -ForegroundColor Green
+                    Write-Host "  - New Backup Format: Enabled" -ForegroundColor Green
+                    if ($UseLocalStorage -ne 1) {
+                        Write-Host "  - Forever Forward Incremental: Enabled" -ForegroundColor Green
+                    } else {
+                        Write-Host "  - Forever Forward Incremental: Not available for network shares" -ForegroundColor Gray
+                        Write-Host "  - Monthly Full Backups: Enabled" -ForegroundColor Green
+                    }
                     } else {
                         Write-Host "❌ Simplified CBB command also failed: $LASTEXITCODE" -ForegroundColor Red
                         Write-Host "CBB Output: $result2" -ForegroundColor Yellow
@@ -734,18 +1126,34 @@ Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=d
     # Step 6: Display Configuration Summary
     Write-Host "`n=== MSP360 Staging Configuration Summary ===" -ForegroundColor Cyan
     Write-Host "Account: $MSPAccountEmail" -ForegroundColor White
+    Write-Host "Storage Type: $(if ($UseLocalStorage -eq 1) { 'Network Share Storage' } else { 'Cloud Storage' })" -ForegroundColor $(if ($UseLocalStorage -eq 1) { 'Yellow' } else { 'Cyan' })
     Write-Host "Storage Account: $($StorageAccount.DisplayName)" -ForegroundColor White
+    if ($UseLocalStorage -eq 1) {
+        Write-Host "Network Share Path: $($StorageAccount.Path)" -ForegroundColor Yellow
+        if ($NetworkShareUsername) {
+            Write-Host "Network Share Username: $NetworkShareUsername" -ForegroundColor Yellow
+        }
+    }
     Write-Host "Backup Plan: $BackupPlanName" -ForegroundColor White
     Write-Host "Organization: $OrganizationName" -ForegroundColor White
     Write-Host "Site: $SiteName" -ForegroundColor White
     Write-Host "Computer: $ComputerName" -ForegroundColor White
     Write-Host "Backup Prefix (User Account Level): $BackupPrefix" -ForegroundColor Cyan
-    Write-Host "Schedule: Daily at 12:00 AM" -ForegroundColor White
-    Write-Host "Backup Type: Image-based (Internal Volumes Only)" -ForegroundColor White
+    if ($UseLocalStorage -eq 1) {
+        Write-Host "Schedule: Daily at 10:00 PM with monthly full backups" -ForegroundColor Yellow
+    } else {
+        Write-Host "Schedule: Daily at 12:00 AM" -ForegroundColor Cyan
+    }
+    Write-Host "Backup Type: Image-based (All Volumes)" -ForegroundColor White
     Write-Host "Compression: Enabled" -ForegroundColor White
     Write-Host "New Backup Format: Enabled" -ForegroundColor White
-    Write-Host "Forever Forward Incremental: Enabled" -ForegroundColor White
-    Write-Host "Retention: Purge versions older than 7 days" -ForegroundColor White
+    if ($UseLocalStorage -ne 1) {
+        Write-Host "Forever Forward Incremental: Enabled" -ForegroundColor Green
+    } else {
+        Write-Host "Forever Forward Incremental: Not supported (Network Share)" -ForegroundColor Yellow
+        Write-Host "Monthly Full Backups: Enabled" -ForegroundColor Yellow
+    }
+    Write-Host "Retention: Purge versions older than 3 months" -ForegroundColor White
     Write-Host "CBB Executable Path: $CBBPath" -ForegroundColor White
     Write-Host "Method: Hybrid (PowerShell for prefix, CBB for plans)" -ForegroundColor Green
     Write-Host "=======================================" -ForegroundColor Cyan

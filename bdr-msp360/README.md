@@ -1,141 +1,133 @@
-# MSP360 Backup Agent Installation and Configuration
+# MSP360 Backup Scripts
 
-This directory contains PowerShell scripts for installing and configuring MSP360 backup agents.
+## About MSP360
 
-## Scripts
+[MSP360](https://www.msp360.com/) (formerly CloudBerry) is a comprehensive cloud backup solution designed for businesses and managed service providers (MSPs). It provides:
 
-### msp360-staging-install-and-configure.ps1
+- **Multi-cloud support**: Amazon S3, Azure, Google Cloud, Backblaze B2, and 20+ other cloud storage providers
+- **Image-based backups**: Full system/disk image backups for complete disaster recovery
+- **File-level backups**: Selective file and folder backup with versioning
+- **Cross-platform support**: Windows, Mac, Linux backup agents
+- **Centralized management**: Web-based console for managing multiple endpoints
+- **Advanced features**: Encryption, compression, scheduling, retention policies, and more
 
-A comprehensive script that:
-- Checks if MSP360 agent is already installed and healthy
-- Attempts to restart stopped services before reinstalling
-- Downloads and installs the MSP360 backup agent (only if needed)
-- Configures the agent with the staging account (`staging@dtctooday.com`)
-- Uses existing storage accounts configured in MSP360 (prefers "Staging Storage")
-- Creates an image-based backup plan that runs nightly at 12:00 AM
-- Sets up incremental backups to the Backblaze cloud storage
+MSP360 is particularly popular among MSPs for its centralized management capabilities, allowing administrators to monitor and manage backups across multiple client endpoints from a single dashboard.
 
-### run-msp360-staging-install.bat
+## Available Scripts
 
-A convenient batch file wrapper that:
-- Automatically runs the PowerShell script with execution policy bypass
-- Provides user-friendly prompts and status messages
-- Eliminates the need to manually type the PowerShell command
+This directory contains PowerShell scripts for automating MSP360 backup agent deployment and configuration:
 
-## Requirements
+### 1. msp360-staging-install-and-configure.ps1
 
-- Windows PowerShell 5.1 or PowerShell Core 6+
-- Administrator privileges
-- Internet connection for downloading the MSP360 agent
-- Valid MSP360 account credentials
+**Primary MSP360 deployment script** - A comprehensive automation solution that handles the complete lifecycle of MSP360 agent installation and configuration.
 
-**Note**: This script must be run with `-ExecutionPolicy Bypass`
+**Key Features:**
+- ✅ Intelligent installation detection (skips if already working)
+- ✅ Automatic service health checks and recovery
+- ✅ Support for both cloud storage and network share storage
+- ✅ Configurable for interactive and RMM automated deployment
+- ✅ Image-based backup plan creation with advanced scheduling
+- ✅ Integer/boolean parameters compatible with RMM systems
+- ✅ Comprehensive logging and error handling
 
-## Usage
+**Storage Options:**
+- **Cloud Storage**: Default MSP360 cloud storage with Forever Forward Incremental
+- **Network Share Storage**: Local network share storage with monthly full backups
 
-### Interactive Mode (Manual Execution)
+**📖 Detailed Documentation**: [README-MSP360-STAGING-INSTALL-AND-CONFIGURE.PS1.MD](./README-MSP360-STAGING-INSTALL-AND-CONFIGURE.PS1.MD)
 
-**Option 1: Use the Batch File (Easiest)**
+### 2. run-msp360-staging-install.bat
+
+**Quick launcher batch file** - A convenient wrapper that simplifies running the PowerShell script.
+
+**Features:**
+- Automatically sets execution policy bypass
+- Provides user-friendly prompts
+- Eliminates need to type PowerShell commands manually
+
+**Usage:**
 ```batch
-# Double-click or run from command prompt
+# Simply double-click or run from command prompt
 run-msp360-staging-install.bat
 ```
 
-**Option 2: PowerShell Command**
-```powershell
-# Run with execution policy bypass (required)
-powershell.exe -ExecutionPolicy Bypass -File .\msp360-staging-install-and-configure.ps1
-```
+## Quick Start
 
-The script will prompt for:
-- Ticket number or initials for logging
-- MSP360 account email (defaults to staging@dtctooday.com)
-- MSP360 account password (secure input)
-- Backup plan name (defaults to "Image Backup Plan")
-- Service names (defaults to DTCBSure services, option for custom)
-- Storage account selection (if "Staging Storage" doesn't exist)
+### For Interactive Use (Manual Setup)
 
-### RMM Mode (Automated Execution)
-Set the following variables in your RMM before execution:
+1. **Easy Method**: Double-click `run-msp360-staging-install.bat`
+2. **PowerShell Method**: 
+   ```powershell
+   powershell.exe -ExecutionPolicy Bypass -File .\msp360-staging-install-and-configure.ps1
+   ```
+
+### For RMM/Automated Deployment
+
+Configure these variables in your RMM system:
 ```powershell
 $RMM = 1
-$MSPAccountEmail = "staging@dtctooday.com"  # Optional, defaults to staging account
-$MSPAccountPassword = "YourPasswordHere"    # Required
-$BackupPlanName = "Image Backup Plan"       # Optional, defaults to "Image Backup Plan"
-$Description = "Automated MSP360 Setup"     # Optional
+$MSPAccountEmail = "your-msp360-account@domain.com"
+$MSPAccountPassword = "YourSecurePassword"
+$UseLocalStorage = 0  # 0 = Cloud Storage, 1 = Network Share Storage
 
-# Optional: Custom service names (defaults to DTCBSure services)
-$ServiceNames = @("Your Service Name 1", "Your Service Name 2")
+# For Network Share Storage (when UseLocalStorage = 1):
+$LocalStoragePath = "\\server\share\MSP360LocalBackups"
+$NetworkShareUsername = "domain\username"  # Optional
+$NetworkSharePassword = "password"         # Optional
 ```
 
-**Note**: Authentication uses MBS user credentials with SSL enabled by default.
+## Storage Configuration Options
 
-**Important**: Configure your RMM to run the script with `-ExecutionPolicy Bypass`
-
-**Note**: If any required variables are not provided by the RMM, the script will prompt for them interactively. This ensures the script can always run successfully even if some variables are missing from the RMM configuration.
-
-## Smart Installation Logic
-
-The script includes intelligent installation detection:
-
-1. **Health Check**: First checks if MSP360 agent is already installed and running
-2. **Service Configuration**: Allows custom service names or uses DTCBSure defaults
-3. **Service Recovery**: If configured services are stopped, attempts to restart them before reinstalling
-4. **Skip Installation**: If agent and all configured services are healthy, skips unnecessary reinstallation
-5. **Module Detection**: Checks if PowerShell module is already loaded before importing
-
-This makes the script safe to run multiple times and much faster on systems where MSP360 is already working properly.
-
-## Configuration Details
-
-- **Storage Account**: "Staging Storage" (Backblaze - Staging West US)
-- **Bucket**: msp360-staging
+### Cloud Storage (Default)
+- **Provider**: MSP360 cloud storage or configured cloud provider
+- **Backup Plan**: "Staging Job"
 - **Schedule**: Daily at 12:00 AM
-- **Backup Type**: Image-based backup of all volumes
-- **Compression**: Enabled
-- **Incremental Backups**: Yes (after initial full backup)
+- **Features**: Forever Forward Incremental, compression, encryption
+- **Best For**: Standard deployments, automatic cloud management
 
-## Logging
+### Network Share Storage
+- **Provider**: Local network share accessible to endpoint
+- **Backup Plan**: "Staging Job Local"  
+- **Schedule**: Daily at 10:00 PM with monthly full backups
+- **Features**: Standard incremental with monthly fulls, compression, encryption
+- **Best For**: Environments with local storage requirements or limited internet
 
-Logs are stored in:
+## System Requirements
+
+- **Operating System**: Windows with PowerShell 5.1+ or PowerShell Core 6+
+- **Permissions**: Administrator privileges required
+- **Network**: Internet connection (for cloud storage) or network share access (for local storage)
+- **Storage**: Valid MSP360 account or accessible network share
+- **Architecture**: Works with both x86 and x64 Windows systems
+
+## File Structure
+
+```
+bdr-msp360/
+├── README.md                                    # This file - overview and script listing
+├── msp360-staging-install-and-configure.ps1    # Main automation script
+├── README-MSP360-STAGING-INSTALL-AND-CONFIGURE.PS1.MD  # Detailed script documentation
+└── run-msp360-staging-install.bat              # Quick launcher batch file
+```
+
+## Logging and Troubleshooting
+
+All scripts provide comprehensive logging:
 - **Interactive Mode**: `C:\Windows\logs\MSP360-Staging-Install-Configure.log`
-- **RMM Mode**: `{RMMScriptPath}\logs\MSP360-Staging-Install-Configure.log` or Windows logs if RMM path not available
+- **RMM Mode**: `{RMMScriptPath}\logs\MSP360-Staging-Install-Configure.log`
 
-## Troubleshooting
+For specific troubleshooting steps, error codes, and advanced configuration options, see the detailed documentation for each script.
 
-1. **Installation Fails**: Ensure you have administrator privileges and internet connectivity
+## Support and Documentation
 
-2. **Service Restart Fails**: The script will attempt to restart stopped backup services automatically. If this fails:
-   - Check Windows Event Logs for service-related errors
-   - Ensure no backup service processes are hung (check Task Manager)  
-   - May require manual service restart or reboot
-   - Default services: "DTCBSure Cloud Backup Service" and "DTCBSure Cloud Backup Service Remote Management"
-   - Custom service names can be configured during script execution or via RMM variables
+- **Script-Specific Help**: See individual README files linked above
+- **MSP360 Official Documentation**: [help.msp360.com](https://help.msp360.com/)
+- **MSP360 Community**: [community.msp360.com](https://community.msp360.com/)
 
-3. **Account Login Fails**: Verify the MSP360 account credentials are correct
+## Contributing
 
-4. **"MBS user not specified" Error**: This is a known non-fatal error in some MSP360 module versions:
-   - The script will show this as a warning but continue execution
-   - Login often succeeds despite this error message  
-   - Alternative verification methods are used to confirm login status
-
-5. **Storage Account Not Found**: The script will handle this automatically by:
-   - Showing available storage accounts configured in MSP360
-   - Offering to use an existing account
-   - In RMM mode, automatically using the first available storage account
-
-6. **No Storage Accounts Available**: 
-   - Configure at least one storage account in the MSP360 console first
-   - Storage accounts must be set up through the MSP360 web interface
-   - Ensure the storage account is properly tested and accessible
-
-7. **Backup Plan Creation Fails**: Check that the storage account is properly configured and accessible
-
-8. **Module Import Fails**: If the MSP360 module fails to import, ensure the agent is properly installed
-
-## Notes
-
-- The script uses the MSP360 PowerShell module which is automatically installed during the agent installation
-- The backup plan will include all volumes on the system
-- Bad sectors are ignored during backup to prevent failures on drives with minor issues
-- The script includes comprehensive error handling and logging for troubleshooting 
+When adding new MSP360-related scripts to this directory:
+1. Create the script with clear comments and error handling
+2. Add a corresponding README-{SCRIPTNAME}.MD with detailed documentation
+3. Update this main README.md to include the new script in the available scripts section
+4. Test both interactive and automated execution modes where applicable 
