@@ -1,3 +1,21 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+
+# Local Administrator Password Solution (LAPS) - Enhanced Version
+# This script creates/manages a local administrator account with a secure, user-friendly password
+# 
+# Password Generation Improvements:
+# - Excludes problematic symbols that could break scripts: |, ;, <, >, ?, &, {, }, [, ], \, /, ', ", `, ^
+# - Excludes easily confused characters: 0 vs O, 1 vs l vs I  
+# - Uses only safe, easy-to-type symbols: !@#$%*()_+-=:,.
+# - Guarantees at least one uppercase, lowercase, number, and symbol
+# - Default 16-character length (configurable)
+# - Shuffles password to randomize character positions
+#
+# RMM Variables (optional):
+# $PasswordLength = 16 (Default password length - can be customized)
+# $localUser = "admin" (Default local user name - can be customized)
+
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "laps.log"
@@ -81,15 +99,43 @@ function Test-AzureAdJoined {
         }
 }
 
-# Function to generate a random password
+# Function to generate a user-friendly random password
 function Generate-RandomPassword {
-    $symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?'
-    $characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789' + $symbols
+    param(
+        [int]$Length = 16  # Default 16 characters (configurable)
+    )
+    
+    # User-friendly character sets (excluding problematic symbols)
+    # Removed: |, ;, <, >, ?, &, {, }, [, ], \, /, ', ", `, ^
+    # Removed confusing characters: 0 (zero), O (oh), 1 (one), l (lowercase L), I (uppercase i)
+    $lowercase = 'abcdefghijkmnpqrstuvwxyz'      # Removed: l, o
+    $uppercase = 'ABCDEFGHJKLMNPQRSTUVWXYZ'      # Removed: I, O
+    $numbers = '23456789'                        # Removed: 0, 1
+    $symbols = '!@#$%*()_+-=:,.'                # Safe, easy-to-type symbols only
+    
+    # Ensure password contains at least one character from each set
     $password = ""
-    for ($i = 0; $i -lt 32; $i++) {
-        $password += $characters[(Get-Random -Minimum 0 -Maximum $characters.Length)]
+    $password += $lowercase[(Get-Random -Minimum 0 -Maximum $lowercase.Length)]
+    $password += $uppercase[(Get-Random -Minimum 0 -Maximum $uppercase.Length)]
+    $password += $numbers[(Get-Random -Minimum 0 -Maximum $numbers.Length)]
+    $password += $symbols[(Get-Random -Minimum 0 -Maximum $symbols.Length)]
+    
+    # Fill remaining length with random characters from all sets
+    $allCharacters = $lowercase + $uppercase + $numbers + $symbols
+    for ($i = 4; $i -lt $Length; $i++) {
+        $password += $allCharacters[(Get-Random -Minimum 0 -Maximum $allCharacters.Length)]
     }
-    return $Password
+    
+    # Shuffle the password to randomize the guaranteed character positions
+    $passwordArray = $password.ToCharArray()
+    for ($i = $passwordArray.Length - 1; $i -gt 0; $i--) {
+        $j = Get-Random -Minimum 0 -Maximum ($i + 1)
+        $temp = $passwordArray[$i]
+        $passwordArray[$i] = $passwordArray[$j]
+        $passwordArray[$j] = $temp
+    }
+    
+    return ($passwordArray -join '')
 }
 
 # Function to check if a user exists
@@ -110,68 +156,121 @@ function Add-UserToLocalAdministrators {
     $group.Add("WinNT://$env:COMPUTERNAME/$username")
 }
 
-# Generate a random password
-$password = Generate-RandomPassword
+# Set default values if not provided by RMM
+if ($null -eq $PasswordLength) {
+    $PasswordLength = 16  # Default password length
+}
 
-# Specify the local user
-# $localUser = "username"  # Replace "username" with the desired local user
+if ($null -eq $localUser) {
+    $localUser = "admin"  # Default local user name
+}
+
+Write-Host "Configuration:" -ForegroundColor Cyan
+Write-Host "  - Local User: $localUser" -ForegroundColor White
+Write-Host "  - Password Length: $PasswordLength characters" -ForegroundColor White
+Write-Host "  - Character Sets: Letters (no confusing chars), Numbers (2-9), Safe symbols (!@#$%*()_+-=:,.)" -ForegroundColor White
+Write-Host ""
+
+# Generate a user-friendly random password
+Write-Host "Generating secure, user-friendly password..." -ForegroundColor Yellow
+$password = Generate-RandomPassword -Length $PasswordLength
+
+# Display password composition for verification
+$hasLower = $password -cmatch '[a-z]'
+$hasUpper = $password -cmatch '[A-Z]'
+$hasNumber = $password -cmatch '[2-9]'
+$hasSymbol = $password -cmatch '[!@#$%*()_+\-=:,.]'
+
+Write-Host "✓ Password generated successfully" -ForegroundColor Green
+Write-Host "  - Contains lowercase letters: $(if($hasLower){'✓'}else{'❌'})" -ForegroundColor Gray
+Write-Host "  - Contains uppercase letters: $(if($hasUpper){'✓'}else{'❌'})" -ForegroundColor Gray
+Write-Host "  - Contains numbers (2-9): $(if($hasNumber){'✓'}else{'❌'})" -ForegroundColor Gray
+Write-Host "  - Contains safe symbols: $(if($hasSymbol){'✓'}else{'❌'})" -ForegroundColor Gray
 
 # Check if the user exists
+Write-Host "Checking if local user '$localUser' exists..." -ForegroundColor Yellow
 if (!(User-Exists -username $localUser)) {
     # Create the local user if it doesn't exist
-    Write-Host "Creating new local user $localuser."
+    Write-Host "User '$localUser' does not exist. Creating new local user..." -ForegroundColor Yellow
     $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
-    $newUser = New-LocalUser -Name $localUser -Password $SecurePassword -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
-    if ($null -eq $newUser) {
-        Write-Host "Failed to create user $localUser."
+    try {
+        $newUser = New-LocalUser -Name $localUser -Password $SecurePassword -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
+        if ($null -eq $newUser) {
+            Write-Host "❌ Failed to create user '$localUser'." -ForegroundColor Red
+            Exit 1
+        }
+        Write-Host "✓ Local user '$localUser' created successfully" -ForegroundColor Green
+        Write-Host "Adding user to local Administrators group..." -ForegroundColor Yellow
+        # Add the user to the local Administrators group
+        Add-UserToLocalAdministrators -username $localUser
+        Write-Host "✓ User '$localUser' added to Administrators group" -ForegroundColor Green
+    } catch {
+        Write-Host "❌ Failed to create user '$localUser': $($_.Exception.Message)" -ForegroundColor Red
         Exit 1
     }
-    Write-Host "Local user $localuser created."
-    Write-Host "Adding user to local Administrators group."
-    # Add the user to the local Administrators group
-    Add-UserToLocalAdministrators -username $localUser
 } else {
+    Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
+    Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    Add-UserToLocalAdministrators -username $localUser
+    try {
+        Add-UserToLocalAdministrators -username $localUser
+        Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
+    }
 }
 
 # Set password for specified local user
+Write-Host "Setting password for user '$localUser'..." -ForegroundColor Yellow
 net user $localUser $password > $null  # Redirect output to suppress password display
-# Display a message about password setting completion
-Write-Host "Password set for user $localUser."
+Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
 # Check if the computer is domain-joined
 
 # Testing if endpoint is joined to a legacy Windows Active Directory domain.
+Write-Host "Checking domain join status..." -ForegroundColor Yellow
 if (Test-ComputerSecureChannel) {
-    # Set password for built-in administrator
-    Write-Host "Endpoint joined to domain. Setting password for Built-in Administrator and disabling."
+    Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
+    Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
     $adminUsername = "Administrator"
     net user $adminUsername $password > $null  # Redirect output to suppress password display
-    Write-Host "Password set for built-in administrator."
+    Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
     net user administrator /active:no > $null
-    Write-Host "Built-in Administrator disabled."
-
+    Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
 } else {
-    Write-Host "Endpoint is not domain joined. Not diabling or resetting Built-in Administrator."
+    Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
 }
 
 # Testing if endpoint is Azure AD joined.
-if (Test-AzureADJoined) { 
-        # Set password for built-in administrator
-        Write-Host "Endpoint joined to Microsoft Entra ID. Setting password for Built-in Administrator and disabling."
-        $adminUsername = "Administrator"
-        net user $adminUsername $password > $null  # Redirect output to suppress password display
-        Write-Host "Password set for built-in administrator."
-        net user administrator /active:no > $null
-        Write-Host "Built-in Administrator disabled."
-
+Write-Host "Checking Microsoft Entra ID (Azure AD) join status..." -ForegroundColor Yellow
+if (Test-AzureADJoined) {
+    Write-Host "✓ Endpoint is joined to Microsoft Entra ID" -ForegroundColor Green
+    Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
+    $adminUsername = "Administrator"
+    net user $adminUsername $password > $null  # Redirect output to suppress password display
+    Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
+    net user administrator /active:no > $null
+    Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
 } else {
-    Write-Host "Endpoint is not Azure AD Joined. Not disabling or resetting Built-in Administrator"
+    Write-Host "Endpoint is not Azure AD joined" -ForegroundColor Gray
 }
 
 
-# You can uncomment the next line if you want to log the generated password for your reference
-# Write-Host "Generated Password: $password"
+Write-Host ""
+Write-Host "=== LAPS Configuration Summary ===" -ForegroundColor Cyan
+Write-Host "Local Administrator Account: $localUser" -ForegroundColor White
+Write-Host "Password Length: $PasswordLength characters" -ForegroundColor White
+Write-Host "Password Complexity: Mixed case, numbers (2-9), safe symbols" -ForegroundColor White
+Write-Host "Characters Excluded: Confusing (0,O,1,l,I) and problematic symbols" -ForegroundColor White
+Write-Host "Account Settings: Password never expires, user cannot change password" -ForegroundColor White
+Write-Host "===============================" -ForegroundColor Cyan
+Write-Host ""
 
+# Log the generated password for administrative reference
+Write-Host "Generated Password for '$localUser': $password" -ForegroundColor Yellow
+Write-Host "⚠ Store this password securely for recovery purposes" -ForegroundColor Yellow
+Write-Host ""
+
+Write-Host "✅ LAPS configuration completed successfully!" -ForegroundColor Green
+Write-Host "Local administrator account '$localUser' is ready for use." -ForegroundColor Green
 
 Stop-Transcript
