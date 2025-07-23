@@ -34,15 +34,12 @@ if ($RMM -ne 1) {
         }
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
 } else { 
     # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    if ($null -ne $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
     } else {
         $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
     }
 
     if ($null -eq $Description) {
@@ -63,6 +60,7 @@ $serverRole = Get-WmiObject -Class Win32_ComputerSystem
 
 if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
     Write-Host "This server IS a Domain Controller. Exiting"
+    Stop-Transcript
     Exit 0
 } else {
     Write-Host "This server is NOT a Domain Controller."
@@ -73,9 +71,8 @@ if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
 function Test-AzureAdJoined {
     $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
     if ($AzureADKey) {
-        $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
-
         try {
+            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
             foreach($key in $subKey) {
                 $tenantId = $key.GetValue("TenantId");
                 $userEmail = $key.GetValue("UserEmail");
@@ -156,9 +153,11 @@ function Add-UserToLocalAdministrators {
     try {
         $group = [ADSI]"WinNT://./Administrators,group"
         $group.Add("WinNT://$env:COMPUTERNAME/$username")
+        return $true
     } catch {
         # User may already be in the group, which is fine
         Write-Host "Note: User may already be in Administrators group or there was an issue adding them" -ForegroundColor Yellow
+        return $false
     }
 }
 
@@ -203,42 +202,71 @@ if (!(User-Exists -username $localUser)) {
         $newUser = New-LocalUser -Name $localUser -Password $SecurePassword -PasswordNeverExpires:$True -UserMayNotChangePassword:$True -AccountNeverExpires:$True
         if ($null -eq $newUser) {
             Write-Host "❌ Failed to create user '$localUser'." -ForegroundColor Red
+            Stop-Transcript
             Exit 1
         }
         Write-Host "✓ Local user '$localUser' created successfully" -ForegroundColor Green
         Write-Host "Adding user to local Administrators group..." -ForegroundColor Yellow
         # Add the user to the local Administrators group
-        Add-UserToLocalAdministrators -username $localUser
-        Write-Host "✓ User '$localUser' added to Administrators group" -ForegroundColor Green
+        $addResult = Add-UserToLocalAdministrators -username $localUser
+        if ($addResult) {
+            Write-Host "✓ User '$localUser' added to Administrators group" -ForegroundColor Green
+        }
     } catch {
         Write-Host "❌ Failed to create user '$localUser': $($_.Exception.Message)" -ForegroundColor Red
+        Stop-Transcript
         Exit 1
     }
 } else {
     Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
     Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    Add-UserToLocalAdministrators -username $localUser
-    Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
+    $addResult = Add-UserToLocalAdministrators -username $localUser
+    if ($addResult) {
+        Write-Host "✓ User '$localUser' added to Administrators group" -ForegroundColor Green
+    } else {
+        Write-Host "✓ User '$localUser' is already in Administrators group" -ForegroundColor Green
+    }
 }
 
 # Set password for specified local user
 Write-Host "Setting password for user '$localUser'..." -ForegroundColor Yellow
-net user $localUser $password > $null  # Redirect output to suppress password display
-Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
+try {
+    $result = net user $localUser $password 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green  
+    } else {
+        Write-Host "❌ Failed to set password for user '$localUser': $result" -ForegroundColor Red
+        Stop-Transcript
+        Exit 1
+    }
+} catch {
+    Write-Host "❌ Error setting password for user '$localUser': $($_.Exception.Message)" -ForegroundColor Red
+    Stop-Transcript
+    Exit 1
+}
 
 # Check if the computer is domain-joined
 # Testing if endpoint is joined to a legacy Windows Active Directory domain.
 Write-Host "Checking domain join status..." -ForegroundColor Yellow
 try {
-    if (Test-ComputerSecureChannel) {
+    $isDomainJoined = Test-ComputerSecureChannel -ErrorAction SilentlyContinue
+    if ($isDomainJoined) {
         Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
         Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
         $adminUsername = "Administrator"
-        net user $adminUsername $password > $null  # Redirect output to suppress password display
-        Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
-        net user administrator /active:no > $null
-        Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
+        try {
+            $adminResult = net user $adminUsername $password 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
+            }
+            $disableResult = net user administrator /active:no 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "⚠ Could not modify built-in Administrator account: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
     } else {
         Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
     }
@@ -248,16 +276,28 @@ try {
 
 # Testing if endpoint is Azure AD joined.
 Write-Host "Checking Microsoft Entra ID (Azure AD) join status..." -ForegroundColor Yellow
-if (Test-AzureADJoined) {
-    Write-Host "✓ Endpoint is joined to Microsoft Entra ID" -ForegroundColor Green
-    Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
-    $adminUsername = "Administrator"
-    net user $adminUsername $password > $null  # Redirect output to suppress password display
-    Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
-    net user administrator /active:no > $null
-    Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
-} else {
-    Write-Host "Endpoint is not Azure AD joined" -ForegroundColor Gray
+try {
+    if (Test-AzureADJoined) {
+        Write-Host "✓ Endpoint is joined to Microsoft Entra ID" -ForegroundColor Green
+        Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
+        $adminUsername = "Administrator"
+        try {
+            $adminResult = net user $adminUsername $password 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
+            }
+            $disableResult = net user administrator /active:no 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "⚠ Could not modify built-in Administrator account: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "Endpoint is not Azure AD joined" -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "Could not determine Azure AD join status" -ForegroundColor Gray
 }
 
 Write-Host ""
