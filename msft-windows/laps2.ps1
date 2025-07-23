@@ -212,12 +212,31 @@ if (!(User-Exists -username $localUser)) {
     Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
     Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    try {
-        Add-UserToLocalAdministrators -username $localUser
-        Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
-    } catch {
-        Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
+    # try {
+      #  Add-UserToLocalAdministrators -username $localUser
+       # Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
+    # } catch {
+      #  Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
+    # }
+    $group = [ADSI]"WinNT://./Administrators,group"
+$localUser = "YourUsernameHere"
+
+# Check if the user is already a member of the group
+$alreadyMember = $false
+foreach ($member in @($group.psbase.Invoke("Members"))) {
+    $memberName = $member.GetType().InvokeMember("Name", 'GetProperty', $null, $member, $null)
+    if ($memberName -eq $localUser) {
+        $alreadyMember = $true
+        break
     }
+}
+
+if ($alreadyMember) {
+    Write-Host "⚠ User '$localUser' is already in Administrators group" -ForegroundColor Yellow
+} else {
+    $group.Add("WinNT://$localUser,user")
+    Write-Host "✓ User '$localUser' has been added to Administrators group" -ForegroundColor Green
+}
 }
 
 # Set password for specified local user
