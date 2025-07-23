@@ -72,30 +72,31 @@ if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
     Write-Host "Continuing to run LAPS."
 }
 
+# Function to check if azure ad joined
 function Test-AzureAdJoined {
-    $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
-    if ($AzureADKey) {
-        $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
+        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+        if ($AzureADKey) {
+            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
+    
+            try {
+                foreach($key in $subKey) {
+                    $tenantId = $key.GetValue("TenantId");
+                    $userEmail = $key.GetValue("UserEmail");
+                }
 
-        try {
-            foreach ($key in $subKey) {
-                $tenantId = $key.GetValue("TenantId")
-                $userEmail = $key.GetValue("UserEmail")
-            }
-
-            Write-Host "Tenant ID: $($tenantId)" 
-            Write-Host "User Email: $($userEmail)"
-            if ($tenantId) { 
-                return $True
-            } else {
+                Write-Host "Tenant ID: $($tenantId)" 
+                Write-Host "User Email: $($userEmail)"
+                if ($tenantId) { 
+                    return $True
+                } else {
+                    return $False
+                }
+            } catch {
                 return $False
             }
-        } catch {
-            return $False
+        } else {
+                return $False
         }
-    } else {
-        return $False
-    }
 }
 
 # Function to generate a user-friendly random password
