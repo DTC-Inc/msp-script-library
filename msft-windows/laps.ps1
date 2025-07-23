@@ -49,9 +49,6 @@ if ($RMM -ne 1) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
         $Description = "No Description"
     }   
-
-
-    
 }
 
 Start-Transcript -Path $LogPath
@@ -74,29 +71,29 @@ if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
 
 # Function to check if azure ad joined
 function Test-AzureAdJoined {
-        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
-        if ($AzureADKey) {
-            $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
-    
-            try {
-                foreach($key in $subKey) {
-                    $tenantId = $key.GetValue("TenantId");
-                    $userEmail = $key.GetValue("UserEmail");
-                }
+    $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+    if ($AzureADKey) {
+        $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
 
-                Write-Host "Tenant ID: $($tenantId)" 
-                Write-Host "User Email: $($userEmail)"
-                if ($tenantId) { 
-                    return $True
-                } else {
-                    return $False
-                }
-            } catch {
+        try {
+            foreach($key in $subKey) {
+                $tenantId = $key.GetValue("TenantId");
+                $userEmail = $key.GetValue("UserEmail");
+            }
+
+            Write-Host "Tenant ID: $($tenantId)" 
+            Write-Host "User Email: $($userEmail)"
+            if ($tenantId) { 
+                return $True
+            } else {
                 return $False
             }
-        } else {
-                return $False
+        } catch {
+            return $False
         }
+    } else {
+        return $False
+    }
 }
 
 # Function to generate a user-friendly random password
@@ -143,8 +140,12 @@ function User-Exists {
     param(
         [string]$username
     )
-    $user = Get-LocalUser -Name $username
-    return [bool]($user -ne $null)
+    try {
+        $user = Get-LocalUser -Name $username -ErrorAction Stop
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 # Function to add a user to the local Administrators group
@@ -152,8 +153,13 @@ function Add-UserToLocalAdministrators {
     param(
         [string]$username
     )
-    $group = [ADSI]"WinNT://./Administrators,group"
-    $group.Add("WinNT://$env:COMPUTERNAME/$username")
+    try {
+        $group = [ADSI]"WinNT://./Administrators,group"
+        $group.Add("WinNT://$env:COMPUTERNAME/$username")
+    } catch {
+        # User may already be in the group, which is fine
+        Write-Host "Note: User may already be in Administrators group or there was an issue adding them" -ForegroundColor Yellow
+    }
 }
 
 # Set default values if not provided by RMM
@@ -212,32 +218,32 @@ if (!(User-Exists -username $localUser)) {
     Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
     Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    try {
-        Add-UserToLocalAdministrators -username $localUser
-        Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
-    } catch {
-        Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
-    }
+    Add-UserToLocalAdministrators -username $localUser
+    Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
 }
 
 # Set password for specified local user
 Write-Host "Setting password for user '$localUser'..." -ForegroundColor Yellow
 net user $localUser $password > $null  # Redirect output to suppress password display
 Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
-# Check if the computer is domain-joined
 
+# Check if the computer is domain-joined
 # Testing if endpoint is joined to a legacy Windows Active Directory domain.
 Write-Host "Checking domain join status..." -ForegroundColor Yellow
-if (Test-ComputerSecureChannel) {
-    Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
-    Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
-    $adminUsername = "Administrator"
-    net user $adminUsername $password > $null  # Redirect output to suppress password display
-    Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
-    net user administrator /active:no > $null
-    Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
-} else {
-    Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
+try {
+    if (Test-ComputerSecureChannel) {
+        Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
+        Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
+        $adminUsername = "Administrator"
+        net user $adminUsername $password > $null  # Redirect output to suppress password display
+        Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
+        net user administrator /active:no > $null
+        Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
+    } else {
+        Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
+    }
+} catch {
+    Write-Host "Could not determine domain join status" -ForegroundColor Gray
 }
 
 # Testing if endpoint is Azure AD joined.
@@ -253,7 +259,6 @@ if (Test-AzureADJoined) {
 } else {
     Write-Host "Endpoint is not Azure AD joined" -ForegroundColor Gray
 }
-
 
 Write-Host ""
 Write-Host "=== LAPS Configuration Summary ===" -ForegroundColor Cyan
