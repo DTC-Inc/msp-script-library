@@ -229,7 +229,7 @@ Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
 # Check if the computer is domain-joined
 # Testing if endpoint is joined to a legacy Windows Active Directory domain.
 Write-Host "Checking domain join status..." -ForegroundColor Yellow
-try {
+# try {
     if (Test-ComputerSecureChannel) {
         Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
         Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
@@ -241,9 +241,9 @@ try {
     } else {
         Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
     }
-} catch {
-    Write-Host "Could not determine domain join status: $($_.Exception.Message)" -ForegroundColor Yellow
-}
+# } catch {
+    # Write-Host "Could not determine domain join status: $($_.Exception.Message)" -ForegroundColor Yellow
+# }
 
 # Testing if endpoint is Azure AD joined.
 Write-Host "Checking Microsoft Entra ID (Azure AD) join status..." -ForegroundColor Yellow
