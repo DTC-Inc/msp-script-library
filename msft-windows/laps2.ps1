@@ -305,7 +305,7 @@ Write-Host "=== LAPS Configuration Summary ===" -ForegroundColor Cyan
 Write-Host "Local Administrator Account: $localUser" -ForegroundColor White
 Write-Host "Password Length: $PasswordLength characters" -ForegroundColor White
 Write-Host "Password Complexity: Mixed case, numbers (2-9), safe symbols" -ForegroundColor White
-Write-Host "Characters Excluded: Confusing (0,O,1,l,I) and problematic symbols" -ForegroundColor White
+Write-Host "Characters Excluded: Confusing (0, O, 1, l, I) and problematic symbols" -ForegroundColor White
 Write-Host "Account Settings: Password never expires, user cannot change password" -ForegroundColor White
 Write-Host "===============================" -ForegroundColor Cyan
 Write-Host ""
