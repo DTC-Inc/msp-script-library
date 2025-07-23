@@ -82,7 +82,9 @@ function Test-AzureAdJoined {
                 foreach($key in $subKey) {
                     $tenantId = $key.GetValue("TenantId");
                     $userEmail = $key.GetValue("UserEmail");
-                }
+                } catch {
+                return $False
+            }
 
                 Write-Host "Tenant ID: $($tenantId)" 
                 Write-Host "User Email: $($userEmail)"
@@ -91,9 +93,7 @@ function Test-AzureAdJoined {
                 } else {
                     return $False
                 }
-            } catch {
-                return $False
-            }
+            } 
         } else {
                 return $False
         }
