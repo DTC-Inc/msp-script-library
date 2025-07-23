@@ -78,11 +78,14 @@ function Test-AzureAdJoined {
         if ($AzureADKey) {
             $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
     
-            try {
-                foreach($key in $subKey) {
-                    $tenantId = $key.GetValue("TenantId");
-                    $userEmail = $key.GetValue("UserEmail");
-                }
+           try {
+    foreach($key in $subKey) {
+        $tenantId = $key.GetValue("TenantId")
+        $userEmail = $key.GetValue("UserEmail")
+    }
+} catch {
+    Write-Host "Failed to retrieve Azure AD join info: $($_.Exception.Message)"
+}
 
                 Write-Host "Tenant ID: $($tenantId)" 
                 Write-Host "User Email: $($userEmail)"
