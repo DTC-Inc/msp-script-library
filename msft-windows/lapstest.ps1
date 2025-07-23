@@ -238,7 +238,7 @@ try {
         Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
         net user administrator /active:no > $null
         Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
-    } else {
+    } } else {
         Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
     }
 } catch {
