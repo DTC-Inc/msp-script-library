@@ -232,7 +232,9 @@ if (Test-ComputerSecureChannel) {
     Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
     Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
     $adminUsername = "Administrator"
-    net user $adminUsername $password > $null  # Redirect output to suppress password display
+    $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
+    Set-LocalUser -Name $localUser -Password $SecurePassword
+
     Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
     net user administrator /active:no > $null
     Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
