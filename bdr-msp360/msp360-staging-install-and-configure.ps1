@@ -461,7 +461,7 @@ try {
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; 
 iex (New-Object System.Net.WebClient).DownloadString('https://git.io/JUSAA'); 
 Install-MSP360Module; 
-Install-MBSAgent -URL '$msp360downloadurl' -Force
+Install-MBSAgent -URL 'https://console.msp360.com/api/build/download?urlParams=dGt2ZXAvQ3JqT0J1Wlgydk9YY05ZTnBDcnMwZUgwTThzREZGNnFjc2k2SHkxcUt6ZjlVeEpubTNWR2N0UG9uVXZ0K01MY2ZFNWtzdnBsTFYyMm93QlpybTFuMXlDTzgrNWtBVU9ITitBRUdwNi9zcWxBV0xtZ2VBRVpmOVdzMlJxOGt6cloxd2VZVmdpSktBTFlVRkNxWExNWEU2LzRMUUhZWFlUSHFrNHI2bVdjSXdIcGxMVWxmZWtlV2J1VnE1SjlQSmFVWHpFQzZZYmdZVlE4ZTJVQT09' -Force
 "@
         
         # Run the installation with bypass execution policy
