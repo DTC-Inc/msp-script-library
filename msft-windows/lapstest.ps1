@@ -223,7 +223,8 @@ if (!(User-Exists -username $localUser)) {
 
 # Set password for specified local user
 Write-Host "Setting password for user '$localUser'..." -ForegroundColor Yellow
-net user $localUser $password > $null  # Redirect output to suppress password display
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+Set-LocalUser -Name $localUser -Password $securePassword
 Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
 
 # Check if the computer is domain-joined
@@ -234,7 +235,8 @@ Write-Host "Checking domain join status..." -ForegroundColor Yellow
         Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
         Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
         $adminUsername = "Administrator"
-        net user $adminUsername $password > $null  # Redirect output to suppress password display
+        $securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+		Set-LocalUser -Name $adminUsername -Password $securePassword
         Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
         net user administrator /active:no > $null
         Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
