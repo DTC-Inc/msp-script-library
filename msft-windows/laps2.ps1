@@ -72,32 +72,32 @@ if ($serverRole.DomainRole -eq 4 -or $serverRole.DomainRole -eq 5) {
     Write-Host "Continuing to run LAPS."
 }
 
+# Function to check if azure ad joined
 function Test-AzureAdJoined {
-    $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
-    if ($AzureADKey) {
-        try {
+        $AzureADKey = Test-Path "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo"
+        if ($AzureADKey) {
             $subKey = Get-Item "HKLM:/SYSTEM/CurrentControlSet/Control/CloudDomainJoin/JoinInfo/*"
-            foreach ($key in $subKey) {
-                $tenantId = $key.GetValue("TenantId")
-                $userEmail = $key.GetValue("UserEmail")
-            }
+    
+            try {
+                foreach($key in $subKey) {
+                    $tenantId = $key.GetValue("TenantId");
+                    $userEmail = $key.GetValue("UserEmail");
+                }
 
-            Write-Host "Tenant ID: $($tenantId)" 
-            Write-Host "User Email: $($userEmail)"
-            if ($tenantId) { 
-                return $True
-            } else {
+                Write-Host "Tenant ID: $($tenantId)" 
+                Write-Host "User Email: $($userEmail)"
+                if ($tenantId) { 
+                    return $True
+                } else {
+                    return $False
+                }
+            } catch {
                 return $False
             }
-        } catch {
-            Write-Host "Failed to retrieve Azure AD join info: $($_.Exception.Message)"
-            return $False
+        } else {
+                return $False
         }
-    } else {
-        return $False
-    }
 }
-
 
 # Function to generate a user-friendly random password
 function Generate-RandomPassword {
@@ -212,17 +212,19 @@ if (!(User-Exists -username $localUser)) {
     Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
     Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    # try {
-         Add-UserToLocalAdministrators -username $localUser
-         Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
-    # } catch {
-      #  Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
-    # }
+    try {
+        Add-UserToLocalAdministrators -username $localUser
+        Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
+    } catch {
+        Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
+    }
 }
 
 # Set password for specified local user
 Write-Host "Setting password for user '$localUser'..." -ForegroundColor Yellow
-net user $localUser $password > $null  # Redirect output to suppress password display
+$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+Set-LocalUser -Name $localUser -Password $securePassword
+# net user $localUser $password > $null  # Redirect output to suppress password display
 Write-Host "✓ Password set for user '$localUser'" -ForegroundColor Green
 # Check if the computer is domain-joined
 
@@ -232,11 +234,12 @@ if (Test-ComputerSecureChannel) {
     Write-Host "✓ Endpoint is joined to Active Directory domain" -ForegroundColor Green
     Write-Host "Setting password for Built-in Administrator and disabling account..." -ForegroundColor Yellow
     $adminUsername = "Administrator"
-    $SecurePassword = ConvertTo-SecureString -String "$password" -AsPlainText -Force
-    Set-LocalUser -Name $localUser -Password $SecurePassword
-
+	$securePassword = ConvertTo-SecureString $password -AsPlainText -Force
+	Set-LocalUser -Name $adminUsername -Password $securePassword
+    # net user $adminUsername $password > $null  # Redirect output to suppress password display
     Write-Host "✓ Password set for built-in Administrator" -ForegroundColor Green
-    net user administrator /active:no > $null
+	Disable-LocalUser -Name "Administrator"
+    # net user administrator /active:no > $null
     Write-Host "✓ Built-in Administrator account disabled" -ForegroundColor Green
 } else {
     Write-Host "Endpoint is not domain joined" -ForegroundColor Gray
