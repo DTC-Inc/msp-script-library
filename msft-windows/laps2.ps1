@@ -212,12 +212,12 @@ if (!(User-Exists -username $localUser)) {
     Write-Host "✓ User '$localUser' already exists" -ForegroundColor Green
     Write-Host "Ensuring user is in local Administrators group..." -ForegroundColor Yellow
     # Add the existing user to the local Administrators group
-    try {
+    # try {
         Add-UserToLocalAdministrators -username $localUser
         Write-Host "✓ User '$localUser' is in Administrators group" -ForegroundColor Green
-    } catch {
-        Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
-    }
+    # } catch {
+        # Write-Host "⚠ User may already be in Administrators group" -ForegroundColor Yellow
+    # }
 }
 
 # Set password for specified local user
