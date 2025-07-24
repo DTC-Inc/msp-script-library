@@ -17,6 +17,11 @@
 # $localUser = "admin" (Default local user name - can be customized)
 
 # Getting input from user if not running from RMM else set variables from RMM.
+try {
+    Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+} catch {
+    Write-Warning "Could not set execution policy: $($_.Exception.Message)"
+}
 
 $ScriptLogName = "laps.log"
 
