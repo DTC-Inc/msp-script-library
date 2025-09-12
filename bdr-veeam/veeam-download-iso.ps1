@@ -47,9 +47,6 @@ function Remove-OldIsoFiles {
 # Start logging
 Write-Log "Script started."
 
-# Clean up old ISO files before proceeding
-Remove-OldIsoFiles -folderPath $folderPath -daysThreshold $daysThreshold
-
 # Check if the file exists
 if (-Not (Test-Path $filePath)) {
     Write-Log "File not found: $filePath. Creating folder and downloading file. $fileUrl"
@@ -71,6 +68,9 @@ if (-Not (Test-Path $filePath)) {
 } else {
     Write-Log "File already exists: $filePath"
 }
+
+# Clean up old ISO files
+Remove-OldIsoFiles -folderPath $folderPath -daysThreshold $daysThreshold
 
 # Finish logging
 Write-Log "Script completed."
