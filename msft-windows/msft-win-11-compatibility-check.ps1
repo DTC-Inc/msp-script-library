@@ -43,24 +43,28 @@ function Test-ImagingMachine {
     (?:(?:X[-_\s]?RAY|XRAY|RADIOLOG(?:Y|IC)|RADIO)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     (?:(?:DIGITAL|DR|CR|COMPUTED)(?:[-_\s]?(?:RADIOGRAPH(?:Y|IC)|X[-_\s]?RAY|XRAY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
+    # Additional imaging terms
+    (?:(?:CS8|CT|DESIGNSTATION|IMAGING|LRCU|SCANX)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    
     # Cone Beam variations
     (?:CONE(?:[-_\s]?BEAM)?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Vendor-specific patterns (major dental imaging manufacturers)
-    (?:KODAK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS|CARESTREAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:SIRONA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|ORTHOPHOS|GALILEOS))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:PLANMECA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|PROMAX|ROMEXIS|VISO))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:CARESTREAM(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS|KODAK))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:DENTSPLY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|GENDEX|INSTRUMENTARIUM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:GENDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|GXPAN|GXCB))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:OWANDY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|I-MAX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:TROPHY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|TREX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:KAVO(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|OP))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:SOREDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CRANEX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:YOSHIDA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:ACTEON(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|X-MIND))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:PHILIPS(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:MIDMARK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|PROGENY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:KODAK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|CS|CARESTREAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:SIRONA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|ORTHOPHOS|GALILEOS))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:PLANMECA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|PROMAX|ROMEXIS|VISO))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:CARESTREAM(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|CS|KODAK))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:DENTSPLY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|GENDEX|INSTRUMENTARIUM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:GENDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|GXPAN|GXCB))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:OWANDY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|I-MAX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:TROPHY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|TREX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:KAVO(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|OP))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:SOREDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|CRANEX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:YOSHIDA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:ACTEON(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|X-MIND))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:PHILIPS(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:MIDMARK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|PROGENY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:VATECH(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Model-specific patterns
     (?:ORTHOPHOS(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
@@ -72,17 +76,18 @@ function Test-ImagingMachine {
     (?:GALILEOS(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Generic imaging terms with numbers/suffixes
-    (?:(?:DENTAL|MEDICAL|XRAY|X[-_\s]?RAY)[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|IMG|IMAGING)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:(?:DENTAL|MEDICAL|XRAY|X[-_\s]?RAY)[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|CS8|CT|IMAGING|LRCU|SCANX|IMG)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Pattern for combined terms (e.g., PAN3D, CEPH3D, CADCAM3D)
     (?:(?:PAN|CEPH|CAD)(?:[-_\s]?(?:3D|CAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
-    # Capture workstation patterns (e.g., PANWS01, CEPHWORKSTATION, CADWS01, XRAYWS01)
-    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)(?:[-_\s]?(?:WS|WORKSTATION|STATION|PC|COMP))(?:[-_\s]?\d+)?)|
+    # Capture workstation patterns (e.g., PANWS01, CEPHWORKSTATION, CADWS01, XRAYWS01, CS8WS01, DESIGNSTATION)
+    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|RADIO)(?:[-_\s]?(?:WS|WORKSTATION|STATION|PC|COMP))(?:[-_\s]?\d+)?)|
+    (?:DESIGNSTATION(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
-    # Room-based naming (e.g., ROOM1PAN, OPPAN1, OP1CEPH, CADROOM1, XRAYROOM1)
-    (?:(?:ROOM|OP|OPERATORY)[-_\s]?\d*[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)(?:[-_\s]?\d+)?)|
-    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)[-_\s]?(?:ROOM|OP|OPERATORY)[-_\s]?\d+)
+    # Room-based naming (e.g., ROOM1PAN, OPPAN1, OP1CEPH, CADROOM1, XRAYROOM1, CS8ROOM1)
+    (?:(?:ROOM|OP|OPERATORY)[-_\s]?\d*[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|RADIO)(?:[-_\s]?\d+)?)|
+    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS8|CT|IMAGING|LRCU|SCANX|RADIO)[-_\s]?(?:ROOM|OP|OPERATORY)[-_\s]?\d+)
 )
 .*?$  # Optional suffix characters
 "@
@@ -146,7 +151,7 @@ function Check-Windows11Compatibility {
     try {
         # Check if this is a PAN/CEPH/3D imaging capture machine (informational only)
         if (Test-ImagingMachine) {
-            $results.Details += "System detected as PAN/CEPH/3D imaging capture machine (Computer: $env:COMPUTERNAME)"
+            $results.Details += "Imaging system detected"
         }
       
         # Check if already running Windows 11
@@ -158,7 +163,7 @@ function Check-Windows11Compatibility {
         if ([int]$buildNumber -ge 22000) {
             $results.IsWindows11 = $true
             $results.AllPassed = $false
-            $results.Details += "System is already running Windows 11 (Build: $buildNumber)"
+            $results.Details += "Already Win11 (Build: $buildNumber)"
             return $results
         }
         
@@ -166,7 +171,7 @@ function Check-Windows11Compatibility {
         $osCaption = $osInfo.Caption
         if ($osCaption -match "LTSC|Long Term Servicing") {
             $results.AllPassed = $false
-            $results.Details += "System excluded: Running Windows 10 LTSC edition with extended support"
+            $results.Details += "Win10 LTSC - excluded"
             return $results
         }
         
@@ -183,13 +188,13 @@ function Check-Windows11Compatibility {
             $sb = Confirm-SecureBootUEFI
             $results.SecureBootEnabled = $sb
             if ($sb) {
-                $results.Details += 'Secure Boot is enabled (recommended but not required for Windows 11)'
+                $results.Details += 'SecureBoot: ON'
             } else {
-                $results.Details += 'Secure Boot is disabled (recommended but not required for Windows 11)'
+                $results.Details += 'SecureBoot: OFF'
             }
         }
         catch {
-            $results.Details += 'Secure Boot check unavailable (recommended but not required for Windows 11)'
+            $results.Details += 'SecureBoot: Unknown'
         }
 
         # TPM 2.0
@@ -230,9 +235,9 @@ function Check-Windows11Compatibility {
         $results.MemoryGB = [math]::Round($mem.Sum / 1GB, 2)
         if ($results.MemoryGB -lt 4) {
             $results.AllPassed = $false
-            $results.Details += "Insufficient RAM: $($results.MemoryGB) GB (requires 4+ GB minimum)"
+            $results.Details += "RAM: $($results.MemoryGB)GB < 4GB min"
         } elseif ($results.MemoryGB -lt 15) {
-            $results.Details += "RAM notice: $($results.MemoryGB) GB is under the recommended 15 GB"
+            $results.Details += "RAM: $($results.MemoryGB)GB < 15GB rec"
         }
 
         # Disk Space (Informational)
@@ -240,7 +245,7 @@ function Check-Windows11Compatibility {
         $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($sys.SystemDrive)'").FreeSpace
         $results.FreeSpaceGB = [math]::Round($free / 1GB, 2)
         if ($results.FreeSpaceGB -lt 30) {
-            $results.Details += "Warning: Insufficient free disk space: $($results.FreeSpaceGB) GB"
+            $results.Details += "Disk: $($results.FreeSpaceGB)GB < 30GB"
         }
 
         # ===================================================================
@@ -267,11 +272,11 @@ function Check-Windows11Compatibility {
 
             if ($foundOnList) {
                 $results.CpuVbsCompatible = $true
-                $results.Details += "CPU found on explicit support list."
+                $results.Details += "CPU: Supported"
             }
             else {
                 # Step 2: If not found on the list, use the fallback logic.
-                $results.Details += "CPU not on list, using fallback logic."
+                $results.Details += "CPU: Fallback check"
                 try {
                     $deviceGuardInfo = Get-CimInstance -Namespace ROOT\Microsoft\Windows\DeviceGuard -ClassName Win32_DeviceGuard -ErrorAction Stop
                     if ($deviceGuardInfo.AvailableSecurityProperties -contains 5) {
@@ -288,19 +293,19 @@ function Check-Windows11Compatibility {
                             
                             if ($generation -ge 8) {
                                 $fallbackPassed = $true
-                                $results.Details += "CPU passed fallback check (>=8th Gen)."
+                                $results.Details += "CPU: >=8th Gen OK"
                             } else {
-                                $results.Details += "CPU has hardware features but is an older Gen model (<8th Gen)."
+                                $results.Details += "CPU: <8th Gen"
                             }
                         }
                         elseif ($name -match 'Xeon') { # Fallback for future Xeon models
                              if ($name -match 'Xeon\(R\) (Platinum|Gold|Silver|Bronze)\s+(\d{4})') {
                                 $modelNumber = $Matches[2]; $generationDigit = [int]$modelNumber.Substring(1, 1)
-                                if ($generationDigit -ge 3) { $fallbackPassed = $true; $results.Details += "CPU passed fallback check (>=3rd Gen Scalable Xeon)." }
-                                else { $results.Details += "CPU failed fallback check (<3rd Gen Scalable Xeon)." }
+                                if ($generationDigit -ge 3) { $fallbackPassed = $true; $results.Details += "CPU: Xeon >=3rd Gen OK" }
+                                else { $results.Details += "CPU: Xeon <3rd Gen" }
                             }
                             elseif ($name -match 'Xeon\(R\) (W-|W\d\s)') {
-                                $fallbackPassed = $true; $results.Details += "CPU passed fallback check (Xeon W Family)."
+                                $fallbackPassed = $true; $results.Details += "CPU: Xeon W OK"
                             }
                         }
                         # Add other potential future-proof checks here if necessary
@@ -310,11 +315,11 @@ function Check-Windows11Compatibility {
                         }
 
                     } else {
-                        $results.Details += "CPU lacks required hardware security features (MBEC)."
+                        $results.Details += "CPU: No MBEC"
                     }
                 }
                 catch {
-                    $results.Details += "Device Guard check failed. OS may be too old."
+                    $results.Details += "CPU: DevGuard fail"
                 }
             }
         }
@@ -322,16 +327,16 @@ function Check-Windows11Compatibility {
         elseif ($manu -eq 'AuthenticAMD') {
             if ($name -match 'Ryzen\s*\d+\s*(\d{4})') {
                 $model = [int]$Matches[1]
-                if ($model -ge 2000) { $results.CpuVbsCompatible = $true } else { $results.Details += "Unsupported AMD Ryzen generation." }
-            } else { $results.Details += "Unable to parse or unsupported AMD CPU model." }
+                if ($model -ge 2000) { $results.CpuVbsCompatible = $true } else { $results.Details += "AMD: Ryzen <2000" }
+            } else { $results.Details += "AMD: Unsupported" }
         }
         elseif ($cpuInfo.Architecture -eq 9) { # ARM64
              if ($name -match 'Snapdragon.*(7c|8c|8cx|850)|Microsoft SQ[123]') {
                 $results.CpuVbsCompatible = $true
-            } else { $results.Details += "Unsupported ARM CPU model." }
+            } else { $results.Details += "ARM: Unsupported" }
         }
         else {
-            $results.Details += "Unsupported CPU manufacturer: $manu"
+            $results.Details += "CPU: Unknown mfg"
         }
 
         if (-not $results.CpuVbsCompatible) {
@@ -343,7 +348,7 @@ function Check-Windows11Compatibility {
 
         # Add "All Passed" comment when exiting with code 0
         if ($results.AllPassed) {
-            $results.Details += "All compatibility checks passed - ready for Windows 11 upgrade"
+            $results.Details += "All passed"
         }
 
         return $results
@@ -357,7 +362,8 @@ function Check-Windows11Compatibility {
 # Run the check and display results
 $compat = Check-Windows11Compatibility
 
-$Compatible = if ($compat.IsWindows11) { 'ALREADY_WIN11' } elseif ($compat.AllPassed) { 'YES' } else { 'NO' }$DetailString = if ($compat.Details.Count -gt 0) { ($compat.Details | Where-Object {$_}) -join '; ' } else { 'All checks passed' }
+$Compatible = if ($compat.IsWindows11) { 'ALREADY_WIN11' } elseif ($compat.AllPassed) { 'YES' } else { 'NO' }
+$DetailString = if ($compat.Details.Count -gt 0) { ($compat.Details | Where-Object {$_}) -join '; ' } else { 'All checks passed' }
 
 if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
     Ninja-Property-Set -Name 'windows11upgrade' -Value $Compatible
@@ -399,7 +405,7 @@ if ($compat.IsWindows11) {
     # Check if this is a PAN/CEPH/3D imaging machine (always exit 3 when detected)
     $isImagingMachine = $false
     foreach ($detail in $compat.Details) {
-        if ($detail -match "System detected as PAN/CEPH/3D imaging capture machine") {
+        if ($detail -match "Imaging system detected") {
             $isImagingMachine = $true
             break
         }
@@ -418,14 +424,14 @@ if (-not $compat.AllPassed) {
     $hasOtherIssues = $false
     
     foreach ($detail in $compat.Details) {
-        if ($detail -match "Insufficient RAM:.*GB \(requires 4\+ GB minimum\)") {
+        if ($detail -match "RAM:.*< 4GB min") {
             $hasRAMIssue = $true
-        } elseif ($detail -match "Warning: Insufficient free disk space") {
+        } elseif ($detail -match "Disk:.*< 30GB") {
             $hasSpaceIssue = $true
-        } elseif ($detail -match "Secure Boot.*\(recommended but not required" -or 
-                  $detail -match "System detected as PAN/CEPH/3D imaging capture machine" -or
-                  $detail -match "RAM notice:" -or
-                  $detail -match "All compatibility checks passed") {
+        } elseif ($detail -match "SecureBoot:" -or 
+                  $detail -match "Imaging system detected" -or
+                  $detail -match "RAM:.*< 15GB rec" -or
+                  $detail -match "All passed") {
             # Skip informational messages
             continue
         } elseif ($detail -ne "All checks passed") {
