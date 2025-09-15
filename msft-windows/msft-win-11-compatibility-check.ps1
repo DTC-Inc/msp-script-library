@@ -174,8 +174,10 @@ function Check-Windows11Compatibility {
         
         if ($osCaption -match "LTSC|Long Term Servicing" -or $editionID -match "IoTEnterprise") {
             $results.AllPassed = $false
-            if ($editionID -match "IoTEnterprise") {
-                $results.Details += "Win10 IoT Enterprise - excluded (support until 2026)"
+            if ($editionID -match "IoTEnterprise" -and $osCaption -match "LTSC") {
+                $results.Details += "Win10 IoT Enterprise LTSC - excluded (support until Jan 2032)"
+            } elseif ($editionID -match "IoTEnterprise") {
+                $results.Details += "Win10 IoT Enterprise - excluded (support until Oct 2025)"
             } else {
                 $results.Details += "Win10 LTSC - excluded"
             }
