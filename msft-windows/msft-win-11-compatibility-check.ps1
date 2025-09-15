@@ -381,7 +381,23 @@ Write-Host "----------------------------------------"
 if ($compat.IsWindows11) {
     # Already on Windows 11 - exit 1 (no upgrade needed)
     exit 1
-} elseif (-not $compat.AllPassed) {
+} else {
+    # Check if this is a PAN/CEPH/3D imaging machine (always exit 3 when detected)
+    $isImagingMachine = $false
+    foreach ($detail in $compat.Details) {
+        if ($detail -match "System detected as PAN/CEPH/3D imaging capture machine") {
+            $isImagingMachine = $true
+            break
+        }
+    }
+    
+    if ($isImagingMachine) {
+        # PAN/CEPH imaging machine detected - always exit 3
+        exit 3
+    }
+}
+
+if (-not $compat.AllPassed) {
     # Analyze failure types to determine specific exit codes
     $hasRAMIssue = $false
     $hasSpaceIssue = $false
