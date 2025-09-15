@@ -379,8 +379,8 @@ Write-Host "----------------------------------------"
 
 # Exit with the appropriate code
 if ($compat.IsWindows11) {
-    # Already on Windows 11 - exit 1 (no upgrade needed)
-    exit 1
+    # Already on Windows 11 - exit 100 (no upgrade needed)
+    exit 100
 } else {
     # Check if this is a PAN/CEPH/3D imaging machine (always exit 3 when detected)
     $isImagingMachine = $false
