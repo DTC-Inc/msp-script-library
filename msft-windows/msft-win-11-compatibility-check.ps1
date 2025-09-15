@@ -157,6 +157,14 @@ function Check-Windows11Compatibility {
             return $results
         }
         
+        # Check if running Windows 10 LTSC (Long Term Servicing Channel)
+        $osCaption = $osInfo.Caption
+        if ($osCaption -match "LTSC|Long Term Servicing") {
+            $results.AllPassed = $false
+            $results.Details += "System excluded: Running Windows 10 LTSC edition with extended support"
+            return $results
+        }
+        
        # OS Architecture
         $arch = $osInfo.OSArchitecture
         $results.OS64Bit = $arch -match '64-bit'
@@ -213,9 +221,11 @@ function Check-Windows11Compatibility {
         # Memory
         $mem = Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Capacity -Sum
         $results.MemoryGB = [math]::Round($mem.Sum / 1GB, 2)
-        if ($results.MemoryGB -lt 15) {
+        if ($results.MemoryGB -lt 4) {
             $results.AllPassed = $false
-            $results.Details += "Insufficient RAM: $($results.MemoryGB) GB (requires 15+ GB)"
+            $results.Details += "Insufficient RAM: $($results.MemoryGB) GB (requires 4+ GB minimum)"
+        } elseif ($results.MemoryGB -lt 15) {
+            $results.Details += "RAM notice: $($results.MemoryGB) GB is under the recommended 15 GB"
         }
 
         # Disk Space (Informational)
@@ -328,7 +338,7 @@ function Check-Windows11Compatibility {
     }
     catch {
         Write-Error "Error checking compatibility: $_"
-        exit 3
+        exit 1
     }
 }
 
@@ -374,52 +384,54 @@ if ($compat.IsWindows11) {
     # Already on Windows 11 - exit 1 (no upgrade needed)
     exit 1
 } elseif (-not $compat.AllPassed) {
-    # Check if this is an imaging machine exclusion
+    # Analyze failure types to determine specific exit codes
     $isImagingMachine = $false
+    $hasRAMIssue = $false
+    $hasSpaceIssue = $false
+    $hasOtherIssues = $false
+    
     foreach ($detail in $compat.Details) {
         if ($detail -match "System excluded: Detected as PAN/CEPH/3D imaging capture machine") {
             $isImagingMachine = $true
-            break
-        }
-    }
-    
-    if ($isImagingMachine) {
-        # Imaging machine detected - exit 1 (not compatible)
-        exit 1
-    }
-    
-    # Check if failures are only minor issues that can be fixed
-    $minorIssuesOnly = $true
-    $hasHardwareIssues = $false
-    
-    # Check for major hardware incompatibilities
-    if (-not $compat.OS64Bit -or -not $compat.CpuVbsCompatible -or -not $compat.TPM2Present -or $compat.MemoryGB -lt 15) {
-        $hasHardwareIssues = $true
-        $minorIssuesOnly = $false
-    }
-    
-    # Check if only minor issues exist (Secure Boot disabled or low disk space)
-    foreach ($detail in $compat.Details) {
-        if ($detail -match "Secure Boot is disabled \(Informational\)" -or 
-            $detail -match "Warning: Insufficient free disk space") {
-            # These are minor issues that can be fixed
+        } elseif ($detail -match "Insufficient RAM:.*GB \(requires 4\+ GB minimum\)") {
+            $hasRAMIssue = $true
+        } elseif ($detail -match "Warning: Insufficient free disk space") {
+            $hasSpaceIssue = $true
+        } elseif ($detail -match "Secure Boot is disabled \(Informational\)") {
+            # Skip informational messages
             continue
-        } elseif ($detail -ne "All checks passed") {
-            # Any other failure is considered major
-            $minorIssuesOnly = $false
-            break
+        } elseif ($detail -ne "All checks passed" -and $detail -notmatch "RAM notice:") {
+            # Any other failure
+            $hasOtherIssues = $true
         }
     }
     
-    if ($hasHardwareIssues) {
-        # Major hardware incompatibilities - exit 1 (cannot upgrade)
-        exit 1
-    } elseif ($minorIssuesOnly) {
-        # Only minor fixable issues - exit 0 (can upgrade with minor changes)
-        exit 0
+    # Count how many failure types we have
+    $failureTypes = 0
+    if ($isImagingMachine) { $failureTypes++ }
+    if ($hasRAMIssue) { $failureTypes++ }
+    if ($hasSpaceIssue) { $failureTypes++ }
+    if ($hasOtherIssues) { $failureTypes++ }
+    
+    # Determine exit code based on specific failure combinations
+    if ($failureTypes -ge 4) {
+        # All failure types present - exit 6
+        exit 6
+    } elseif ($failureTypes -ge 2) {
+        # 2-3 failure types present - exit 5
+        exit 5
+    } elseif ($isImagingMachine) {
+        # Only PAN/CEPH imaging machine - exit 3
+        exit 3
+    } elseif ($hasRAMIssue) {
+        # Only RAM issue - exit 2
+        exit 2
+    } elseif ($hasSpaceIssue) {
+        # Only space issue - exit 4
+        exit 4
     } else {
-        # Other failures - exit 1 (cannot upgrade)
-        exit 1
+        # Other single failure - exit 2 (general failure)
+        exit 2
     }
 } else {
     # All checks passed - exit 0 (ready to upgrade)
