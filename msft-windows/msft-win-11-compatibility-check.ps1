@@ -182,12 +182,14 @@ function Check-Windows11Compatibility {
         try {
             $sb = Confirm-SecureBootUEFI
             $results.SecureBootEnabled = $sb
-            if (-not $sb) {
-                $results.Details += 'Secure Boot is disabled (Informational)'
+            if ($sb) {
+                $results.Details += 'Secure Boot is enabled (recommended but not required for Windows 11)'
+            } else {
+                $results.Details += 'Secure Boot is disabled (recommended but not required for Windows 11)'
             }
         }
         catch {
-            $results.Details += 'Secure Boot check unavailable (may require admin rights)'
+            $results.Details += 'Secure Boot check unavailable (recommended but not required for Windows 11)'
         }
 
         # TPM 2.0
@@ -339,6 +341,11 @@ function Check-Windows11Compatibility {
         # END OF CPU LOGIC BLOCK
         # ===================================================================
 
+        # Add "All Passed" comment when exiting with code 0
+        if ($results.AllPassed) {
+            $results.Details += "All compatibility checks passed - ready for Windows 11 upgrade"
+        }
+
         return $results
     }
     catch {
@@ -415,9 +422,10 @@ if (-not $compat.AllPassed) {
             $hasRAMIssue = $true
         } elseif ($detail -match "Warning: Insufficient free disk space") {
             $hasSpaceIssue = $true
-        } elseif ($detail -match "Secure Boot is disabled \(Informational\)" -or 
+        } elseif ($detail -match "Secure Boot.*\(recommended but not required" -or 
                   $detail -match "System detected as PAN/CEPH/3D imaging capture machine" -or
-                  $detail -match "RAM notice:") {
+                  $detail -match "RAM notice:" -or
+                  $detail -match "All compatibility checks passed") {
             # Skip informational messages
             continue
         } elseif ($detail -ne "All checks passed") {
