@@ -167,11 +167,18 @@ function Check-Windows11Compatibility {
             return $results
         }
         
-        # Check if running Windows 10 LTSC (Long Term Servicing Channel)
+        # Check if running Windows 10 LTSC or IoT Enterprise (have extended support)
         $osCaption = $osInfo.Caption
-        if ($osCaption -match "LTSC|Long Term Servicing") {
+        $licenseInfo = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion"
+        $editionID = $licenseInfo.EditionID
+        
+        if ($osCaption -match "LTSC|Long Term Servicing" -or $editionID -match "IoTEnterprise") {
             $results.AllPassed = $false
-            $results.Details += "Win10 LTSC - excluded"
+            if ($editionID -match "IoTEnterprise") {
+                $results.Details += "Win10 IoT Enterprise - excluded (support until 2026)"
+            } else {
+                $results.Details += "Win10 LTSC - excluded"
+            }
             return $results
         }
         
