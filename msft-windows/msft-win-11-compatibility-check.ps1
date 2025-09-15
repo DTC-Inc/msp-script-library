@@ -237,7 +237,7 @@ function Check-Windows11Compatibility {
         $sys = Get-CimInstance Win32_OperatingSystem
         $free = (Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($sys.SystemDrive)'").FreeSpace
         $results.FreeSpaceGB = [math]::Round($free / 1GB, 2)
-        if ($results.FreeSpaceGB -lt 64) {
+        if ($results.FreeSpaceGB -lt 30) {
             $results.Details += "Warning: Insufficient free disk space: $($results.FreeSpaceGB) GB"
         }
 
