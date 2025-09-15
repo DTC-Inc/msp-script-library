@@ -36,24 +36,31 @@ function Test-ImagingMachine {
     (?:3D(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     (?:CBCT(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
+    # CAD/CADCAM variations
+    (?:CAD(?:CAM)?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    
+    # Radiology/X-ray variations
+    (?:(?:X[-_\s]?RAY|XRAY|RADIOLOG(?:Y|IC)|RADIO)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:(?:DIGITAL|DR|CR|COMPUTED)(?:[-_\s]?(?:RADIOGRAPH(?:Y|IC)|X[-_\s]?RAY|XRAY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    
     # Cone Beam variations
     (?:CONE(?:[-_\s]?BEAM)?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Vendor-specific patterns (major dental imaging manufacturers)
-    (?:KODAK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CS|CARESTREAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:SIRONA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|ORTHOPHOS|GALILEOS))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:PLANMECA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|PROMAX|ROMEXIS|VISO))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:CARESTREAM(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CS|KODAK))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:DENTSPLY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|GENDEX|INSTRUMENTARIUM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:GENDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|GXPAN|GXCB))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:OWANDY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|I-MAX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:TROPHY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|TREX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:KAVO(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|OP))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:SOREDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CRANEX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:YOSHIDA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:ACTEON(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|X-MIND))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:PHILIPS(?:[-_\s]?(?:PAN|CEPH|3D|CBCT))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
-    (?:MIDMARK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|PROGENY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:KODAK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS|CARESTREAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:SIRONA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|ORTHOPHOS|GALILEOS))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:PLANMECA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|PROMAX|ROMEXIS|VISO))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:CARESTREAM(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CS|KODAK))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:DENTSPLY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|GENDEX|INSTRUMENTARIUM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:GENDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|GXPAN|GXCB))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:OWANDY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|I-MAX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:TROPHY(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|TREX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:KAVO(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|OP))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:SOREDEX(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|CRANEX))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:YOSHIDA(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:ACTEON(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|X-MIND))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:PHILIPS(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:MIDMARK(?:[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|PROGENY))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Model-specific patterns
     (?:ORTHOPHOS(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
@@ -65,17 +72,17 @@ function Test-ImagingMachine {
     (?:GALILEOS(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
     # Generic imaging terms with numbers/suffixes
-    (?:(?:DENTAL|MEDICAL|XRAY|X[-_\s]?RAY)[-_\s]?(?:PAN|CEPH|3D|CBCT|IMG|IMAGING)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    (?:(?:DENTAL|MEDICAL|XRAY|X[-_\s]?RAY)[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|IMG|IMAGING)(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
-    # Pattern for combined terms (e.g., PAN3D, CEPH3D)
-    (?:(?:PAN|CEPH)(?:[-_\s]?3D)?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
+    # Pattern for combined terms (e.g., PAN3D, CEPH3D, CADCAM3D)
+    (?:(?:PAN|CEPH|CAD)(?:[-_\s]?(?:3D|CAM))?(?:[-_\s]?\w*)?(?:[-_\s]?\d+)?)|
     
-    # Capture workstation patterns (e.g., PANWS01, CEPHWORKSTATION)
-    (?:(?:PAN|CEPH|3D|CBCT)(?:[-_\s]?(?:WS|WORKSTATION|STATION|PC|COMP))(?:[-_\s]?\d+)?)|
+    # Capture workstation patterns (e.g., PANWS01, CEPHWORKSTATION, CADWS01, XRAYWS01)
+    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)(?:[-_\s]?(?:WS|WORKSTATION|STATION|PC|COMP))(?:[-_\s]?\d+)?)|
     
-    # Room-based naming (e.g., ROOM1PAN, OPPAN1, OP1CEPH)
-    (?:(?:ROOM|OP|OPERATORY)[-_\s]?\d*[-_\s]?(?:PAN|CEPH|3D|CBCT)(?:[-_\s]?\d+)?)|
-    (?:(?:PAN|CEPH|3D|CBCT)[-_\s]?(?:ROOM|OP|OPERATORY)[-_\s]?\d+)
+    # Room-based naming (e.g., ROOM1PAN, OPPAN1, OP1CEPH, CADROOM1, XRAYROOM1)
+    (?:(?:ROOM|OP|OPERATORY)[-_\s]?\d*[-_\s]?(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)(?:[-_\s]?\d+)?)|
+    (?:(?:PAN|CEPH|3D|CBCT|CAD|CADCAM|XRAY|X[-_\s]?RAY|DR|CR|RADIO)[-_\s]?(?:ROOM|OP|OPERATORY)[-_\s]?\d+)
 )
 .*?$  # Optional suffix characters
 "@
