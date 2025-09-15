@@ -137,11 +137,9 @@ function Check-Windows11Compatibility {
     }
 
     try {
-        # Check if this is a PAN/CEPH/3D imaging capture machine that should be excluded
+        # Check if this is a PAN/CEPH/3D imaging capture machine (informational only)
         if (Test-ImagingMachine) {
-            $results.AllPassed = $false
-            $results.Details += "System excluded: Detected as PAN/CEPH/3D imaging capture machine (Computer: $env:COMPUTERNAME)"
-            return $results
+            $results.Details += "System detected as PAN/CEPH/3D imaging capture machine (Computer: $env:COMPUTERNAME)"
         }
       
         # Check if already running Windows 11
@@ -385,22 +383,21 @@ if ($compat.IsWindows11) {
     exit 1
 } elseif (-not $compat.AllPassed) {
     # Analyze failure types to determine specific exit codes
-    $isImagingMachine = $false
     $hasRAMIssue = $false
     $hasSpaceIssue = $false
     $hasOtherIssues = $false
     
     foreach ($detail in $compat.Details) {
-        if ($detail -match "System excluded: Detected as PAN/CEPH/3D imaging capture machine") {
-            $isImagingMachine = $true
-        } elseif ($detail -match "Insufficient RAM:.*GB \(requires 4\+ GB minimum\)") {
+        if ($detail -match "Insufficient RAM:.*GB \(requires 4\+ GB minimum\)") {
             $hasRAMIssue = $true
         } elseif ($detail -match "Warning: Insufficient free disk space") {
             $hasSpaceIssue = $true
-        } elseif ($detail -match "Secure Boot is disabled \(Informational\)") {
+        } elseif ($detail -match "Secure Boot is disabled \(Informational\)" -or 
+                  $detail -match "System detected as PAN/CEPH/3D imaging capture machine" -or
+                  $detail -match "RAM notice:") {
             # Skip informational messages
             continue
-        } elseif ($detail -ne "All checks passed" -and $detail -notmatch "RAM notice:") {
+        } elseif ($detail -ne "All checks passed") {
             # Any other failure
             $hasOtherIssues = $true
         }
@@ -408,21 +405,17 @@ if ($compat.IsWindows11) {
     
     # Count how many failure types we have
     $failureTypes = 0
-    if ($isImagingMachine) { $failureTypes++ }
     if ($hasRAMIssue) { $failureTypes++ }
     if ($hasSpaceIssue) { $failureTypes++ }
     if ($hasOtherIssues) { $failureTypes++ }
     
     # Determine exit code based on specific failure combinations
-    if ($failureTypes -ge 4) {
+    if ($failureTypes -ge 3) {
         # All failure types present - exit 6
         exit 6
     } elseif ($failureTypes -ge 2) {
         # 2-3 failure types present - exit 5
         exit 5
-    } elseif ($isImagingMachine) {
-        # Only PAN/CEPH imaging machine - exit 3
-        exit 3
     } elseif ($hasRAMIssue) {
         # Only RAM issue - exit 2
         exit 2
