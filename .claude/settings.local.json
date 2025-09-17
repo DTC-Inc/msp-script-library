@@ -1,7 +1,8 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch"
+      "WebSearch",
+      "Read(//c/Users/NathanielSmith/Downloads/**)"
     ],
     "deny": [],
     "ask": []

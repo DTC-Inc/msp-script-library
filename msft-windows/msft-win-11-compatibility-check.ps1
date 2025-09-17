@@ -410,69 +410,81 @@ Write-Host "----------------------------------------"
 if ($compat.IsWindows11) {
     # Already on Windows 11 - exit 100 (no upgrade needed)
     exit 100
-} else {
-    # Check if this is a PAN/CEPH/3D imaging machine (always exit 3 when detected)
-    $isImagingMachine = $false
-    foreach ($detail in $compat.Details) {
-        if ($detail -match "Imaging system detected") {
-            $isImagingMachine = $true
-            break
-        }
-    }
-    
-    if ($isImagingMachine) {
-        # PAN/CEPH imaging machine detected - always exit 3
-        exit 3
+}
+
+# Check if this is a PAN/CEPH/3D imaging machine (always exit 3 when detected)
+$isImagingMachine = $false
+foreach ($detail in $compat.Details) {
+    if ($detail -match "Imaging system detected") {
+        $isImagingMachine = $true
+        break
     }
 }
 
-if (-not $compat.AllPassed) {
-    # Analyze failure types to determine specific exit codes
-    $hasRAMIssue = $false
-    $hasSpaceIssue = $false
-    $hasOtherIssues = $false
-    
-    foreach ($detail in $compat.Details) {
-        if ($detail -match "RAM:.*< 4GB min") {
-            $hasRAMIssue = $true
-        } elseif ($detail -match "Disk:.*< 30GB") {
-            $hasSpaceIssue = $true
-        } elseif ($detail -match "SecureBoot:" -or 
-                  $detail -match "Imaging system detected" -or
-                  $detail -match "RAM:.*< 15GB rec" -or
-                  $detail -match "All passed") {
-            # Skip informational messages
-            continue
-        } elseif ($detail -ne "All checks passed") {
-            # Any other failure
-            $hasOtherIssues = $true
-        }
-    }
-    
-    # Count how many failure types we have
-    $failureTypes = 0
-    if ($hasRAMIssue) { $failureTypes++ }
-    if ($hasSpaceIssue) { $failureTypes++ }
-    if ($hasOtherIssues) { $failureTypes++ }
-    
-    # Determine exit code based on specific failure combinations
-    if ($failureTypes -ge 3) {
-        # All failure types present - exit 6
-        exit 6
-    } elseif ($failureTypes -ge 2) {
-        # 2-3 failure types present - exit 5
-        exit 5
-    } elseif ($hasRAMIssue) {
-        # Only RAM issue - exit 2
-        exit 2
-    } elseif ($hasSpaceIssue) {
-        # Only space issue - exit 4
-        exit 4
-    } else {
-        # Other single failure - exit 2 (general failure)
-        exit 2
-    }
-} else {
+if ($isImagingMachine) {
+    # PAN/CEPH imaging machine detected - always exit 3
+    exit 3
+}
+
+# Now check if all compatibility tests passed
+if ($compat.AllPassed) {
     # All checks passed - exit 0 (ready to upgrade)
     exit 0
+}
+
+# If we get here, some checks failed - analyze failure types
+$hasRAMIssue = $false
+$hasSpaceIssue = $false
+$hasCPUIssue = $false
+$hasTPMIssue = $false
+$hasOSArchIssue = $false
+$hasLTSCIssue = $false
+
+foreach ($detail in $compat.Details) {
+    if ($detail -match "RAM:.*< 4GB min") {
+        $hasRAMIssue = $true
+    } elseif ($detail -match "Disk:.*< 30GB") {
+        $hasSpaceIssue = $true
+    } elseif ($detail -match "CPU:" -and $detail -notmatch "CPU: Supported") {
+        $hasCPUIssue = $true
+    } elseif ($detail -match "TPM" -and $detail -notmatch "TPM: OK") {
+        $hasTPMIssue = $true
+    } elseif ($detail -match "OS is not 64-bit") {
+        $hasOSArchIssue = $true
+    } elseif ($detail -match "LTSC|IoT Enterprise") {
+        $hasLTSCIssue = $true
+    }
+}
+
+# Count critical failure types (not including disk space which is informational)
+$criticalFailures = 0
+if ($hasRAMIssue) { $criticalFailures++ }
+if ($hasCPUIssue) { $criticalFailures++ }
+if ($hasTPMIssue) { $criticalFailures++ }
+if ($hasOSArchIssue) { $criticalFailures++ }
+if ($hasLTSCIssue) { $criticalFailures++ }
+
+# Determine exit code based on specific failure combinations
+if ($hasLTSCIssue) {
+    # LTSC/IoT Enterprise - exit 7 (special case for extended support)
+    exit 7
+} elseif ($criticalFailures -ge 3) {
+    # Multiple critical failures - exit 6
+    exit 6
+} elseif ($criticalFailures -eq 2) {
+    # Two critical failures - exit 5
+    exit 5
+} elseif ($hasRAMIssue) {
+    # Only RAM issue - exit 2
+    exit 2
+} elseif ($hasSpaceIssue -and $criticalFailures -eq 0) {
+    # Only space issue (no critical failures) - exit 4
+    exit 4
+} elseif ($hasCPUIssue -or $hasTPMIssue -or $hasOSArchIssue) {
+    # Single critical failure (CPU, TPM, or OS architecture) - exit 1
+    exit 1
+} else {
+    # This should not happen, but if it does, exit 1 as a general failure
+    Write-Host "WARNING: Unexpected failure condition"
+    exit 1
 }
