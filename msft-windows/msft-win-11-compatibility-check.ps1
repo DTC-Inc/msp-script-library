@@ -368,6 +368,20 @@ function Check-Windows11Compatibility {
     }
 }
 
+# Get device serial number first
+try {
+    $serialNumber = (Get-CimInstance Win32_BIOS).SerialNumber
+    if ([string]::IsNullOrWhiteSpace($serialNumber) -or $serialNumber -eq "To Be Filled By O.E.M.") {
+        $serialNumber = (Get-CimInstance Win32_ComputerSystem).Name
+    }
+} catch {
+    $serialNumber = "Unknown"
+}
+
+# Display serial number at the beginning
+Write-Host "SN: $serialNumber"
+Write-Host ""
+
 # Run the check and display results
 $compat = Check-Windows11Compatibility
 
@@ -377,6 +391,7 @@ $DetailString = if ($compat.Details.Count -gt 0) { ($compat.Details | Where-Obje
 if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
     Ninja-Property-Set -Name 'windows11upgrade' -Value $Compatible
     Ninja-Property-Set -Name 'windows11UpgradeDetails' -Value $DetailString
+    Ninja-Property-Set -Name 'deviceSerialNumber' -Value $serialNumber
 }
 
 if ($compat.IsWindows11) {
