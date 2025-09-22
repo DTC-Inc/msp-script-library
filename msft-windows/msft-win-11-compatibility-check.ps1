@@ -391,7 +391,6 @@ $DetailString = if ($compat.Details.Count -gt 0) { ($compat.Details | Where-Obje
 if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
     Ninja-Property-Set -Name 'windows11upgrade' -Value $Compatible
     Ninja-Property-Set -Name 'windows11UpgradeDetails' -Value $DetailString
-    Ninja-Property-Set -Name 'deviceSerialNumber' -Value $serialNumber
 }
 
 if ($compat.IsWindows11) {
