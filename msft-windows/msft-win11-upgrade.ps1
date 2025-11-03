@@ -71,6 +71,11 @@ Write-Host "RMM: $RMM"
 $downloadDir = "$env:TEMP"
 $isoPath     = Join-Path $downloadDir "Win11Upgrade.iso"
 
+# Force upgrade flag - set to 1 to use /product server flag, 0 to skip it
+if ($null -eq $forceUpgrade) {
+    $forceUpgrade = 0
+}
+
 ### ————— PROGRESS FUNCTION —————
 function Show-Progress {
     param(
@@ -127,10 +132,19 @@ Show-Progress -Percent 50 -Stage "DownloadedAndMounted"
 
 ### ————— LAUNCH SETUP —————
 Show-Progress -Percent 75 -Stage "SetupStart"
-Write-Output "Launching Windows 11 setup (quiet, no reboot)..."
+
+# Build argument list based on forceUpgrade flag
+$setupArgs = @("/auto Upgrade", "/eula accept")
+if ($forceUpgrade -eq 1) {
+    $setupArgs += "/product server"
+    Write-Output "Launching Windows 11 setup (quiet, no reboot) with /product server flag..."
+} else {
+    Write-Output "Launching Windows 11 setup (quiet, no reboot)..."
+}
+
 Start-Process `
     -FilePath "$driveLetter\setup.exe" `
-    -ArgumentList "/auto Upgrade","/eula accept","/product server"
+    -ArgumentList $setupArgs
 
 Write-Output "Setup launched; the machine will reboot and complete the upgrade."
 # script ends here; Setup handles reboot & ISO cleanup
