@@ -1,2 +1,83 @@
+# macOS
 .DS_STORE
+
+# Claude Code settings
 .claude/settings.local.json
+
+# Log files
+*.log
+logs/
+*.log.*
+
+# Data files
+*.csv
+*.xlsx
+*.xls
+*.dat
+*.json
+*.xml
+!package.json
+!package-lock.json
+
+# Example and sample files
+*example*
+*sample*
+*test*
+*.example
+*.sample
+
+# Configuration files (examples only)
+*config.example*
+*settings.example*
+*.example.ps1
+*.example.py
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+*~
+
+# Windows temporary files
+Thumbs.db
+Desktop.ini
+
+# Output/build directories
+output/
+build/
+dist/
+bin/
+obj/
+
+# RMM-specific temporary files
+*_output.txt
+*_result.txt
+
+# Credentials and secrets
+*.key
+*.pem
+*.pfx
+*.p12
+credentials.*
+secrets.*
+*.credentials
+*.secrets
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Database files
+*.db
+*.sqlite
+*.mdb
+
+# Archive files (unless specifically needed)
+# Uncomment if you don't want to track installers
+# *.zip
+# *.7z
+# *.rar
+# *.tar
+# *.gz
