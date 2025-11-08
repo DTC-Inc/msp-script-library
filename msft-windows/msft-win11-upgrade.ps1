@@ -1,5 +1,8 @@
 ## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## $RMM
+## $isoUrl
+## $forceUpgrade
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -109,14 +112,25 @@ try {
     Write-Output "Warning: Could not dismount ISOs: $_"
 }
 
-### ————— ELEVATION CHECK —————
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Output "Relaunching elevated..."
-    Start-Process -FilePath "PowerShell.exe" `
-        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
-        -Verb RunAs
-    exit
+### ————— ELEVATION CHECK (Interactive mode only) —————
+# Skip elevation check when running from RMM - RMM platforms run as SYSTEM (already elevated)
+if ($RMM -ne 1) {
+    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        Write-Output "Relaunching elevated..."
+        Start-Process -FilePath "PowerShell.exe" `
+            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+            -Verb RunAs
+        exit
+    }
+}
+
+### ————— VALIDATE REQUIRED VARIABLES —————
+if ([string]::IsNullOrWhiteSpace($isoUrl)) {
+    Write-Error "CRITICAL: isoUrl variable is not set. This must be configured in your RMM or set manually."
+    Show-Progress -Percent 0 -Stage "ConfigError"
+    Stop-Transcript
+    exit 1
 }
 
 ### ————— DOWNLOAD ISO (Using BITS for speed + compatibility) —————
