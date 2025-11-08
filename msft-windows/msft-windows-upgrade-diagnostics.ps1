@@ -210,8 +210,8 @@ try {
     Write-Output "AI DIAGNOSTIC ANALYSIS"
     Write-Output "==========================================`n"
 
-    $diagnosis = $response.content[0].text
-    Write-Output $diagnosis
+    $AIOutput = $response.content[0].text
+    Write-Output $AIOutput
 
     Write-Output "`n=========================================="
     Write-Output "END OF ANALYSIS"
@@ -220,10 +220,10 @@ try {
     # Store diagnosis in RMM custom field if available
     if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
         # Truncate for RMM field (max 10000 chars typically)
-        $truncatedDiagnosis = if ($diagnosis.Length -gt 9000) {
-            $diagnosis.Substring(0, 9000) + "`n`n... [Truncated - see full log]"
+        $truncatedDiagnosis = if ($AIOutput.Length -gt 9000) {
+            $AIOutput.Substring(0, 9000) + "`n`n... [Truncated - see full log]"
         } else {
-            $diagnosis
+            $AIOutput
         }
         Ninja-Property-Set -Name 'windowsUpgradeDiagnosis' -Value $truncatedDiagnosis
         Write-Output "Diagnosis saved to NinjaRMM custom field 'windowsUpgradeDiagnosis'"
