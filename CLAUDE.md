@@ -112,15 +112,23 @@ Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
 
 When integrating with external APIs that produce text output for RMM custom fields:
 
-1. **Character Limit Awareness**: Most RMM platforms limit custom field sizes to ~10,000 characters
-2. **Proactive Token Limiting**: Set API `max_tokens` to ensure output stays well under the limit
-3. **Safety Truncation**: Always include truncation logic as a backup safety measure
+1. **Character Limit Awareness**: RMM custom fields often have strict limits (as low as 200 characters)
+2. **Dual-Output Strategy**: Provide both detailed analysis (for logs) and concise summary (for custom fields)
+3. **Proactive Token Limiting**: Set API `max_tokens` to 2000 to produce reasonable full output (~8000 chars)
+4. **Structured Summary Extraction**: Request AI to include a SHORT_SUMMARY line for easy extraction
 
 ```powershell
-# Set max_tokens to produce ~8000 chars (stays under 9000 char limit)
+# Request AI to provide SHORT_SUMMARY in output
+$prompt = @"
+Please analyze this data and provide:
+1. Detailed analysis with reasoning
+2. SHORT_SUMMARY: [concise 150 char summary on single line]
+"@
+
+# Set max_tokens for full detailed output
 $requestBody = @{
     model = "claude-sonnet-4-20250514"
-    max_tokens = 2000  # ~8000 chars to stay under 9000 char RMM field limit
+    max_tokens = 2000  # ~8000 chars for detailed analysis
     messages = @(
         @{
             role = "user"
@@ -129,23 +137,32 @@ $requestBody = @{
     )
 } | ConvertTo-Json -Depth 10
 
-# Always include safety truncation as backup
+# Store full output for transcript/logs
 $AIOutput = $response.content[0].text
-$truncatedOutput = if ($AIOutput.Length -gt 9000) {
-    $AIOutput.Substring(0, 9000) + "`n`n... [Truncated - see full log]"
+
+# Extract short summary for RMM custom field (under 200 chars)
+$AIOutputShort = ""
+if ($AIOutput -match 'SHORT_SUMMARY:\s*(.+)') {
+    $AIOutputShort = $Matches[1].Trim()
+    if ($AIOutputShort.Length -gt 190) {
+        $AIOutputShort = $AIOutputShort.Substring(0, 190) + "..."
+    }
 } else {
-    $AIOutput
+    $AIOutputShort = "See full transcript for analysis"
 }
+
+# Use $AIOutput for transcript logs, $AIOutputShort for RMM custom fields
 ```
 
 **Token-to-Character Ratio**: Claude tokens average ~4-5 characters per token in English text
-- 2000 tokens ≈ 8000-10000 characters
-- 1800 tokens ≈ 7200-9000 characters (safer for strict limits)
+- 2000 tokens ≈ 8000-10000 characters (good for full detailed output)
+- Summary extraction via regex ensures custom field compliance
 
 **RMM Platform Considerations**:
-- NinjaRMM: Custom fields typically support up to 10,000 characters
-- ConnectWise Automate: Variable limits depend on field type
-- Datto RMM: Check specific field limits in platform documentation
+- **NinjaRMM**: Custom fields limited to 200 characters
+- **ConnectWise Automate**: Variable limits depend on field type (often 255 chars)
+- **Datto RMM**: Check specific field limits in platform documentation
+- **Best Practice**: Always provide dual output (detailed + summary) to maximize value
 
 ### Veeam-Specific Patterns
 
