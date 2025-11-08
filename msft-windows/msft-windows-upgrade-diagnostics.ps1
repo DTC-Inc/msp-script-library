@@ -129,7 +129,7 @@ foreach ($logPath in $pantherLocations) {
                 $logContent += $content
             }
         } catch {
-            Write-Warning "Could not read $logPath: $_"
+            Write-Warning "Could not read ${logPath}: $($_)"
         }
     }
 }
