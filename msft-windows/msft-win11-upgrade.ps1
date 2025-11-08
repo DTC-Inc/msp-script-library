@@ -96,20 +96,23 @@ function Show-Progress {
 Show-Progress -Percent 0 -Stage "Start"
 
 ### ————— DISMOUNT ANY EXISTING ISOs —————
-Write-Output "Dismounting any existing ISOs..."
+Write-Output "Checking for existing Windows 11 ISO..."
 try {
-    $mountedImages = Get-DiskImage -ErrorAction SilentlyContinue | Where-Object { $_.Attached -eq $true }
-    if ($mountedImages) {
-        foreach ($image in $mountedImages) {
-            Write-Output "Dismounting: $($image.ImagePath)"
-            Dismount-DiskImage -ImagePath $image.ImagePath -ErrorAction SilentlyContinue
+    # Check if the ISO file we're about to download already exists and is mounted
+    if (Test-Path $isoPath) {
+        $diskImage = Get-DiskImage -ImagePath $isoPath -ErrorAction SilentlyContinue
+        if ($null -ne $diskImage -and $diskImage.Attached) {
+            Write-Output "Dismounting existing ISO: $isoPath"
+            Dismount-DiskImage -ImagePath $isoPath -ErrorAction Stop
+            Write-Output "ISO dismounted successfully"
+        } else {
+            Write-Output "ISO file exists but is not mounted"
         }
-        Write-Output "All ISOs dismounted successfully"
     } else {
-        Write-Output "No mounted ISOs found"
+        Write-Output "No existing ISO file found at $isoPath"
     }
 } catch {
-    Write-Output "Warning: Could not dismount ISOs: $_"
+    Write-Output "Warning: Could not dismount ISO: $_"
 }
 
 ### ————— ELEVATION CHECK (Interactive mode only) —————
