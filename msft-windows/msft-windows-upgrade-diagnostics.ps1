@@ -195,7 +195,7 @@ If no errors are found, state that clearly.
 
 $requestBody = @{
     model = "claude-sonnet-4-20250514"
-    max_tokens = 4096
+    max_tokens = 2000  # ~8000 chars to stay under 9000 char RMM field limit
     messages = @(
         @{
             role = "user"
