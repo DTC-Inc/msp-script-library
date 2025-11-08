@@ -188,6 +188,11 @@ Please provide:
    - List 2-3 other possible causes with lower confidence levels
    - One sentence each explaining why they're less likely
 
+4. **SHORT SUMMARY** (REQUIRED - Must be on a line starting with "SHORT_SUMMARY:"):
+   - On a single line, provide a 150 character or less conclusive summary
+   - Format: "SHORT_SUMMARY: [error_code/type] - [root cause] - [quick action]"
+   - Example: "SHORT_SUMMARY: 0xC1900101-0x20017 - Driver incompatibility (Realtek) - Update/remove driver"
+
 Focus heavily on the PRIMARY DIAGNOSIS with detailed evidence and reasoning. Keep alternative possibilities brief.
 
 If no errors are found, state that clearly.
@@ -231,22 +236,37 @@ try {
     Write-Output "END OF ANALYSIS"
     Write-Output "==========================================`n"
 
+    # Extract short summary from AI output (for RMM custom fields with character limits)
+    $AIOutputShort = ""
+    if ($AIOutput -match 'SHORT_SUMMARY:\s*(.+)') {
+        $AIOutputShort = $Matches[1].Trim()
+        # Ensure it's under 200 characters
+        if ($AIOutputShort.Length -gt 190) {
+            $AIOutputShort = $AIOutputShort.Substring(0, 190) + "..."
+        }
+        Write-Output "Short Summary: $AIOutputShort"
+    } else {
+        # Fallback if AI didn't provide short summary
+        $AIOutputShort = "See full transcript for diagnosis"
+        Write-Output "Warning: AI did not provide SHORT_SUMMARY. Using fallback."
+    }
+
     ### ————— TUNNEL OUTPUT VARIABLE TO YOUR RMM HERE —————
-    # The AI diagnostic output is stored in $AIOutput variable
-    # Use this section to send output to your RMM platform's custom fields
+    # The AI diagnostic output is stored in TWO variables:
+    # - $AIOutput: Full detailed analysis (for transcript/logs)
+    # - $AIOutputShort: Concise summary under 200 chars (for RMM custom fields)
     #
     # Example for NinjaRMM:
     # if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
-    #     $truncatedOutput = if ($AIOutput.Length -gt 9000) { $AIOutput.Substring(0, 9000) + "`n`n...[Truncated]" } else { $AIOutput }
-    #     Ninja-Property-Set -Name 'windowsUpgradeDiagnosis' -Value $truncatedOutput
+    #     Ninja-Property-Set -Name 'windowsUpgradeAIDiagnostic' -Value $AIOutputShort
     # }
     #
     # Example for ConnectWise Automate:
-    # Set-ItemProperty -Path "HKLM:\SOFTWARE\LabTech\Service" -Name "WindowsUpgradeDiagnosis" -Value $AIOutput
+    # Set-ItemProperty -Path "HKLM:\SOFTWARE\LabTech\Service" -Name "WinUpgradeDiag" -Value $AIOutputShort
     #
     # Example for Datto RMM:
     # Write-Host "<-Start Result->"
-    # Write-Host "DIAGNOSIS: $AIOutput"
+    # Write-Host "DIAGNOSIS: $AIOutputShort"
     # Write-Host "<-End Result->"
     ### ————— END RMM OUTPUT TUNNEL —————
 
