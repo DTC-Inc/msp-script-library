@@ -92,6 +92,23 @@ function Show-Progress {
 ### ————— SCRIPT START —————
 Show-Progress -Percent 0 -Stage "Start"
 
+### ————— DISMOUNT ANY EXISTING ISOs —————
+Write-Output "Dismounting any existing ISOs..."
+try {
+    $mountedImages = Get-DiskImage -ErrorAction SilentlyContinue | Where-Object { $_.Attached -eq $true }
+    if ($mountedImages) {
+        foreach ($image in $mountedImages) {
+            Write-Output "Dismounting: $($image.ImagePath)"
+            Dismount-DiskImage -ImagePath $image.ImagePath -ErrorAction SilentlyContinue
+        }
+        Write-Output "All ISOs dismounted successfully"
+    } else {
+        Write-Output "No mounted ISOs found"
+    }
+} catch {
+    Write-Output "Warning: Could not dismount ISOs: $_"
+}
+
 ### ————— ELEVATION CHECK —————
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
