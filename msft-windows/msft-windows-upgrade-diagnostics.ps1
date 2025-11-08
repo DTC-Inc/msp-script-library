@@ -251,9 +251,13 @@ try {
     ### ————— END RMM OUTPUT TUNNEL —————
 
 } catch {
-    Write-Error "Failed to get AI analysis: $_"
-    Write-Error "Status Code: $($_.Exception.Response.StatusCode.value__)"
-    Write-Error "Status Description: $($_.Exception.Response.StatusDescription)"
+    $errorMsg = $_.Exception.Message
+    $statusCode = $_.Exception.Response.StatusCode.value__
+    $statusDesc = $_.Exception.Response.StatusDescription
+
+    Write-Error "Failed to get AI analysis: $errorMsg"
+    Write-Error "Status Code: $statusCode"
+    Write-Error "Status Description: $statusDesc"
 
     if ($_.ErrorDetails.Message) {
         Write-Error "API Error Details: $($_.ErrorDetails.Message)"
