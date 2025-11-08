@@ -20,12 +20,17 @@ This is an MSP (Managed Service Provider) script library containing PowerShell s
 1. **Create a Feature Branch**
    ```bash
    git checkout -b feature/descriptive-name
+   # or
+   git checkout -b problem/descriptive-name
    ```
-   Branch naming convention: `feature/`, `bugfix/`, or `hotfix/` prefix followed by descriptive name
+   Branch naming convention: `feature/` or `problem/` prefix followed by descriptive name
+   - `feature/` - New features or enhancements
+   - `problem/` - Bug fixes, hotfixes, or any issue resolution
+
    Examples:
    - `feature/admin-user-180day-deletion`
-   - `bugfix/iso-dismount-error`
-   - `hotfix/script-hanging-rmm`
+   - `problem/iso-dismount-error`
+   - `problem/script-hanging-rmm`
 
 2. **Make Changes on the Feature Branch**
    - Make all code modifications on the feature branch
