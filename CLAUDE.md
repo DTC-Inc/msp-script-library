@@ -6,6 +6,65 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an MSP (Managed Service Provider) script library containing PowerShell scripts for automation, deployment, configuration, and management tasks across various platforms and vendors. Scripts are designed to be executed both interactively and via RMM (Remote Monitoring and Management) platforms.
 
+## Git Workflow and Branching Strategy
+
+**CRITICAL: All changes must be made in feature branches, never directly to `main`.**
+
+### Branch Protection
+- The `main` branch represents production code deployed to customer environments
+- All script modifications must go through feature branches and pull requests
+- Direct commits to `main` are prohibited to prevent untested code from reaching production
+
+### Workflow for All Changes
+
+1. **Create a Feature Branch**
+   ```bash
+   git checkout -b feature/descriptive-name
+   ```
+   Branch naming convention: `feature/`, `bugfix/`, or `hotfix/` prefix followed by descriptive name
+   Examples:
+   - `feature/admin-user-180day-deletion`
+   - `bugfix/iso-dismount-error`
+   - `hotfix/script-hanging-rmm`
+
+2. **Make Changes on the Feature Branch**
+   - Make all code modifications on the feature branch
+   - Commit changes with descriptive messages
+   - Test thoroughly in both interactive and RMM modes
+
+3. **Push Feature Branch**
+   ```bash
+   git push -u origin feature/descriptive-name
+   ```
+
+4. **Create Pull Request**
+   - Create PR from feature branch to `main`
+   - Include description of changes, testing performed, and RMM compatibility
+   - Wait for review and approval before merging
+
+5. **Merge to Main**
+   - Only merge after testing and approval
+   - Delete feature branch after successful merge
+
+### If Changes Are Accidentally Committed to Main
+
+If changes are committed and pushed to `main` before creating a feature branch:
+
+```bash
+# Revert the commit from main
+git revert <commit-hash> --no-edit
+git push
+
+# Create feature branch and restore the changes
+git checkout -b feature/descriptive-name
+git cherry-pick <commit-hash>
+git push -u origin feature/descriptive-name
+```
+
+### Exception: Documentation Updates
+
+Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `main` if they do not affect script functionality.
+
 ## Code Architecture
 
 ### Script Structure Standard
