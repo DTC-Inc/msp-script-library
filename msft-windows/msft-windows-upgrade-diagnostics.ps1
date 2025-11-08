@@ -3,6 +3,20 @@
 ## $RMM
 ## $anthropicApiKey
 
+### ————— MSP RMM VARIABLE INITIALIZATION GOES HERE —————
+# Example for NinjaRMM:
+# $RMM = 1 (automatic)
+# $anthropicApiKey = Ninja custom field or organization variable
+#
+# Example for ConnectWise Automate:
+# $RMM = 1
+# $anthropicApiKey = %anthropicapikey%
+#
+# Example for Datto RMM:
+# $RMM = 1
+# $anthropicApiKey = $env:anthropicApiKey
+### ————— END RMM VARIABLE INITIALIZATION —————
+
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "msft-windows-upgrade-diagnostics.log"
@@ -217,17 +231,24 @@ try {
     Write-Output "END OF ANALYSIS"
     Write-Output "==========================================`n"
 
-    # Store diagnosis in RMM custom field if available
-    if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
-        # Truncate for RMM field (max 10000 chars typically)
-        $truncatedDiagnosis = if ($AIOutput.Length -gt 9000) {
-            $AIOutput.Substring(0, 9000) + "`n`n... [Truncated - see full log]"
-        } else {
-            $AIOutput
-        }
-        Ninja-Property-Set -Name 'windowsUpgradeDiagnosis' -Value $truncatedDiagnosis
-        Write-Output "Diagnosis saved to NinjaRMM custom field 'windowsUpgradeDiagnosis'"
-    }
+    ### ————— TUNNEL OUTPUT VARIABLE TO YOUR RMM HERE —————
+    # The AI diagnostic output is stored in $AIOutput variable
+    # Use this section to send output to your RMM platform's custom fields
+    #
+    # Example for NinjaRMM:
+    # if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
+    #     $truncatedOutput = if ($AIOutput.Length -gt 9000) { $AIOutput.Substring(0, 9000) + "`n`n...[Truncated]" } else { $AIOutput }
+    #     Ninja-Property-Set -Name 'windowsUpgradeDiagnosis' -Value $truncatedOutput
+    # }
+    #
+    # Example for ConnectWise Automate:
+    # Set-ItemProperty -Path "HKLM:\SOFTWARE\LabTech\Service" -Name "WindowsUpgradeDiagnosis" -Value $AIOutput
+    #
+    # Example for Datto RMM:
+    # Write-Host "<-Start Result->"
+    # Write-Host "DIAGNOSIS: $AIOutput"
+    # Write-Host "<-End Result->"
+    ### ————— END RMM OUTPUT TUNNEL —————
 
 } catch {
     Write-Error "Failed to get AI analysis: $_"
