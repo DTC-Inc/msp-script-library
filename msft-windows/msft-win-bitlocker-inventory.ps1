@@ -377,6 +377,9 @@ $actionsSummary = @{
     Errors = 0
 }
 
+# Collect all recovery passwords for RMM storage
+$allRecoveryPasswords = @{}
+
 # Process each volume
 foreach ($volume in $volumes) {
     $mountPoint = $volume.MountPoint
@@ -420,6 +423,8 @@ foreach ($volume in $volumes) {
 
     if ($recoveryKeyStatus.Exists) {
         Write-Output "  Recovery Key: EXISTS ($($recoveryKeyStatus.Count) key(s) found)"
+        # Store existing recovery passwords for RMM
+        $allRecoveryPasswords[$mountPoint] = $recoveryKeyStatus.RecoveryPasswords
     } else {
         Write-Output "  Recovery Key: MISSING"
         Write-Output "  Action: Creating recovery password..."
@@ -431,6 +436,8 @@ foreach ($volume in $volumes) {
             $actionsSummary.RecoveryKeysCreated++
             # Refresh recovery key status after creation
             $recoveryKeyStatus = Get-RecoveryKeyStatus -MountPoint $mountPoint
+            # Store newly created recovery password for RMM
+            $allRecoveryPasswords[$mountPoint] = $recoveryKeyStatus.RecoveryPasswords
         } else {
             Write-Warning "  ✗ Failed to create recovery key"
             $actionsSummary.Errors++
@@ -487,18 +494,77 @@ if ($actionsSummary.Errors -eq 0) {
 
 Write-Output "=========================================="
 
+### ————— FORMAT RECOVERY PASSWORDS FOR RMM —————
+
+# Format all recovery passwords into a string for RMM storage
+$recoveryPasswordsFormatted = ""
+
+if ($allRecoveryPasswords.Count -gt 0) {
+    Write-Output "`nFormatting recovery passwords for RMM storage..."
+
+    $passwordLines = @()
+    foreach ($mountPoint in ($allRecoveryPasswords.Keys | Sort-Object)) {
+        $passwords = $allRecoveryPasswords[$mountPoint]
+
+        if ($passwords -is [array]) {
+            # Multiple passwords for this volume
+            for ($i = 0; $i -lt $passwords.Count; $i++) {
+                if ($passwords.Count -gt 1) {
+                    $passwordLines += "$mountPoint (Key $($i + 1)): $($passwords[$i])"
+                } else {
+                    $passwordLines += "$mountPoint $($passwords[$i])"
+                }
+            }
+        } else {
+            # Single password
+            $passwordLines += "$mountPoint $passwords"
+        }
+    }
+
+    $recoveryPasswordsFormatted = $passwordLines -join " | "
+
+    Write-Output "  ✓ Formatted $($allRecoveryPasswords.Count) volume(s) with recovery passwords"
+    Write-Output "`nRecovery Passwords (for RMM storage):"
+    Write-Output $recoveryPasswordsFormatted
+}
+
 ### ————— TUNNEL OUTPUT VARIABLE TO YOUR RMM HERE —————
-# Example output variables for RMM custom fields:
-# - $actionsSummary.VolumesEncrypted
-# - $actionsSummary.RecoveryKeysCreated
-# - $actionsSummary.RecoveryKeysBackedUp
-# - $actionsSummary.Errors
+# Available output variables for RMM custom fields:
+#
+# STATISTICS (numeric values):
+# - $actionsSummary.VolumesScanned         : Total volumes checked
+# - $actionsSummary.VolumesEncrypted       : Number of BitLocker-enabled volumes
+# - $actionsSummary.RecoveryKeysCreated    : Number of new recovery keys created
+# - $actionsSummary.RecoveryKeysBackedUp   : Number of keys backed up to AD
+# - $actionsSummary.Errors                 : Number of errors encountered
+#
+# RECOVERY PASSWORDS (string - SENSITIVE DATA):
+# - $recoveryPasswordsFormatted            : All recovery passwords formatted as:
+#                                           "C: 123456-789012... | D: 234567-890123..."
+#
+# IMPORTANT: Recovery passwords are HIGHLY SENSITIVE. Store them in secure custom fields
+# that are encrypted and have restricted access in your RMM platform.
 #
 # Example for NinjaRMM:
 # if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
 #     Ninja-Property-Set -Name 'bitlockerVolumesEncrypted' -Value $actionsSummary.VolumesEncrypted
 #     Ninja-Property-Set -Name 'bitlockerKeysCreated' -Value $actionsSummary.RecoveryKeysCreated
+#     Ninja-Property-Set -Name 'bitlockerRecoveryPasswords' -Value $recoveryPasswordsFormatted -Secure
 # }
+#
+# Example for ConnectWise Automate:
+# Set-ItemProperty -Path "HKLM:\SOFTWARE\LabTech\Service" -Name "BitLockerVolumes" -Value $actionsSummary.VolumesEncrypted
+# Set-ItemProperty -Path "HKLM:\SOFTWARE\LabTech\Service" -Name "BitLockerPasswords" -Value $recoveryPasswordsFormatted
+#
+# Example for Datto RMM:
+# Write-Host "<-Start Result->"
+# Write-Host "ENCRYPTED_VOLUMES: $($actionsSummary.VolumesEncrypted)"
+# Write-Host "RECOVERY_PASSWORDS: $recoveryPasswordsFormatted"
+# Write-Host "<-End Result->"
+#
+# NOTE: Some RMM platforms have character limits on custom fields (often 10,000-50,000 chars).
+# Recovery passwords are 48 chars each plus formatting, so plan accordingly for systems
+# with many volumes. Consider using a secure note/documentation field for very large datasets.
 ### ————— END RMM OUTPUT TUNNEL —————
 
 Stop-Transcript
