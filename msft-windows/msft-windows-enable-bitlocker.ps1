@@ -39,7 +39,7 @@ if ($RMM -ne 1) {
 
 } else {
     # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    if ($null -ne $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 
     } else {
@@ -658,24 +658,37 @@ if ($encryptionStatus.IsProtected) {
     $osVolumeEncrypted = $true
 }
 
-# Create recovery protectors for OS volume
-Write-Output "  → Adding recovery protectors..."
+# Check for existing recovery protectors first
+$protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
 
-$passwordResult = New-RecoveryPassword -MountPoint $mountPoint
-if ($passwordResult.Success) {
-    $actionsSummary.RecoveryProtectorsCreated++
+# Create recovery protectors only if missing
+Write-Output "  → Checking recovery protectors..."
+
+if (-not $protectorStatus.Passwords.Exists) {
+    Write-Output "  → Creating recovery password..."
+    $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
+    if ($passwordResult.Success) {
+        $actionsSummary.RecoveryProtectorsCreated++
+    } else {
+        $actionsSummary.Errors++
+    }
 } else {
-    $actionsSummary.Errors++
+    Write-Output "  ℹ Recovery password already exists ($($protectorStatus.Passwords.Count) found)"
 }
 
-$keyResult = New-RecoveryKey -MountPoint $mountPoint
-if ($keyResult.Success) {
-    $actionsSummary.RecoveryProtectorsCreated++
+if (-not $protectorStatus.Keys.Exists) {
+    Write-Output "  → Creating recovery key..."
+    $keyResult = New-RecoveryKey -MountPoint $mountPoint
+    if ($keyResult.Success) {
+        $actionsSummary.RecoveryProtectorsCreated++
+    } else {
+        $actionsSummary.Errors++
+    }
 } else {
-    $actionsSummary.Errors++
+    Write-Output "  ℹ Recovery key already exists ($($protectorStatus.Keys.Count) found)"
 }
 
-# Get protector status to collect passwords and backup
+# Refresh protector status after creation
 $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
 
 # Store recovery passwords for RMM (passwords only, not keys)
@@ -749,24 +762,37 @@ if ($dataVolumes.Count -gt 0) {
             $actionsSummary.VolumesEncrypted++
         }
 
-        # Create recovery protectors for data volume
-        Write-Output "  → Adding recovery protectors..."
+        # Check for existing recovery protectors first
+        $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
 
-        $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
-        if ($passwordResult.Success) {
-            $actionsSummary.RecoveryProtectorsCreated++
+        # Create recovery protectors only if missing
+        Write-Output "  → Checking recovery protectors..."
+
+        if (-not $protectorStatus.Passwords.Exists) {
+            Write-Output "  → Creating recovery password..."
+            $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
+            if ($passwordResult.Success) {
+                $actionsSummary.RecoveryProtectorsCreated++
+            } else {
+                $actionsSummary.Errors++
+            }
         } else {
-            $actionsSummary.Errors++
+            Write-Output "  ℹ Recovery password already exists ($($protectorStatus.Passwords.Count) found)"
         }
 
-        $keyResult = New-RecoveryKey -MountPoint $mountPoint
-        if ($keyResult.Success) {
-            $actionsSummary.RecoveryProtectorsCreated++
+        if (-not $protectorStatus.Keys.Exists) {
+            Write-Output "  → Creating recovery key..."
+            $keyResult = New-RecoveryKey -MountPoint $mountPoint
+            if ($keyResult.Success) {
+                $actionsSummary.RecoveryProtectorsCreated++
+            } else {
+                $actionsSummary.Errors++
+            }
         } else {
-            $actionsSummary.Errors++
+            Write-Output "  ℹ Recovery key already exists ($($protectorStatus.Keys.Count) found)"
         }
 
-        # Get protector status to collect passwords and backup
+        # Refresh protector status after creation
         $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
 
         # Store recovery passwords for RMM (passwords only, not keys)
