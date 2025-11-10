@@ -91,9 +91,7 @@ Write-Host "RMM: $RMM"
 .NOTES
     Author: Nathaniel Smith / Claude Code
     Requires: Anthropic API key
-    Panther Log Locations:
-    - C:\Windows\Panther\setuperr.log
-    - C:\Windows\Panther\setupact.log
+    Panther Log Location:
     - C:\$Windows.~BT\Sources\Panther\setuperr.log
 #>
 
@@ -104,15 +102,12 @@ if ([string]::IsNullOrWhiteSpace($anthropicApiKey)) {
     exit 1
 }
 
-### ————— PANTHER LOG LOCATIONS —————
+### ————— PANTHER LOG LOCATION —————
 $pantherLocations = @(
-    "$env:SystemRoot\Panther\setuperr.log",
-    "$env:SystemRoot\Panther\setupact.log",
-    "$env:SystemDrive\`$Windows.~BT\Sources\Panther\setuperr.log",
-    "$env:SystemDrive\`$Windows.~BT\Sources\Panther\setupact.log"
+    "$env:SystemDrive\`$Windows.~BT\Sources\Panther\setuperr.log"
 )
 
-Write-Output "Searching for Windows Panther setup logs..."
+Write-Output "Searching for Windows upgrade setup error log..."
 
 ### ————— FIND AND READ PANTHER LOGS —————
 $logContent = ""
@@ -135,22 +130,24 @@ foreach ($logPath in $pantherLocations) {
 }
 
 if ($foundLogs.Count -eq 0) {
-    Write-Output "No Panther logs found. This may indicate:"
+    Write-Output "No Windows upgrade setup error log found at: $($pantherLocations[0])"
+    Write-Output "This may indicate:"
     Write-Output "  - No Windows upgrade has been attempted recently"
     Write-Output "  - Upgrade completed successfully without errors"
+    Write-Output "  - Upgrade has not yet started (log appears during upgrade process)"
     Write-Output "  - Logs have been cleaned up"
     Stop-Transcript
     exit 0
 }
 
 if ([string]::IsNullOrWhiteSpace($logContent)) {
-    Write-Output "Panther logs exist but are empty or unreadable."
+    Write-Output "Setup error log exists but is empty or unreadable."
     Stop-Transcript
     exit 0
 }
 
-Write-Output "`nFound $($foundLogs.Count) log file(s) with content."
-Write-Output "Total log size: $($logContent.Length) characters"
+Write-Output "`nSetup error log found with content."
+Write-Output "Log size: $($logContent.Length) characters"
 
 ### ————— PREPARE API REQUEST —————
 Write-Output "`nPreparing diagnostic request to Anthropic AI..."
