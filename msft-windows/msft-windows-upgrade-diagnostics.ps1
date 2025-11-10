@@ -76,23 +76,31 @@ Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS
-    Reads Windows Panther setup error logs and sends them to Anthropic AI for diagnostic analysis.
+    Reads Windows Panther setup error logs and XML compatibility data, sends to Anthropic AI for diagnostic analysis.
 
 .DESCRIPTION
-    This script detects Windows upgrade/installation errors by reading the Panther logs,
-    then sends them to Claude (Anthropic AI) for intelligent diagnostic reasoning.
+    This script detects Windows upgrade/installation errors by reading the Panther logs and XML compatibility
+    scan results, then sends them to Claude (Anthropic AI) for intelligent diagnostic reasoning.
+
+    Files analyzed:
+    - setuperr.log: Setup error messages and failure codes
+    - ScanResult.xml: Compatibility scan summary
+    - CompatData_*.xml: Detailed hardware/software compatibility assessment data
 
     The AI provides:
-    - Most likely root cause with high confidence
-    - Detailed reasoning and evidence
+    - Most likely root cause with high confidence based on logs and XML compatibility data
+    - Detailed reasoning and evidence including specific compatibility blockers
     - Actionable next steps to resolve the issue
     - Brief summary of other possible causes
 
 .NOTES
     Author: Nathaniel Smith / Claude Code
     Requires: Anthropic API key
-    Panther Log Location:
-    - C:\$Windows.~BT\Sources\Panther\setuperr.log
+    Diagnostic File Location:
+    - C:\$Windows.~BT\Sources\Panther\
+      - setuperr.log
+      - ScanResult.xml
+      - CompatData_*.xml
 #>
 
 ### ————— VALIDATE REQUIRED VARIABLES —————
@@ -102,52 +110,82 @@ if ([string]::IsNullOrWhiteSpace($anthropicApiKey)) {
     exit 1
 }
 
-### ————— PANTHER LOG LOCATION —————
-$pantherLocations = @(
-    "$env:SystemDrive\`$Windows.~BT\Sources\Panther\setuperr.log"
-)
+### ————— PANTHER LOG LOCATIONS —————
+$pantherDir = "$env:SystemDrive\`$Windows.~BT\Sources\Panther"
+$setuperrLog = "$pantherDir\setuperr.log"
 
-Write-Output "Searching for Windows upgrade setup error log..."
+Write-Output "Searching for Windows upgrade diagnostic files..."
 
-### ————— FIND AND READ PANTHER LOGS —————
+### ————— FIND AND READ PANTHER LOGS AND XML FILES —————
 $logContent = ""
 $foundLogs = @()
 
-foreach ($logPath in $pantherLocations) {
-    if (Test-Path $logPath) {
-        Write-Output "Found log: $logPath"
-        $foundLogs += $logPath
+# Read setuperr.log
+if (Test-Path $setuperrLog) {
+    Write-Output "Found log: $setuperrLog"
+    $foundLogs += $setuperrLog
+    try {
+        $content = Get-Content -Path $setuperrLog -Raw -ErrorAction Stop
+        if ($content) {
+            $logContent += "`n`n=== SETUP ERROR LOG: $setuperrLog ===`n`n"
+            $logContent += $content
+        }
+    } catch {
+        Write-Warning "Could not read ${setuperrLog}: $($_)"
+    }
+}
+
+# Read XML compatibility files (ScanResult.xml and CompatData_*.xml)
+if (Test-Path $pantherDir) {
+    $xmlFiles = @()
+
+    # Look for ScanResult.xml
+    $scanResultXml = Join-Path $pantherDir "ScanResult.xml"
+    if (Test-Path $scanResultXml) {
+        $xmlFiles += $scanResultXml
+    }
+
+    # Look for CompatData_*.xml files
+    $compatDataXmls = Get-ChildItem -Path $pantherDir -Filter "CompatData_*.xml" -ErrorAction SilentlyContinue
+    if ($compatDataXmls) {
+        $xmlFiles += $compatDataXmls.FullName
+    }
+
+    # Read XML files
+    foreach ($xmlPath in $xmlFiles) {
+        Write-Output "Found XML: $xmlPath"
+        $foundLogs += $xmlPath
         try {
-            $content = Get-Content -Path $logPath -Raw -ErrorAction Stop
+            $content = Get-Content -Path $xmlPath -Raw -ErrorAction Stop
             if ($content) {
-                $logContent += "`n`n=== LOG: $logPath ===`n`n"
+                $logContent += "`n`n=== COMPATIBILITY DATA: $xmlPath ===`n`n"
                 $logContent += $content
             }
         } catch {
-            Write-Warning "Could not read ${logPath}: $($_)"
+            Write-Warning "Could not read ${xmlPath}: $($_)"
         }
     }
 }
 
 if ($foundLogs.Count -eq 0) {
-    Write-Output "No Windows upgrade setup error log found at: $($pantherLocations[0])"
+    Write-Output "No Windows upgrade diagnostic files found in: $pantherDir"
     Write-Output "This may indicate:"
     Write-Output "  - No Windows upgrade has been attempted recently"
     Write-Output "  - Upgrade completed successfully without errors"
-    Write-Output "  - Upgrade has not yet started (log appears during upgrade process)"
-    Write-Output "  - Logs have been cleaned up"
+    Write-Output "  - Upgrade has not yet started (files appear during upgrade process)"
+    Write-Output "  - Files have been cleaned up"
     Stop-Transcript
     exit 0
 }
 
 if ([string]::IsNullOrWhiteSpace($logContent)) {
-    Write-Output "Setup error log exists but is empty or unreadable."
+    Write-Output "Diagnostic files exist but are empty or unreadable."
     Stop-Transcript
     exit 0
 }
 
-Write-Output "`nSetup error log found with content."
-Write-Output "Log size: $($logContent.Length) characters"
+Write-Output "`nFound $($foundLogs.Count) diagnostic file(s) with content."
+Write-Output "Total content size: $($logContent.Length) characters"
 
 ### ————— PREPARE API REQUEST —————
 Write-Output "`nPreparing diagnostic request to Anthropic AI..."
@@ -160,9 +198,13 @@ if ($logContent.Length -gt $maxLogSize) {
 }
 
 $prompt = @"
-You are a Windows upgrade diagnostics expert. I need you to analyze Windows Panther setup error logs and provide diagnostic reasoning.
+You are a Windows upgrade diagnostics expert. I need you to analyze Windows Panther setup error logs and XML compatibility data to provide diagnostic reasoning.
 
-ANALYZE THESE WINDOWS SETUP LOGS:
+ANALYZE THESE WINDOWS SETUP LOGS AND COMPATIBILITY DATA:
+
+The data includes:
+- Setup error logs (setuperr.log) showing upgrade errors and failures
+- XML compatibility scan results (ScanResult.xml, CompatData_*.xml) showing hardware/software compatibility assessments
 
 $logContent
 
@@ -172,14 +214,16 @@ Please provide:
 
 1. **PRIMARY DIAGNOSIS** (Most Likely Root Cause):
    - State your highest confidence diagnosis with a confidence level (e.g., "HIGH CONFIDENCE: 85%")
-   - Provide detailed reasoning based on specific error codes, patterns, and log evidence
+   - Provide detailed reasoning based on specific error codes, patterns, log evidence, and XML compatibility data
    - Explain WHY this is the most likely cause
-   - Quote specific error messages or codes that support this diagnosis
+   - Quote specific error messages, codes, or XML elements that support this diagnosis
+   - If XML data shows compatibility blocks, identify the specific hardware/software causing issues
 
 2. **RECOMMENDED ACTIONS** (Next Steps):
    - Provide 3-5 actionable steps to resolve the primary diagnosis
-   - Be specific with commands, registry paths, file locations, etc.
+   - Be specific with commands, registry paths, file locations, driver updates, etc.
    - Prioritize steps by likelihood of success
+   - Reference specific compatibility blockers found in XML data
 
 3. **ALTERNATIVE POSSIBILITIES** (Brief):
    - List 2-3 other possible causes with lower confidence levels
