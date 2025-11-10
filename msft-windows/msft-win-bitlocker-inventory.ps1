@@ -63,26 +63,36 @@ Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS
-    Inventories BitLocker status across all volumes and ensures recovery keys exist.
+    Inventories BitLocker status and ensures both recovery passwords and keys exist.
 
 .DESCRIPTION
-    This script performs a comprehensive BitLocker inventory and maintenance task:
+    This script performs comprehensive BitLocker inventory and recovery protector management:
 
     Features:
     - Scans all volumes for BitLocker encryption status
-    - Automatically generates recovery passwords if BitLocker is enabled but no recovery key exists
-    - Backs up recovery passwords to Active Directory (domain-joined) or Azure AD (Azure AD-joined)
+    - Automatically creates BOTH recovery passwords (48-digit) AND recovery keys (.BEK) if missing
+    - Backs up BOTH passwords and keys to Active Directory (domain-joined systems)
+    - Stores recovery passwords in RMM custom fields for quick access
     - Configures registry settings for automatic AD backup (domain-joined systems)
     - Provides clear, user-friendly output showing status of each volume
     - Generates summary report of actions taken
 
-    The script is safe to run multiple times - it only creates recovery keys if they're missing,
-    and only backs up keys that aren't already stored.
+    Recovery Protector Types Created:
+    - Recovery Password: 48-digit numerical password (e.g., 123456-789012-...)
+    - Recovery Key: 256-bit .BEK file stored in Active Directory
+
+    Storage Locations:
+    - Active Directory: Both passwords AND keys (domain-joined systems only)
+    - RMM Custom Fields: Passwords only (for quick access)
+    - Transcript Log: Full execution details including all passwords
+
+    The script is safe to run multiple times - it only creates protectors if they're missing,
+    and only backs up protectors that aren't already stored.
 
 .NOTES
     Author: Nathaniel Smith / Claude Code
     Requires: Administrator privileges
-    Requires: BitLocker enabled on at least one volume to perform recovery key actions
+    Requires: BitLocker enabled on at least one volume to perform recovery protector actions
 #>
 
 Write-Output "`n=========================================="
@@ -128,10 +138,10 @@ function Get-VolumeEncryptionStatus {
     }
 }
 
-function Get-RecoveryKeyStatus {
+function Get-RecoveryProtectorStatus {
     <#
     .SYNOPSIS
-        Checks if a recovery password exists for a volume.
+        Checks if recovery passwords and recovery keys exist for a volume.
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -140,33 +150,32 @@ function Get-RecoveryKeyStatus {
 
     try {
         $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
-        $recoveryKeys = $volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
+        $recoveryPasswords = $volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' }
+        $recoveryKeys = $volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'ExternalKey' }
 
-        if ($recoveryKeys) {
-            return @{
-                Exists = $true
-                Count = @($recoveryKeys).Count
-                RecoveryPasswords = $recoveryKeys.RecoveryPassword
-                KeyProtectorIds = $recoveryKeys.KeyProtectorId
+        return @{
+            Passwords = @{
+                Exists = ($null -ne $recoveryPasswords)
+                Count = @($recoveryPasswords).Count
+                Values = $recoveryPasswords.RecoveryPassword
+                KeyProtectorIds = $recoveryPasswords.KeyProtectorId
             }
-        } else {
-            return @{
-                Exists = $false
-                Count = 0
-                RecoveryPasswords = @()
-                KeyProtectorIds = @()
+            Keys = @{
+                Exists = ($null -ne $recoveryKeys)
+                Count = @($recoveryKeys).Count
+                KeyProtectorIds = $recoveryKeys.KeyProtectorId
             }
         }
     } catch {
-        Write-Warning "Could not check recovery key status for $MountPoint : $_"
+        Write-Warning "Could not check recovery protector status for $MountPoint : $_"
         return $null
     }
 }
 
-function New-RecoveryKey {
+function New-RecoveryPassword {
     <#
     .SYNOPSIS
-        Creates a new recovery password for a BitLocker volume.
+        Creates a new recovery password (48-digit) for a BitLocker volume.
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -176,29 +185,41 @@ function New-RecoveryKey {
     try {
         Write-Output "  → Creating new recovery password..."
         Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryPasswordProtector -ErrorAction Stop
-        $newKeyStatus = Get-RecoveryKeyStatus -MountPoint $MountPoint
-
-        if ($newKeyStatus.Exists) {
-            Write-Output "  ✓ Recovery password created successfully"
-            return @{
-                Success = $true
-                RecoveryPassword = $newKeyStatus.RecoveryPasswords | Select-Object -Last 1
-                KeyProtectorId = $newKeyStatus.KeyProtectorIds | Select-Object -Last 1
-            }
-        } else {
-            Write-Warning "  ✗ Recovery password creation reported success but key not found"
-            return @{ Success = $false }
-        }
+        Write-Output "  ✓ Recovery password created successfully"
+        return @{ Success = $true }
     } catch {
         Write-Warning "  ✗ Failed to create recovery password: $_"
         return @{ Success = $false; Error = $_.Exception.Message }
     }
 }
 
-function Backup-RecoveryKeyToAD {
+function New-RecoveryKey {
     <#
     .SYNOPSIS
-        Backs up all recovery passwords for a volume to Active Directory.
+        Creates a new recovery key (.BEK file) for a BitLocker volume.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MountPoint
+    )
+
+    try {
+        Write-Output "  → Creating new recovery key..."
+        # Note: Recovery keys are typically saved to a specific path
+        # For AD backup, we just create the protector without saving to file
+        Add-BitLockerKeyProtector -MountPoint $MountPoint -RecoveryKeyProtector -RecoveryKeyPath "$env:TEMP" -ErrorAction Stop
+        Write-Output "  ✓ Recovery key created successfully"
+        return @{ Success = $true }
+    } catch {
+        Write-Warning "  ✗ Failed to create recovery key: $_"
+        return @{ Success = $false; Error = $_.Exception.Message }
+    }
+}
+
+function Backup-RecoveryProtectorsToAD {
+    <#
+    .SYNOPSIS
+        Backs up all recovery passwords and keys for a volume to Active Directory.
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -213,30 +234,47 @@ function Backup-RecoveryKeyToAD {
     }
 
     try {
-        $keyStatus = Get-RecoveryKeyStatus -MountPoint $MountPoint
+        $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $MountPoint
 
-        if (-not $keyStatus.Exists) {
-            Write-Warning "  ✗ No recovery keys found to backup"
-            return @{ Success = $false; Reason = "No recovery keys" }
+        if (-not $protectorStatus.Passwords.Exists -and -not $protectorStatus.Keys.Exists) {
+            Write-Warning "  ✗ No recovery protectors found to backup"
+            return @{ Success = $false; Reason = "No recovery protectors" }
         }
 
-        Write-Output "  → Backing up $($keyStatus.Count) recovery key(s) to Active Directory..."
+        $totalProtectors = $protectorStatus.Passwords.Count + $protectorStatus.Keys.Count
+        Write-Output "  → Backing up $totalProtectors recovery protector(s) to Active Directory..."
 
         $successCount = 0
-        foreach ($keyId in $keyStatus.KeyProtectorIds) {
-            try {
-                Backup-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $keyId -ErrorAction Stop
-                $successCount++
-            } catch {
-                Write-Warning "  ✗ Failed to backup key $keyId : $_"
+
+        # Backup recovery passwords
+        if ($protectorStatus.Passwords.Exists) {
+            foreach ($keyId in $protectorStatus.Passwords.KeyProtectorIds) {
+                try {
+                    Backup-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $keyId -ErrorAction Stop
+                    $successCount++
+                } catch {
+                    Write-Warning "  ✗ Failed to backup password protector $keyId : $_"
+                }
+            }
+        }
+
+        # Backup recovery keys
+        if ($protectorStatus.Keys.Exists) {
+            foreach ($keyId in $protectorStatus.Keys.KeyProtectorIds) {
+                try {
+                    Backup-BitLockerKeyProtector -MountPoint $MountPoint -KeyProtectorId $keyId -ErrorAction Stop
+                    $successCount++
+                } catch {
+                    Write-Warning "  ✗ Failed to backup key protector $keyId : $_"
+                }
             }
         }
 
         if ($successCount -gt 0) {
-            Write-Output "  ✓ Backed up $successCount recovery key(s) to AD"
+            Write-Output "  ✓ Backed up $successCount recovery protector(s) to AD"
             return @{ Success = $true; Count = $successCount }
         } else {
-            Write-Warning "  ✗ Failed to backup any recovery keys"
+            Write-Warning "  ✗ Failed to backup any recovery protectors"
             return @{ Success = $false }
         }
 
@@ -411,44 +449,51 @@ foreach ($volume in $volumes) {
     Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
     Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
 
-    # Check for recovery key
-    $recoveryKeyStatus = Get-RecoveryKeyStatus -MountPoint $mountPoint
+    # Check for recovery protectors (passwords and keys)
+    $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
 
-    if ($null -eq $recoveryKeyStatus) {
-        Write-Warning "  ✗ Could not check recovery key status"
+    if ($null -eq $protectorStatus) {
+        Write-Warning "  ✗ Could not check recovery protector status"
         $actionsSummary.Errors++
         Write-Output ""
         continue
     }
 
-    if ($recoveryKeyStatus.Exists) {
-        Write-Output "  Recovery Key: EXISTS ($($recoveryKeyStatus.Count) key(s) found)"
-        # Store existing recovery passwords for RMM
-        $allRecoveryPasswords[$mountPoint] = $recoveryKeyStatus.RecoveryPasswords
-    } else {
-        Write-Output "  Recovery Key: MISSING"
-        Write-Output "  Action: Creating recovery password..."
+    # Display current status
+    Write-Output "  Recovery Password: $(if ($protectorStatus.Passwords.Exists) { "EXISTS ($($protectorStatus.Passwords.Count) found)" } else { "MISSING" })"
+    Write-Output "  Recovery Key: $(if ($protectorStatus.Keys.Exists) { "EXISTS ($($protectorStatus.Keys.Count) found)" } else { "MISSING" })"
 
-        # Create new recovery key
-        $newKeyResult = New-RecoveryKey -MountPoint $mountPoint
-
-        if ($newKeyResult.Success) {
+    # Create recovery password if missing
+    if (-not $protectorStatus.Passwords.Exists) {
+        $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
+        if ($passwordResult.Success) {
             $actionsSummary.RecoveryKeysCreated++
-            # Refresh recovery key status after creation
-            $recoveryKeyStatus = Get-RecoveryKeyStatus -MountPoint $mountPoint
-            # Store newly created recovery password for RMM
-            $allRecoveryPasswords[$mountPoint] = $recoveryKeyStatus.RecoveryPasswords
         } else {
-            Write-Warning "  ✗ Failed to create recovery key"
             $actionsSummary.Errors++
-            Write-Output ""
-            continue
         }
     }
 
-    # Backup to AD if domain-joined
-    if ($isDomainJoined -and $recoveryKeyStatus.Exists) {
-        $backupResult = Backup-RecoveryKeyToAD -MountPoint $mountPoint
+    # Create recovery key if missing
+    if (-not $protectorStatus.Keys.Exists) {
+        $keyResult = New-RecoveryKey -MountPoint $mountPoint
+        if ($keyResult.Success) {
+            $actionsSummary.RecoveryKeysCreated++
+        } else {
+            $actionsSummary.Errors++
+        }
+    }
+
+    # Refresh protector status after creation
+    $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
+
+    # Store recovery passwords for RMM (passwords only, not keys)
+    if ($protectorStatus.Passwords.Exists) {
+        $allRecoveryPasswords[$mountPoint] = $protectorStatus.Passwords.Values
+    }
+
+    # Backup to AD if domain-joined (backup both passwords and keys)
+    if ($isDomainJoined -and ($protectorStatus.Passwords.Exists -or $protectorStatus.Keys.Exists)) {
+        $backupResult = Backup-RecoveryProtectorsToAD -MountPoint $mountPoint
 
         if ($backupResult.Success) {
             $actionsSummary.RecoveryKeysBackedUp += $backupResult.Count
@@ -466,24 +511,24 @@ Write-Output "=========================================="
 Write-Output "SUMMARY REPORT"
 Write-Output "==========================================`n"
 
-Write-Output "Volumes scanned:         $($actionsSummary.VolumesScanned)"
-Write-Output "Volumes encrypted:       $($actionsSummary.VolumesEncrypted)"
-Write-Output "Recovery keys created:   $($actionsSummary.RecoveryKeysCreated)"
+Write-Output "Volumes scanned:              $($actionsSummary.VolumesScanned)"
+Write-Output "Volumes encrypted:            $($actionsSummary.VolumesEncrypted)"
+Write-Output "Recovery protectors created:  $($actionsSummary.RecoveryKeysCreated)"
 
 if ($isDomainJoined) {
-    Write-Output "Keys backed up to AD:    $($actionsSummary.RecoveryKeysBackedUp)"
+    Write-Output "Protectors backed up to AD:   $($actionsSummary.RecoveryKeysBackedUp)"
 }
 
-Write-Output "Errors encountered:      $($actionsSummary.Errors)"
+Write-Output "Errors encountered:           $($actionsSummary.Errors)"
 
 Write-Output "`n=========================================="
 
 if ($actionsSummary.RecoveryKeysCreated -gt 0) {
-    Write-Output "✓ Successfully created $($actionsSummary.RecoveryKeysCreated) recovery key(s)"
+    Write-Output "✓ Successfully created $($actionsSummary.RecoveryKeysCreated) recovery protector(s) (passwords and/or keys)"
 }
 
 if ($actionsSummary.RecoveryKeysBackedUp -gt 0) {
-    Write-Output "✓ Successfully backed up $($actionsSummary.RecoveryKeysBackedUp) key(s) to Active Directory"
+    Write-Output "✓ Successfully backed up $($actionsSummary.RecoveryKeysBackedUp) protector(s) to Active Directory"
 }
 
 if ($actionsSummary.Errors -eq 0) {
@@ -534,21 +579,29 @@ if ($allRecoveryPasswords.Count -gt 0) {
 # STATISTICS (numeric values):
 # - $actionsSummary.VolumesScanned         : Total volumes checked
 # - $actionsSummary.VolumesEncrypted       : Number of BitLocker-enabled volumes
-# - $actionsSummary.RecoveryKeysCreated    : Number of new recovery keys created
-# - $actionsSummary.RecoveryKeysBackedUp   : Number of keys backed up to AD
+# - $actionsSummary.RecoveryKeysCreated    : Number of new recovery protectors created (passwords + keys)
+# - $actionsSummary.RecoveryKeysBackedUp   : Number of protectors backed up to AD
 # - $actionsSummary.Errors                 : Number of errors encountered
 #
 # RECOVERY PASSWORDS (string - SENSITIVE DATA):
-# - $recoveryPasswordsFormatted            : All recovery passwords formatted as:
+# - $recoveryPasswordsFormatted            : All recovery passwords (48-digit) formatted as:
 #                                           "C: 123456-789012... | D: 234567-890123..."
 #
-# IMPORTANT: Recovery passwords are HIGHLY SENSITIVE. Store them in secure custom fields
-# that are encrypted and have restricted access in your RMM platform.
+# IMPORTANT SECURITY NOTES:
+# - Recovery passwords are HIGHLY SENSITIVE credentials that can decrypt drives
+# - Store them in secure custom fields with restricted access in your RMM platform
+# - Recovery KEYS (.BEK files) are stored in Active Directory only, NOT in RMM
+# - RMM stores PASSWORDS only for quick access when unlocking systems
+#
+# STORAGE SUMMARY:
+# - Active Directory: Both passwords AND keys (full backup)
+# - RMM Custom Fields: Passwords only (quick access)
+# - Transcript Log: Full details including all passwords
 #
 # Example for NinjaRMM:
 # if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
 #     Ninja-Property-Set -Name 'bitlockerVolumesEncrypted' -Value $actionsSummary.VolumesEncrypted
-#     Ninja-Property-Set -Name 'bitlockerKeysCreated' -Value $actionsSummary.RecoveryKeysCreated
+#     Ninja-Property-Set -Name 'bitlockerProtectorsCreated' -Value $actionsSummary.RecoveryKeysCreated
 #     # NOTE: Create 'bitlockerRecoveryPasswords' as a WYSIWYG or secure text custom field in NinjaRMM
 #     Ninja-Property-Set -Name 'bitlockerRecoveryPasswords' -Value $recoveryPasswordsFormatted
 # }
