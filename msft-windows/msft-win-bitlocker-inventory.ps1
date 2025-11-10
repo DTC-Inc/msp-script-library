@@ -549,7 +549,8 @@ if ($allRecoveryPasswords.Count -gt 0) {
 # if (Get-Command 'Ninja-Property-Set' -ErrorAction SilentlyContinue) {
 #     Ninja-Property-Set -Name 'bitlockerVolumesEncrypted' -Value $actionsSummary.VolumesEncrypted
 #     Ninja-Property-Set -Name 'bitlockerKeysCreated' -Value $actionsSummary.RecoveryKeysCreated
-#     Ninja-Property-Set -Name 'bitlockerRecoveryPasswords' -Value $recoveryPasswordsFormatted -Secure
+#     # NOTE: Create 'bitlockerRecoveryPasswords' as a WYSIWYG or secure text custom field in NinjaRMM
+#     Ninja-Property-Set -Name 'bitlockerRecoveryPasswords' -Value $recoveryPasswordsFormatted
 # }
 #
 # Example for ConnectWise Automate:
