@@ -52,14 +52,28 @@ Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS
-    Quiet in-place upgrade Win10 → Win11 with staged NinjaRMM (or host) progress.
+    Fully automated in-place upgrade Win10 → Win11 with pre-flight checks and enhanced setup flags.
 
 .DESCRIPTION
+    Optimized for RMM execution under SYSTEM with minimal user interaction.
+
     Reports progress at 0 %, 25 %, 50 %, 75 %:
       0 % – script start
       25 % – download beginning
       50 % – download finished & ISO mounted
       75 % – setup.exe launched
+
+    Pre-flight checks:
+    - Validates 20GB minimum free disk space
+    - Checks for pending reboots
+    - Cleans temporary files
+
+    Enhanced setup.exe arguments for automation:
+    - /DynamicUpdate Disable (prevents mid-upgrade hangs)
+    - /Compat IgnoreWarning (bypasses compatibility warnings)
+    - /ShowOOBE None (skips post-upgrade setup screens)
+    - /quiet (minimizes UI interactions)
+
     Then exits, letting Windows Setup reboot and complete the upgrade.
 #>
 
@@ -136,6 +150,36 @@ if ([string]::IsNullOrWhiteSpace($isoUrl)) {
     exit 1
 }
 
+### ————— PRE-FLIGHT CHECKS —————
+Write-Output "Running pre-flight checks..."
+
+# Check free disk space (need 20GB minimum for upgrade)
+$systemDrive = $env:SystemDrive
+$disk = Get-PSDrive -Name $systemDrive.TrimEnd(':')
+$freeSpaceGB = [math]::Round($disk.Free / 1GB, 2)
+Write-Output "Free disk space on ${systemDrive}: ${freeSpaceGB}GB"
+if ($freeSpaceGB -lt 20) {
+    Write-Error "CRITICAL: Insufficient disk space. ${freeSpaceGB}GB free, but 20GB minimum required for upgrade."
+    Show-Progress -Percent 0 -Stage "InsufficientDiskSpace"
+    Stop-Transcript
+    exit 1
+}
+
+# Check for pending reboots
+$pendingReboot = Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending"
+if ($pendingReboot) {
+    Write-Warning "WARNING: Pending reboot detected. This may interfere with upgrade. Consider rebooting first."
+}
+
+# Clean temporary files to free up space
+Write-Output "Cleaning temporary files to free up disk space..."
+try {
+    Remove-Item "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Output "Temporary files cleaned successfully"
+} catch {
+    Write-Output "Warning: Could not clean all temporary files: $_"
+}
+
 ### ————— DOWNLOAD ISO (Using BITS for speed + compatibility) —————
 Show-Progress -Percent 25 -Stage "Downloading"
 Write-Output "Downloading ISO from $isoUrl..."
@@ -167,20 +211,55 @@ Show-Progress -Percent 50 -Stage "DownloadedAndMounted"
 ### ————— LAUNCH SETUP —————
 Show-Progress -Percent 75 -Stage "SetupStart"
 
-# Build argument list based on forceUpgrade flag
-$setupArgs = @("/auto Upgrade", "/eula accept")
+# Build comprehensive argument list for fully automated upgrade
+$setupArgs = @(
+    "/auto Upgrade",                # Automated upgrade mode
+    "/eula accept",                 # Accept EULA automatically
+    "/quiet",                       # Minimize UI interactions
+    "/DynamicUpdate Disable",       # Prevent downloading updates during setup (common hang point)
+    "/Compat IgnoreWarning",        # Bypass compatibility warnings
+    "/ShowOOBE None",               # Skip Out-of-Box Experience after upgrade
+    "/Telemetry Enable"             # Enable telemetry (sometimes required for upgrade)
+)
+
+# Add /product server flag if force upgrade is enabled
 if ($forceUpgrade -eq 1) {
     $setupArgs += "/product server"
-    Write-Output "Launching Windows 11 setup (quiet, no reboot) with /product server flag..."
+    Write-Output "Launching Windows 11 setup with /product server flag (fully automated)..."
 } else {
-    Write-Output "Launching Windows 11 setup (quiet, no reboot)..."
+    Write-Output "Launching Windows 11 setup (fully automated)..."
 }
 
-Start-Process `
-    -FilePath "$driveLetter\setup.exe" `
-    -ArgumentList $setupArgs
+Write-Output "Setup arguments: $($setupArgs -join ' ')"
 
-Write-Output "Setup launched; the machine will reboot and complete the upgrade."
+# Launch setup.exe with high priority and hidden window
+try {
+    $setupProcess = Start-Process `
+        -FilePath "$driveLetter\setup.exe" `
+        -ArgumentList $setupArgs `
+        -WindowStyle Hidden `
+        -PassThru `
+        -ErrorAction Stop
+
+    # Wait 10 seconds to confirm setup process started successfully
+    Start-Sleep -Seconds 10
+
+    if ($setupProcess.HasExited) {
+        Write-Error "CRITICAL: Setup.exe exited prematurely (Exit Code: $($setupProcess.ExitCode)). Check logs for details."
+        Show-Progress -Percent 0 -Stage "SetupFailed"
+        Stop-Transcript
+        exit 1
+    } else {
+        Write-Output "Setup process confirmed running (PID: $($setupProcess.Id))"
+        Write-Output "Setup launched successfully; the machine will reboot and complete the upgrade."
+    }
+} catch {
+    Write-Error "Failed to launch setup.exe: $_"
+    Show-Progress -Percent 0 -Stage "SetupLaunchFailed"
+    Stop-Transcript
+    exit 1
+}
+
 # script ends here; Setup handles reboot & ISO cleanup
 
 Stop-Transcript
