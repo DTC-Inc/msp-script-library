@@ -63,15 +63,16 @@ Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS
-    Enables BitLocker with TPM on all fixed drives and creates recovery protectors.
+    Enables BitLocker with TPM on OS volume and auto-unlock on data volumes.
 
 .DESCRIPTION
-    This script enables BitLocker encryption on all fixed data drives with the following features:
+    This script enables BitLocker encryption on all fixed drives with the following features:
 
     Features:
     - Validates TPM presence and readiness before attempting encryption
-    - Enables BitLocker using TPM for automatic unlock (no user interaction at boot)
-    - Automatically creates BOTH recovery passwords (48-digit) AND recovery keys (.BEK)
+    - Enables BitLocker using TPM on OS volume for automatic unlock (no user interaction at boot)
+    - Enables BitLocker with automatic unlock on data volumes (unlocked when OS boots)
+    - Automatically creates BOTH recovery passwords (48-digit) AND recovery keys (.BEK) for ALL volumes
     - Backs up BOTH passwords and keys to Active Directory (domain-joined systems)
     - Stores recovery passwords in RMM custom fields for quick access
     - Configures registry settings for automatic AD backup (domain-joined systems)
@@ -83,14 +84,19 @@ Write-Host "RMM: $RMM"
     - TPM must be ready (initialized and owned)
     - If no TPM is available, script exits without enabling BitLocker
 
+    Encryption Strategy:
+    - OS Volume: TPM protector (automatic unlock at boot)
+    - Data Volumes: Password protector + Automatic unlock (unlocked when OS boots)
+    - All Volumes: Recovery password + recovery key protectors
+
     Recovery Protector Types Created:
     - Recovery Password: 48-digit numerical password (e.g., 123456-789012-...)
     - Recovery Key: 256-bit .BEK file stored in Active Directory
 
     Storage Locations:
-    - Active Directory: Both passwords AND keys (domain-joined systems only)
-    - RMM Custom Fields: Passwords only (for quick access)
-    - Transcript Log: Full execution details including all passwords
+    - Active Directory: Both passwords AND keys for ALL volumes (domain-joined systems only)
+    - RMM Custom Fields: Passwords only for ALL volumes (for quick access)
+    - Transcript Log: Full execution details including all passwords for ALL volumes
 
     The script is safe to run multiple times - it will skip volumes that are already encrypted.
 
@@ -177,7 +183,7 @@ function Get-VolumeEncryptionStatus {
 function Enable-BitLockerWithTPM {
     <#
     .SYNOPSIS
-        Enables BitLocker on a volume using TPM as the key protector.
+        Enables BitLocker on OS volume using TPM as the key protector.
     #>
     param(
         [Parameter(Mandatory = $true)]
@@ -185,7 +191,7 @@ function Enable-BitLockerWithTPM {
     )
 
     try {
-        Write-Output "  → Enabling BitLocker with TPM protector..."
+        Write-Output "  → Enabling BitLocker with TPM protector (OS Volume)..."
 
         # Enable BitLocker with TPM
         Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -TpmProtector -SkipHardwareTest -ErrorAction Stop
@@ -194,6 +200,38 @@ function Enable-BitLockerWithTPM {
         return @{ Success = $true }
     } catch {
         Write-Warning "  ✗ Failed to enable BitLocker: $_"
+        return @{ Success = $false; Error = $_.Exception.Message }
+    }
+}
+
+function Enable-BitLockerWithAutoUnlock {
+    <#
+    .SYNOPSIS
+        Enables BitLocker on a data volume using password protector and enables automatic unlock.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$MountPoint
+    )
+
+    try {
+        Write-Output "  → Enabling BitLocker with password protector (Data Volume)..."
+
+        # Enable BitLocker with a password protector (will be hidden by auto-unlock)
+        # We use a random password that will be managed by auto-unlock
+        $password = ConvertTo-SecureString -String ([System.Guid]::NewGuid().ToString()) -AsPlainText -Force
+        Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -PasswordProtector -Password $password -SkipHardwareTest -ErrorAction Stop
+
+        Write-Output "  ✓ BitLocker enabled successfully"
+
+        # Enable automatic unlock (relies on OS volume being encrypted)
+        Write-Output "  → Enabling automatic unlock..."
+        Enable-BitLockerAutoUnlock -MountPoint $MountPoint -ErrorAction Stop
+        Write-Output "  ✓ Automatic unlock enabled"
+
+        return @{ Success = $true }
+    } catch {
+        Write-Warning "  ✗ Failed to enable BitLocker with auto-unlock: $_"
         return @{ Success = $false; Error = $_.Exception.Message }
     }
 }
@@ -482,7 +520,21 @@ if ($allVolumes.Count -eq 0) {
     exit 0
 }
 
-Write-Output "Found $($allVolumes.Count) fixed volume(s) to process`n"
+# Identify OS volume
+$osVolume = $allVolumes | Where-Object { $_.DriveLetter -eq $env:SystemDrive.Trim(':') }
+$dataVolumes = $allVolumes | Where-Object { $_.DriveLetter -ne $env:SystemDrive.Trim(':') }
+
+if ($null -eq $osVolume) {
+    Write-Error "Could not identify OS volume. Exiting."
+    Stop-Transcript
+    exit 1
+}
+
+Write-Output "Found OS Volume: $($osVolume.DriveLetter):"
+if ($dataVolumes.Count -gt 0) {
+    Write-Output "Found $($dataVolumes.Count) data volume(s): $(($dataVolumes | ForEach-Object { "$($_.DriveLetter):" }) -join ', ')"
+}
+Write-Output ""
 
 # Track actions taken
 $actionsSummary = @{
@@ -497,85 +549,177 @@ $actionsSummary = @{
 # Collect all recovery passwords for RMM storage
 $allRecoveryPasswords = @{}
 
-# Process each volume
-foreach ($vol in $allVolumes) {
-    $mountPoint = "$($vol.DriveLetter):"
-    $actionsSummary.VolumesScanned++
+# Variable to track if OS volume is encrypted (needed for auto-unlock)
+$osVolumeEncrypted = $false
 
-    Write-Output "—————————————————————————————————————————"
-    Write-Output "Volume: $mountPoint ($($vol.FileSystemLabel))"
-    Write-Output "—————————————————————————————————————————"
+### ————— PROCESS OS VOLUME FIRST —————
 
-    # Get encryption status
-    $encryptionStatus = Get-VolumeEncryptionStatus -MountPoint $mountPoint
+Write-Output "=========================================="
+Write-Output "STEP 1: PROCESS OS VOLUME"
+Write-Output "==========================================`n"
 
-    if ($null -eq $encryptionStatus) {
-        Write-Warning "  ✗ Could not determine encryption status, skipping"
-        $actionsSummary.Errors++
-        Write-Output ""
-        continue
-    }
+$mountPoint = "$($osVolume.DriveLetter):"
+$actionsSummary.VolumesScanned++
 
-    # Check if already encrypted
-    if ($encryptionStatus.IsProtected) {
-        Write-Output "  Status: BitLocker is ALREADY ENABLED"
-        Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
-        Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
-        Write-Output "  Action: Skipping (already encrypted)"
-        $actionsSummary.VolumesAlreadyEncrypted++
-        Write-Output ""
-        continue
-    }
+Write-Output "—————————————————————————————————————————"
+Write-Output "Volume: $mountPoint ($($osVolume.FileSystemLabel)) [OS VOLUME]"
+Write-Output "—————————————————————————————————————————"
 
-    # Enable BitLocker with TPM
+# Get encryption status
+$encryptionStatus = Get-VolumeEncryptionStatus -MountPoint $mountPoint
+
+if ($null -eq $encryptionStatus) {
+    Write-Error "Could not determine encryption status for OS volume. Cannot continue."
+    Stop-Transcript
+    exit 1
+}
+
+# Check if already encrypted
+if ($encryptionStatus.IsProtected) {
+    Write-Output "  Status: BitLocker is ALREADY ENABLED"
+    Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
+    Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+    $actionsSummary.VolumesAlreadyEncrypted++
+    $osVolumeEncrypted = $true
+} else {
+    # Enable BitLocker with TPM on OS volume
     Write-Output "  Status: BitLocker is NOT enabled"
     $enableResult = Enable-BitLockerWithTPM -MountPoint $mountPoint
 
     if (-not $enableResult.Success) {
-        Write-Warning "  ✗ Failed to enable BitLocker, skipping this volume"
-        $actionsSummary.Errors++
-        Write-Output ""
-        continue
+        Write-Error "Failed to enable BitLocker on OS volume. Cannot continue with data volumes."
+        Stop-Transcript
+        exit 1
     }
 
     $actionsSummary.VolumesEncrypted++
+    $osVolumeEncrypted = $true
+}
 
-    # Create recovery password
-    $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
-    if ($passwordResult.Success) {
-        $actionsSummary.RecoveryProtectorsCreated++
-    } else {
+# Create recovery protectors for OS volume
+Write-Output "  → Adding recovery protectors..."
+
+$passwordResult = New-RecoveryPassword -MountPoint $mountPoint
+if ($passwordResult.Success) {
+    $actionsSummary.RecoveryProtectorsCreated++
+} else {
+    $actionsSummary.Errors++
+}
+
+$keyResult = New-RecoveryKey -MountPoint $mountPoint
+if ($keyResult.Success) {
+    $actionsSummary.RecoveryProtectorsCreated++
+} else {
+    $actionsSummary.Errors++
+}
+
+# Get protector status to collect passwords and backup
+$protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
+
+# Store recovery passwords for RMM (passwords only, not keys)
+if ($protectorStatus.Passwords.Exists) {
+    $allRecoveryPasswords[$mountPoint] = $protectorStatus.Passwords.Values
+}
+
+# Backup to AD if domain-joined (backup both passwords and keys)
+if ($isDomainJoined -and ($protectorStatus.Passwords.Exists -or $protectorStatus.Keys.Exists)) {
+    $backupResult = Backup-RecoveryProtectorsToAD -MountPoint $mountPoint
+
+    if ($backupResult.Success) {
+        $actionsSummary.RecoveryProtectorsBackedUp += $backupResult.Count
+    } elseif (-not $backupResult.Skipped) {
         $actionsSummary.Errors++
     }
+}
 
-    # Create recovery key
-    $keyResult = New-RecoveryKey -MountPoint $mountPoint
-    if ($keyResult.Success) {
-        $actionsSummary.RecoveryProtectorsCreated++
-    } else {
-        $actionsSummary.Errors++
-    }
+Write-Output ""
 
-    # Get protector status to collect passwords and backup
-    $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
+### ————— PROCESS DATA VOLUMES —————
 
-    # Store recovery passwords for RMM (passwords only, not keys)
-    if ($protectorStatus.Passwords.Exists) {
-        $allRecoveryPasswords[$mountPoint] = $protectorStatus.Passwords.Values
-    }
+if ($dataVolumes.Count -gt 0) {
+    Write-Output "=========================================="
+    Write-Output "STEP 2: PROCESS DATA VOLUMES"
+    Write-Output "==========================================`n"
 
-    # Backup to AD if domain-joined (backup both passwords and keys)
-    if ($isDomainJoined -and ($protectorStatus.Passwords.Exists -or $protectorStatus.Keys.Exists)) {
-        $backupResult = Backup-RecoveryProtectorsToAD -MountPoint $mountPoint
+    foreach ($vol in $dataVolumes) {
+        $mountPoint = "$($vol.DriveLetter):"
+        $actionsSummary.VolumesScanned++
 
-        if ($backupResult.Success) {
-            $actionsSummary.RecoveryProtectorsBackedUp += $backupResult.Count
-        } elseif (-not $backupResult.Skipped) {
+        Write-Output "—————————————————————————————————————————"
+        Write-Output "Volume: $mountPoint ($($vol.FileSystemLabel)) [DATA VOLUME]"
+        Write-Output "—————————————————————————————————————————"
+
+        # Get encryption status
+        $encryptionStatus = Get-VolumeEncryptionStatus -MountPoint $mountPoint
+
+        if ($null -eq $encryptionStatus) {
+            Write-Warning "  ✗ Could not determine encryption status, skipping"
+            $actionsSummary.Errors++
+            Write-Output ""
+            continue
+        }
+
+        # Check if already encrypted
+        if ($encryptionStatus.IsProtected) {
+            Write-Output "  Status: BitLocker is ALREADY ENABLED"
+            Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
+            Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+            $actionsSummary.VolumesAlreadyEncrypted++
+        } else {
+            # Enable BitLocker with auto-unlock on data volume
+            Write-Output "  Status: BitLocker is NOT enabled"
+            $enableResult = Enable-BitLockerWithAutoUnlock -MountPoint $mountPoint
+
+            if (-not $enableResult.Success) {
+                Write-Warning "  ✗ Failed to enable BitLocker, skipping this volume"
+                $actionsSummary.Errors++
+                Write-Output ""
+                continue
+            }
+
+            $actionsSummary.VolumesEncrypted++
+        }
+
+        # Create recovery protectors for data volume
+        Write-Output "  → Adding recovery protectors..."
+
+        $passwordResult = New-RecoveryPassword -MountPoint $mountPoint
+        if ($passwordResult.Success) {
+            $actionsSummary.RecoveryProtectorsCreated++
+        } else {
             $actionsSummary.Errors++
         }
-    }
 
-    Write-Output ""
+        $keyResult = New-RecoveryKey -MountPoint $mountPoint
+        if ($keyResult.Success) {
+            $actionsSummary.RecoveryProtectorsCreated++
+        } else {
+            $actionsSummary.Errors++
+        }
+
+        # Get protector status to collect passwords and backup
+        $protectorStatus = Get-RecoveryProtectorStatus -MountPoint $mountPoint
+
+        # Store recovery passwords for RMM (passwords only, not keys)
+        if ($protectorStatus.Passwords.Exists) {
+            $allRecoveryPasswords[$mountPoint] = $protectorStatus.Passwords.Values
+        }
+
+        # Backup to AD if domain-joined (backup both passwords and keys)
+        if ($isDomainJoined -and ($protectorStatus.Passwords.Exists -or $protectorStatus.Keys.Exists)) {
+            $backupResult = Backup-RecoveryProtectorsToAD -MountPoint $mountPoint
+
+            if ($backupResult.Success) {
+                $actionsSummary.RecoveryProtectorsBackedUp += $backupResult.Count
+            } elseif (-not $backupResult.Skipped) {
+                $actionsSummary.Errors++
+            }
+        }
+
+        Write-Output ""
+    }
+} else {
+    Write-Output "No data volumes found. Skipping Step 2.`n"
 }
 
 ### ————— SUMMARY REPORT —————
