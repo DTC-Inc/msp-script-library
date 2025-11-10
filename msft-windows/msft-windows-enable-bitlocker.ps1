@@ -168,11 +168,18 @@ function Get-VolumeEncryptionStatus {
 
     try {
         $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+
+        # Check for existing protector types
+        $hasTpmProtector = ($volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Tpm' }) -ne $null
+        $hasPasswordProtector = ($volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Password' }) -ne $null
+
         return @{
             IsProtected = ($volume.ProtectionStatus -eq "On")
             EncryptionPercentage = $volume.EncryptionPercentage
             VolumeStatus = $volume.VolumeStatus
             KeyProtectors = $volume.KeyProtector
+            HasTpmProtector = $hasTpmProtector
+            HasPasswordProtector = $hasPasswordProtector
         }
     } catch {
         Write-Warning "Could not get BitLocker status for $MountPoint : $_"
@@ -191,13 +198,32 @@ function Enable-BitLockerWithTPM {
     )
 
     try {
+        # Check if TPM protector already exists
+        $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+        $hasTpmProtector = ($volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Tpm' }) -ne $null
+
+        if ($hasTpmProtector) {
+            Write-Output "  ℹ TPM protector already exists, skipping TPM protector creation"
+            Write-Output "  → Starting BitLocker encryption (if not already started)..."
+
+            # Try to resume or start protection
+            try {
+                Resume-BitLocker -MountPoint $MountPoint -ErrorAction SilentlyContinue | Out-Null
+            } catch {
+                # Resume might fail if already enabled, that's okay
+            }
+
+            Write-Output "  ✓ BitLocker encryption in progress with existing TPM protector"
+            return @{ Success = $true; AlreadyConfigured = $true }
+        }
+
         Write-Output "  → Enabling BitLocker with TPM protector (OS Volume)..."
 
         # Enable BitLocker with TPM
         Enable-BitLocker -MountPoint $MountPoint -EncryptionMethod XtsAes256 -TpmProtector -SkipHardwareTest -ErrorAction Stop
 
         Write-Output "  ✓ BitLocker enabled successfully with TPM"
-        return @{ Success = $true }
+        return @{ Success = $true; AlreadyConfigured = $false }
     } catch {
         Write-Warning "  ✗ Failed to enable BitLocker: $_"
         return @{ Success = $false; Error = $_.Exception.Message }
@@ -215,6 +241,34 @@ function Enable-BitLockerWithAutoUnlock {
     )
 
     try {
+        # Check if password protector already exists
+        $volume = Get-BitLockerVolume -MountPoint $MountPoint -ErrorAction Stop
+        $hasPasswordProtector = ($volume.KeyProtector | Where-Object { $_.KeyProtectorType -eq 'Password' }) -ne $null
+
+        if ($hasPasswordProtector) {
+            Write-Output "  ℹ Password protector already exists, skipping password protector creation"
+            Write-Output "  → Starting BitLocker encryption (if not already started)..."
+
+            # Try to resume protection
+            try {
+                Resume-BitLocker -MountPoint $MountPoint -ErrorAction SilentlyContinue | Out-Null
+            } catch {
+                # Resume might fail if already enabled, that's okay
+            }
+
+            # Try to enable auto-unlock if not already enabled
+            Write-Output "  → Enabling automatic unlock..."
+            try {
+                Enable-BitLockerAutoUnlock -MountPoint $MountPoint -ErrorAction Stop
+                Write-Output "  ✓ Automatic unlock enabled"
+            } catch {
+                Write-Output "  ℹ Automatic unlock already enabled or not applicable"
+            }
+
+            Write-Output "  ✓ BitLocker encryption in progress with existing password protector"
+            return @{ Success = $true; AlreadyConfigured = $true }
+        }
+
         Write-Output "  → Enabling BitLocker with password protector (Data Volume)..."
 
         # Enable BitLocker with a password protector (will be hidden by auto-unlock)
@@ -229,7 +283,7 @@ function Enable-BitLockerWithAutoUnlock {
         Enable-BitLockerAutoUnlock -MountPoint $MountPoint -ErrorAction Stop
         Write-Output "  ✓ Automatic unlock enabled"
 
-        return @{ Success = $true }
+        return @{ Success = $true; AlreadyConfigured = $false }
     } catch {
         Write-Warning "  ✗ Failed to enable BitLocker with auto-unlock: $_"
         return @{ Success = $false; Error = $_.Exception.Message }
@@ -574,11 +628,19 @@ if ($null -eq $encryptionStatus) {
     exit 1
 }
 
-# Check if already encrypted
+# Check if already encrypted or has TPM protector
 if ($encryptionStatus.IsProtected) {
     Write-Output "  Status: BitLocker is ALREADY ENABLED"
     Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
     Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+    $actionsSummary.VolumesAlreadyEncrypted++
+    $osVolumeEncrypted = $true
+} elseif ($encryptionStatus.HasTpmProtector) {
+    # Has TPM protector but not fully enabled yet (encryption in progress)
+    Write-Output "  Status: BitLocker encryption IN PROGRESS"
+    Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
+    Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+    Write-Output "  ℹ TPM protector detected - continuing with existing configuration"
     $actionsSummary.VolumesAlreadyEncrypted++
     $osVolumeEncrypted = $true
 } else {
@@ -659,11 +721,18 @@ if ($dataVolumes.Count -gt 0) {
             continue
         }
 
-        # Check if already encrypted
+        # Check if already encrypted or has password protector
         if ($encryptionStatus.IsProtected) {
             Write-Output "  Status: BitLocker is ALREADY ENABLED"
             Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
             Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+            $actionsSummary.VolumesAlreadyEncrypted++
+        } elseif ($encryptionStatus.HasPasswordProtector) {
+            # Has password protector but not fully enabled yet (encryption in progress)
+            Write-Output "  Status: BitLocker encryption IN PROGRESS"
+            Write-Output "  Encryption: $($encryptionStatus.EncryptionPercentage)%"
+            Write-Output "  Volume Status: $($encryptionStatus.VolumeStatus)"
+            Write-Output "  ℹ Password protector detected - continuing with existing configuration"
             $actionsSummary.VolumesAlreadyEncrypted++
         } else {
             # Enable BitLocker with auto-unlock on data volume
