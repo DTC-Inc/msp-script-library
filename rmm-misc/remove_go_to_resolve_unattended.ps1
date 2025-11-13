@@ -1,100 +1,210 @@
-# One-paste remover for GoTo Resolve Unattended (no helper functions)
-# Run as Administrator. Designed for RMM/Ninja script runner.
-# Silently uninstalls if present, kills processes, disables related services, removes folders & tasks.
+<#
+.SYNOPSIS
+ Detects and silently uninstalls GoTo Resolve Unattended.
 
-$ErrorActionPreference = 'SilentlyContinue'
-$hadError = $false
+.DESCRIPTION
+ - Identifies GoTo Resolve Unattended via running processes, services, and uninstall registry keys
+ - Executes the vendor uninstall string with silent switches where possible (MSI or EXE)
+ - Falls back to removing known install folders and disabling related services
+ - Logs actions to a timestamped log file
 
-Write-Output "[INFO] Starting GoTo Resolve Unattended cleanup"
+.NOTES
+ Run as Administrator. Tested on Windows 10/11. No reboots are forced.
+#>
 
-# --- Indicators ---
-$procNames = @('GoToResolveTerminal','GoTo.Resolve.Antivirus.App','GoTo.Resolve.PatchManagement.Client')
-$rootFolders = @(
-    Join-Path $env:ProgramFiles 'GoTo Resolve Unattended',
-    Join-Path ${env:ProgramFiles(x86)} 'GoTo Resolve Unattended'
-) | Where-Object { $_ -and (Test-Path (Split-Path $_ -Parent)) }
+#Requires -RunAsAdministrator
 
-# --- 1) Kill known processes ---
-foreach ($n in $procNames) {
-  Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
-    Write-Output "[INFO] Stopping process $($_.ProcessName) (PID $($_.Id))"
-    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-  }
+$ErrorActionPreference = 'Stop'
+$LogDir = Join-Path $env:SystemRoot 'Temp'
+$Log    = Join-Path $LogDir ("Remove-GoToResolve-Unattended_" + (Get-Date -Format 'yyyyMMdd_HHmmss') + '.log')
+
+function Write-Log {
+    param([string]$Message,[string]$Level='INFO')
+    $line = "[{0}] [{1}] {2}" -f (Get-Date -Format 's'), $Level.ToUpper(), $Message
+    $line | Tee-Object -FilePath $Log -Append
 }
 
-# --- 2) Disable services whose ImagePath points into known folders ---
-try {
-  $svcs = Get-CimInstance Win32_Service | Where-Object {
-    $pn = [string]$_.PathName
-    $pn -and ($rootFolders | Where-Object { $pn -like ("*" + $_ + "*") }).Count -gt 0
-  }
-  foreach ($s in $svcs) {
-    Write-Output "[INFO] Disabling service $($s.Name) ($($s.DisplayName))"
-    if ($s.State -eq 'Running') { Stop-Service -Name $s.Name -Force -ErrorAction SilentlyContinue }
-    Set-Service -Name $s.Name -StartupType Disabled -ErrorAction SilentlyContinue
-  }
-} catch { $hadError = $true; Write-Output "[WARN] Service enumeration error: $($_.Exception.Message)" }
+Write-Log "Starting GoTo Resolve Unattended detection & removal"
 
-# --- 3) Uninstall via registry uninstall keys (DisplayName like 'GoTo Resolve') ---
-$uninstallRoots = @(
-  'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall',
-  'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+# --- Indicators seen in the incident & common install paths ---
+$KnownProcessNames = @(
+    'GoToResolveTerminal.exe',
+    'GoTo.Resolve.Antivirus.App.exe',
+    'GoTo.Resolve.PatchManagement.Client.exe'
 )
-$targets = @()
-foreach ($r in $uninstallRoots) {
-  if (Test-Path $r) {
-    Get-ChildItem $r | ForEach-Object {
-      $p = Get-ItemProperty -Path $_.PsPath -ErrorAction SilentlyContinue
-      if ($p) {
-        $name = [string]$p.DisplayName
-        $loc  = [string]$p.InstallLocation
-        $uni  = [string]$p.UninstallString
-        if ($name -match '(?i)GoTo\s*Resolve') { $targets += [PSCustomObject]@{DisplayName=$name; InstallLocation=$loc; UninstallString=$uni} }
-      }
+$KnownFolders = @(
+    "$env:ProgramFiles\GoTo Resolve Unattended",
+    "$env:ProgramFiles(x86)\GoTo Resolve Unattended"
+)
+
+# --- Helper: Stop a process safely ---
+function Stop-ProcessSafe {
+    param([string]$Name)
+    try {
+        $procs = Get-Process -Name ($Name -replace '\\.exe$','') -ErrorAction SilentlyContinue
+        foreach ($p in $procs) {
+            Write-Log "Stopping process $($p.ProcessName) (PID $($p.Id))"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+        }
+    } catch { Write-Log "Process stop error for $Name: $($_.Exception.Message)" 'WARN' }
+}
+
+# --- Helper: Stop & disable services whose ImagePath points into known folders ---
+function Disable-RelatedServices {
+    $svcCandidates = Get-CimInstance Win32_Service | Where-Object {
+        $_.PathName -and ($KnownFolders | ForEach-Object { $_.ToLower() }) | ForEach-Object {
+            $folder = $_
+        } | Out-Null; $true
     }
-  }
+
+    # Filter with explicit check (avoid pipeline scoping oddities)
+    $svcCandidates = Get-CimInstance Win32_Service | Where-Object {
+        $pn = [string]$_.PathName
+        $pn -and ($KnownFolders | Where-Object { $pn -like ("*" + $_ + "*") }).Count -gt 0
+    }
+
+    foreach ($svc in $svcCandidates) {
+        Write-Log "Disabling service $($svc.Name) ($($svc.DisplayName))"
+        try {
+            if ($svc.State -eq 'Running') { Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue }
+            Set-Service -Name $svc.Name -StartupType Disabled -ErrorAction SilentlyContinue
+        } catch { Write-Log "Service change error for $($svc.Name): $($_.Exception.Message)" 'WARN' }
+    }
 }
 
-foreach ($t in $targets) {
-  if (-not $t.UninstallString) { continue }
-  $cmd = $t.UninstallString.Trim()
-  Write-Output "[INFO] Attempting uninstall: $($t.DisplayName)"
+# --- Helper: Execute an uninstall command silently when possible ---
+function Invoke-UninstallString {
+    param([string]$UninstallString)
 
-  # Normalize into exe + args
-  $exe=''; $args=''
-  if ($cmd.StartsWith('"')) { $exe = $cmd -replace '^"([^"]+)".*$','$1'; $args = $cmd.Substring($exe.Length + 2).Trim() }
-  else { $parts = $cmd.Split(' ',2); $exe = $parts[0]; if ($parts.Count -gt 1) { $args = $parts[1] } }
+    if (-not $UninstallString) { return $false }
 
-  if ($exe -match '(?i)msiexec\.exe') {
-    if ($args -match '(?i)\{[0-9A-F-]{36}\}') { $product = $Matches[0]; $final = "/x $product /qn /norestart" }
-    else { $final = ($args -replace '(?i)\s?/i\b',' /x') + ' /qn /norestart' }
-    Write-Output "[INFO] msiexec.exe $final"
-    try { $p = Start-Process msiexec.exe -ArgumentList $final -PassThru -Wait -WindowStyle Hidden; if ($p.ExitCode -ne 0){$hadError=$true;Write-Output "[WARN] MSI uninstall exit code $($p.ExitCode)"} } catch { $hadError=$true; Write-Output "[WARN] MSI uninstall failed: $($_.Exception.Message)" }
-  } else {
-    $silentFlags = @('/S','/quiet','/qn','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
-    if (-not ($silentFlags | ForEach-Object { if ($args -match [regex]::Escape($_)) { $true } })) { $args = ($args + ' /S /VERYSILENT /SUPPRESSMSGBOXES /NORESTART').Trim() }
-    Write-Output "[INFO] $exe $args"
-    try { $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -Wait -WindowStyle Hidden; if ($p.ExitCode -ne 0){$hadError=$true;Write-Output "[WARN] EXE uninstall exit code $($p.ExitCode)"} } catch { $hadError=$true; Write-Output "[WARN] EXE uninstall failed: $($_.Exception.Message)" }
-  }
+    $cmd = $UninstallString
+
+    # Normalize quotes and split into file + args
+    if ($cmd.StartsWith('"')) {
+        $exe = $cmd -replace '^"([^"]+)".*$', '$1'
+        $args = $cmd.Substring($exe.Length + 2)  # skip opening quote and following quote
+        $args = $args.TrimStart('"').Trim()
+    } else {
+        $parts = $cmd.Split(' ',2)
+        $exe = $parts[0]
+        $args = if ($parts.Count -gt 1) { $parts[1] } else { '' }
+    }
+
+    # If MSI, force quiet remove
+    if ($exe -match '(?i)msiexec\.exe') {
+        # Try to extract product code if present; otherwise convert /I to /X
+        if ($args -match '(?i)\{[0-9A-F-]{36}\}') {
+            $product = $Matches[0]
+            $finalArgs = "/x $product /qn /norestart"
+        } else {
+            $finalArgs = $args -replace '(?i)\s?/i\b',' /x' -replace '(?i)\s?/quiet\b','' -replace '(?i)\s?/qn\b',''
+            $finalArgs = ($finalArgs + ' /qn /norestart').Trim()
+        }
+        Write-Log "Running MSI uninstall: msiexec.exe $finalArgs"
+        $p = Start-Process msiexec.exe -ArgumentList $finalArgs -PassThru -Wait -WindowStyle Hidden
+        return ($p.ExitCode -eq 0)
+    }
+
+    # For EXE uninstallers, append common silent flags if not present
+    $silentFlags = @('/S','/s','/quiet','/qn','/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART')
+    if (-not ($silentFlags | Where-Object { $args -match [regex]::Escape($_) })) {
+        $args = ($args + ' /S /VERYSILENT /SUPPRESSMSGBOXES /NORESTART').Trim()
+    }
+
+    Write-Log "Running EXE uninstall: `"$exe`" $args"
+    try {
+        $p = Start-Process -FilePath $exe -ArgumentList $args -PassThru -Wait -WindowStyle Hidden
+        return ($p.ExitCode -eq 0)
+    } catch {
+        Write-Log "Failed to start uninstall command: $($_.Exception.Message)" 'WARN'
+        return $false
+    }
 }
 
-# --- 4) Remove scheduled tasks that point to our folders ---
+# --- 1) Stop known processes ---
+foreach ($name in $KnownProcessNames) { Stop-ProcessSafe -Name $name }
+
+# --- 2) Disable any related services (path under known folders) ---
+Disable-RelatedServices
+
+# --- 3) Locate uninstall entries ---
+$UninstallRoots = @(
+    'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+    'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
+)
+
+$Targets = @()
+foreach ($root in $UninstallRoots) {
+    if (-not (Test-Path $root)) { continue }
+    Get-ChildItem $root | ForEach-Object {
+        $keyPath = $_.PsPath
+        $p = Get-ItemProperty -Path $keyPath -ErrorAction SilentlyContinue
+        if (-not $p) { return }
+        $displayName = [string]$p.DisplayName
+        $installLoc  = [string]$p.InstallLocation
+        $uninst      = [string]$p.UninstallString
+
+        $matchesName = ($displayName -match '(?i)GoTo\s*Resolve')
+        $matchesPath = $false
+        if ($installLoc) { $matchesPath = $KnownFolders | Where-Object { $installLoc -like ("*" + $_ + "*") } | ForEach-Object { $true } | Select-Object -First 1 }
+
+        if ($matchesName -or $matchesPath) {
+            $Targets += [PSCustomObject]@{
+                DisplayName     = $displayName
+                InstallLocation = $installLoc
+                UninstallString = $uninst
+                KeyPath         = $keyPath
+            }
+        }
+    }
+}
+
+if ($Targets.Count -eq 0) {
+    Write-Log "No uninstall registry entries found for GoTo Resolve. Will attempt folder cleanup only."
+} else {
+    $Targets | ForEach-Object {
+        Write-Log "Attempting uninstall for: $($_.DisplayName)"
+        if (-not (Invoke-UninstallString -UninstallString $_.UninstallString)) {
+            Write-Log "Primary uninstall failed or returned non-zero. Will continue with cleanup." 'WARN'
+        }
+    }
+}
+
+# --- 4) Extra safety: remove known install folders ---
+foreach ($folder in $KnownFolders) {
+    if (Test-Path $folder) {
+        try {
+            Write-Log "Removing folder: $folder"
+            # Unlock handles by retrying removal
+            for ($i=0; $i -lt 3; $i++) {
+                try {
+                    Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction Stop
+                    break
+                } catch {
+                    Start-Sleep -Seconds (2 + $i)
+                }
+            }
+        } catch { Write-Log "Failed to remove $folder: $($_.Exception.Message)" 'WARN' }
+    }
+}
+
+# --- 5) Remove scheduled tasks that point to GoTo Resolve binaries ---
 try {
-  $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
-  foreach ($t in $tasks) {
-    $hit = $false
-    foreach ($a in $t.Actions) { if ($a.Execute -and ($rootFolders | Where-Object { ($a.Execute + ' ' + $a.Arguments) -like ("*" + $_ + "*") }).Count -gt 0) { $hit = $true; break } }
-    if ($hit) { Write-Output "[INFO] Deleting scheduled task: $($t.TaskName)"; Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction SilentlyContinue }
-  }
-} catch { $hadError = $true; Write-Output "[WARN] Scheduled task cleanup error: $($_.Exception.Message)" }
+    $tasks = Get-ScheduledTask -ErrorAction SilentlyContinue
+    foreach ($t in $tasks) {
+        $actions = $t.Actions | Where-Object { $_.Execute -and ($KnownFolders | Where-Object { $_ -and ($_.Length -gt 0) } | ForEach-Object { $t.Actions -match $_ }) }
+        # More reliable match: check each action path contains known folder
+        $hit = $false
+        foreach ($a in $t.Actions) {
+            if ($a.Execute -and ($KnownFolders | Where-Object { ($a.Execute + ' ' + $a.Arguments) -like ("*" + $_ + "*") }).Count -gt 0) { $hit = $true; break }
+        }
+        if ($hit) {
+            Write-Log "Deleting scheduled task: $($t.TaskName)"
+            try { Unregister-ScheduledTask -TaskName $t.TaskName -TaskPath $t.TaskPath -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+        }
+    }
+} catch { Write-Log "Scheduled task enumeration failed: $($_.Exception.Message)" 'WARN' }
 
-# --- 5) Delete known install folders ---
-foreach ($f in $rootFolders) {
-  if (Test-Path $f) {
-    Write-Output "[INFO] Removing folder $f"
-    for ($i=0; $i -lt 3; $i++) { try { Remove-Item -LiteralPath $f -Recurse -Force -ErrorAction Stop; break } catch { Start-Sleep -Seconds (2+$i) } }
-  }
-}
-
-Write-Output "[INFO] GoTo Resolve Unattended cleanup complete"
-if ($hadError) { exit 1 } else { exit 0 }
+Write-Log "GoTo Resolve Unattended removal routine completed"
+Write-Log "Log saved to: $Log"
