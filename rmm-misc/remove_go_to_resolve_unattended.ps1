@@ -57,7 +57,7 @@ function Stop-ProcessSafe {
             Write-Log "Stopping process $($p.ProcessName) (PID $($p.Id))"
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
         }
-    } catch { Write-Log "Process stop error for $Name: $($_.Exception.Message)" 'WARN' }
+    } catch { Write-Log "Process stop error for ${Name}: $($_.Exception.Message)" 'WARN' }
 }
 
 # --- Helper: Stop & disable services whose ImagePath points into known folders or match known service names ---
@@ -97,7 +97,7 @@ function Disable-RelatedServices {
                 Write-Log "Service $svcName deleted from Service Control Manager"
             }
         } catch {
-            Write-Log "Service change error for $svcName: $($_.Exception.Message)" 'WARN'
+            Write-Log "Service change error for ${svcName}: $($_.Exception.Message)" 'WARN'
         }
     }
 }
@@ -244,7 +244,7 @@ foreach ($folder in $KnownFolders) {
                 }
             }
         } catch {
-            Write-Log "Failed to remove $folder: $($_.Exception.Message)" 'WARN'
+            Write-Log "Failed to remove ${folder}: $($_.Exception.Message)" 'WARN'
         }
     }
 }
