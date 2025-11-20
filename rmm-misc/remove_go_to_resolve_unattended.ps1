@@ -6,6 +6,7 @@
  - Identifies Resolve Unattended via running processes, services, and uninstall registry keys
  - Executes the vendor uninstall string with silent switches where possible (MSI or EXE)
  - Falls back to removing known install folders and disabling related services
+ - Deletes uninstall registry keys after successful removal
  - Logs actions to a timestamped log file
 
 .NOTES
@@ -269,6 +270,58 @@ try {
     }
 } catch {
     Write-Log "Scheduled task enumeration failed: $($_.Exception.Message)" 'WARN'
+}
+
+# --- 6) Verify removal and delete uninstall registry keys if everything is cleaned up ---
+Write-Log "Verifying complete removal before deleting registry keys..."
+
+$removalComplete = $true
+
+# Check if any processes are still running
+foreach ($name in $KnownProcessNames) {
+    $proc = Get-Process -Name ($name -replace '\.exe$','') -ErrorAction SilentlyContinue
+    if ($proc) {
+        Write-Log "Process still running: $name" 'WARN'
+        $removalComplete = $false
+    }
+}
+
+# Check if any services still exist
+foreach ($svcName in $KnownServiceNames) {
+    $svc = Get-Service -Name $svcName -ErrorAction SilentlyContinue
+    if ($svc) {
+        Write-Log "Service still exists: $svcName" 'WARN'
+        $removalComplete = $false
+    }
+}
+
+# Check if any folders still exist
+foreach ($folder in $KnownFolders) {
+    if (Test-Path $folder) {
+        Write-Log "Folder still exists: $folder" 'WARN'
+        $removalComplete = $false
+    }
+}
+
+# If everything is removed, delete the registry keys
+if ($removalComplete) {
+    Write-Log "All components successfully removed. Proceeding to delete uninstall registry keys..."
+    
+    foreach ($target in $Targets) {
+        if (Test-Path $target.KeyPath) {
+            try {
+                Write-Log "Deleting registry key: $($target.KeyPath)"
+                Remove-Item -Path $target.KeyPath -Recurse -Force -ErrorAction Stop
+                Write-Log "Successfully deleted registry key: $($target.KeyPath)"
+            } catch {
+                Write-Log "Failed to delete registry key $($target.KeyPath): $($_.Exception.Message)" 'ERROR'
+            }
+        } else {
+            Write-Log "Registry key already removed: $($target.KeyPath)"
+        }
+    }
+} else {
+    Write-Log "Removal incomplete. Registry keys will NOT be deleted to allow retry or manual cleanup." 'WARN'
 }
 
 Write-Log "Resolve Unattended removal routine completed"
