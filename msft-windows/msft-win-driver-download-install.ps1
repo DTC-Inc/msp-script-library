@@ -2,8 +2,6 @@
 # The download URL should be provided via NinjaRMM custom field/variable
 # Example NinjaRMM variable: $DriverDownloadUrl
 
-# Get download URL from NinjaRMM variable
-$DownloadUrl = $env:DriverDownloadUrl
 
 # Validate URL is provided
 if ([string]::IsNullOrWhiteSpace($DownloadUrl)) {
