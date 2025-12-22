@@ -1,38 +1,41 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $sidchgPath - Full path to sidchg.exe utility
 ## $Description - Ticket number and/or initials for audit trail
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
 $ScriptLogName = "msft-windows-change-sid.log"
+$sidchgDownloadURL = "https://f002.backblazeb2.com/file/public-dtc/repo/tools/win/sidchg64-3.0n.exe"
+$sidchgPath = "$ENV:WINDIR\temp\sidchg64.exe"
 
 if ($RMM -ne 1) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
-        # Prompt for sidchg path
-        $sidchgPath = Read-Host "Enter the full path to sidchg.exe (e.g., C:\Tools\sidchg.exe)"
+        Write-Host "Downloading sidchg from B2 bucket..." -ForegroundColor Cyan
+        try {
+            Invoke-WebRequest -Uri $sidchgDownloadURL -OutFile $sidchgPath -UseBasicParsing
+            Write-Host "Download successful: $sidchgPath" -ForegroundColor Green
+        } catch {
+            Write-Host "ERROR: Failed to download sidchg." -ForegroundColor Red
+            Write-Host "Error details: $_" -ForegroundColor Red
+            exit 1
+        }
 
-        if (Test-Path -Path $sidchgPath -PathType Leaf) {
-            # Confirm the action
-            Write-Host "`nWARNING: Changing the computer SID will require a reboot." -ForegroundColor Yellow
-            Write-Host "This operation should only be performed on cloned systems or when specifically required." -ForegroundColor Yellow
-            $confirmation = Read-Host "`nAre you sure you want to change the computer SID? (yes/no)"
+        # Confirm the action
+        Write-Host "`nWARNING: Changing the computer SID will require a reboot." -ForegroundColor Yellow
+        Write-Host "This operation should only be performed on cloned systems or when specifically required." -ForegroundColor Yellow
+        $confirmation = Read-Host "`nAre you sure you want to change the computer SID? (yes/no)"
 
-            if ($confirmation -eq "yes") {
-                $Description = Read-Host "Please enter the ticket # and/or your initials for the audit trail"
-                if ($Description) {
-                    $ValidInput = 1
-                } else {
-                    Write-Host "Description is required. Please try again." -ForegroundColor Red
-                }
+        if ($confirmation -eq "yes") {
+            $Description = Read-Host "Please enter the ticket # and/or your initials for the audit trail"
+            if ($Description) {
+                $ValidInput = 1
             } else {
-                Write-Host "Operation cancelled by user." -ForegroundColor Yellow
-                exit 0
+                Write-Host "Description is required. Please try again." -ForegroundColor Red
             }
         } else {
-            Write-Host "Invalid path. sidchg.exe not found at: $sidchgPath" -ForegroundColor Red
-            Write-Host "Please verify the path and try again." -ForegroundColor Red
+            Write-Host "Operation cancelled by user." -ForegroundColor Yellow
+            exit 0
         }
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
@@ -50,13 +53,14 @@ if ($RMM -ne 1) {
         $Description = "Automatic SID change via RMM"
     }
 
-    if ($null -eq $sidchgPath) {
-        Write-Host "ERROR: sidchgPath variable is required but not set." -ForegroundColor Red
-        exit 1
-    }
-
-    if (-not (Test-Path -Path $sidchgPath -PathType Leaf)) {
-        Write-Host "ERROR: sidchg.exe not found at: $sidchgPath" -ForegroundColor Red
+    # Auto-download from B2
+    Write-Host "Downloading sidchg from B2 bucket..."
+    try {
+        Invoke-WebRequest -Uri $sidchgDownloadURL -OutFile $sidchgPath -UseBasicParsing
+        Write-Host "Download successful: $sidchgPath" -ForegroundColor Green
+    } catch {
+        Write-Host "ERROR: Failed to download sidchg." -ForegroundColor Red
+        Write-Host "Error details: $_" -ForegroundColor Red
         exit 1
     }
 }
