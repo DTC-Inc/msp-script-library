@@ -1,0 +1,9 @@
+# CODEOWNERS file for msp-script-library
+# This file defines who is automatically requested for review on pull requests
+#
+# Default owner for all files - Nate as the maintainer/reviewer
+* @Gumbees
+
+# Specific script categories (add as needed)
+# /bdr-veeam/ @Gumbees @other-reviewer
+# /msft-windows/ @Gumbees @other-reviewer

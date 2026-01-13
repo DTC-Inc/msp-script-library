@@ -8,62 +8,62 @@ This is an MSP (Managed Service Provider) script library containing PowerShell s
 
 ## Git Workflow and Branching Strategy
 
-**CRITICAL: All changes must be made in feature branches, never directly to `main`.**
+**CRITICAL: All changes must be made in enhancement or problem branches, never directly to `main`.**
 
 ### Branch Protection
 - The `main` branch represents production code deployed to customer environments
-- All script modifications must go through feature branches and pull requests
+- All script modifications must go through enhancement/problem branches and pull requests
 - Direct commits to `main` are prohibited to prevent untested code from reaching production
 
 ### Workflow for All Changes
 
-1. **Create a Feature Branch**
+1. **Create an Enhancement or Problem Branch**
    ```bash
-   git checkout -b feature/descriptive-name
+   git checkout -b enhancement/descriptive-name
    # or
    git checkout -b problem/descriptive-name
    ```
-   Branch naming convention: `feature/` or `problem/` prefix followed by descriptive name
-   - `feature/` - New features or enhancements
+   Branch naming convention: `enhancement/` or `problem/` prefix followed by descriptive name
+   - `enhancement/` - New features, improvements, or enhancements
    - `problem/` - Bug fixes, hotfixes, or any issue resolution
 
    Examples:
-   - `feature/admin-user-180day-deletion`
+   - `enhancement/admin-user-180day-deletion`
    - `problem/iso-dismount-error`
    - `problem/script-hanging-rmm`
 
-2. **Make Changes on the Feature Branch**
-   - Make all code modifications on the feature branch
+2. **Make Changes on the Branch**
+   - Make all code modifications on the enhancement or problem branch
    - Commit changes with descriptive messages
    - Test thoroughly in both interactive and RMM modes
 
-3. **Push Feature Branch**
+3. **Push Branch**
    ```bash
-   git push -u origin feature/descriptive-name
+   git push -u origin enhancement/descriptive-name
    ```
 
 4. **Create Pull Request**
-   - Create PR from feature branch to `main`
+   - Create PR from your branch to `main`
    - Include description of changes, testing performed, and RMM compatibility
    - Wait for review and approval before merging
 
 5. **Merge to Main**
    - Only merge after testing and approval
-   - Delete feature branch after successful merge
+   - Delete branch after successful merge
 
 ### If Changes Are Accidentally Committed to Main
 
-If changes are committed and pushed to `main` before creating a feature branch:
+If changes are committed and pushed to `main` before creating a proper branch:
 
 ```bash
 # Revert the commit from main
 git revert <commit-hash> --no-edit
 git push
 
-# Create feature branch and restore the changes
-git checkout -b feature/descriptive-name
+# Create enhancement/problem branch and restore the changes
+git checkout -b enhancement/descriptive-name
 git cherry-pick <commit-hash>
-git push -u origin feature/descriptive-name
+git push -u origin enhancement/descriptive-name
 ```
 
 ### Exception: Documentation Updates
