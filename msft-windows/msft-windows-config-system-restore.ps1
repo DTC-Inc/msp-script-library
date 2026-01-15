@@ -1,5 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
+## $RMMScriptPath
+## $Description
 
 # This script enables System Restore on the system drive and creates an initial restore point.
 # Use Case: Deploy via RMM during initial workstation setup or as remediation

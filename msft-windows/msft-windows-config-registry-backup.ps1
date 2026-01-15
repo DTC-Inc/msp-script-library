@@ -1,5 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
+## $RMMScriptPath
+## $Description
 
 # This script enables periodic Windows registry backup:
 # - Enables the EnablePeriodicBackup registry key

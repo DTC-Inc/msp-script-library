@@ -1,5 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
+## $RMMScriptPath
+## $Description
 ## $InstallNetFx3 = $true         # Install .NET Framework 3.5
 ## $InstallSandbox = $true        # Install Windows Sandbox (Pro/Enterprise only)
 ## $InstallHyperV = $false        # Install Hyper-V (requires compatible hardware)
