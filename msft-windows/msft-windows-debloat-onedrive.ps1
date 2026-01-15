@@ -148,6 +148,7 @@ try {
 
 } catch {
     Write-Host "Error removing OneDrive: $_" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 

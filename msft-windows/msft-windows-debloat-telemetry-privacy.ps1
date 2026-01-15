@@ -248,6 +248,7 @@ try {
 
 } catch {
     Write-Host "Error configuring settings: $_" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 
