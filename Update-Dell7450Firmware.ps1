@@ -9,11 +9,89 @@
     Requires: Dell OMSA installed, Administrator privileges
     Target Firmware: 1.4.0 A03
 #>
+param(
+    [switch]$AutoRestart,
+    [switch]$NoRestart,
+    [int]$InstallerTimeoutSeconds = 600
+)
+
+#region RMM Variable Declaration
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## $RMM - Set to 1 to indicate RMM execution context
+## $Description - Ticket number and/or technician initials for logging
+## $RMMScriptPath - (Optional) Custom path for RMM script logs
+
+$ScriptLogName = "dell7450-firmware-update.log"
 
 # Configuration
 $TargetFirmwareVersion = "1.4.0"
 $BackblazeBaseUrl = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/dell/Server%20Drivers"
 $FirmwareFiles = @{
+    "RI" = @{
+        FileName = "Express-Flash-PCIe-SSD_Firmware_JHKXR_WN64_1.4.0_A03_01.EXE"
+        SHA256   = "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A7B8C9D0E1F2"  # TODO: Replace with actual hash
+    }
+    "MU" = @{
+        FileName = "Express-Flash-PCIe-SSD_Firmware_JHKXR_WN64_1.4.0_A03_01.EXE"
+        SHA256   = "A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A7B8C9D0E1F2"  # TODO: Replace with actual hash
+    }
+}
+$TempPath = "$env:TEMP\Dell7450Firmware"
+#endregion
+
+#region Input Handling
+# Detect if running in RMM context
+if ($RMM -ne 1) {
+    # Interactive mode - prompt for ticket/initials
+    do {
+        $Description = Read-Host "Please enter the ticket # and, or your initials"
+    } while ([string]::IsNullOrWhiteSpace($Description))
+
+    $LogPath = "$ENV:WINDIR\logs"
+} else {
+    # RMM mode - use provided variables or defaults
+    if ([string]::IsNullOrWhiteSpace($Description)) {
+        $Description = "RMM-Automated"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($RMMScriptPath)) {
+        $LogPath = "$RMMScriptPath\logs"
+    } else {
+        $LogPath = "$ENV:WINDIR\logs"
+    }
+
+    # In RMM context, default to no interactive restart
+    if (-not $PSBoundParameters.ContainsKey('NoRestart') -and -not $PSBoundParameters.ContainsKey('AutoRestart')) {
+        $NoRestart = $true
+    }
+}
+
+# Ensure log directory exists
+if (-not (Test-Path $LogPath)) {
+    New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
+}
+
+$LogFile = "$LogPath\$ScriptLogName"
+#endregion
+
+#region Script Logic
+# Start transcript for comprehensive logging
+if (-not (Test-Path $TempPath)) {
+    New-Item -ItemType Directory -Path $TempPath -Force | Out-Null
+}
+$TranscriptPath = "$TempPath\firmware_update_transcript.log"
+Start-Transcript -Path $TranscriptPath -Append -ErrorAction SilentlyContinue
+
+# Output diagnostic information
+Write-Host "========================================"
+Write-Host "Dell NVMe 7450 Firmware Update Script"
+Write-Host "========================================"
+Write-Host "Description: $Description"
+Write-Host "Log Path: $LogFile"
+Write-Host "RMM Mode: $(if ($RMM -eq 1) { 'Yes' } else { 'No' })"
+Write-Host "========================================"
+
     "RI" = "Express-Flash-PCIe-SSD_Firmware_JHKXR_WN64_1.4.0_A03_01.EXE"
     "MU" = "Express-Flash-PCIe-SSD_Firmware_JHKXR_WN64_1.4.0_A03_01.EXE"  # Same installer for RI/MU
 }
@@ -24,7 +102,7 @@ $LogFile = "$TempPath\firmware_update.log"
 function Write-Log {
     param([string]$Message, [string]$Level = "INFO")
     $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $logEntry = "[$timestamp] [$Level] $Message"
+    $logEntry = "[$timestamp] [$Level] [$Description] $Message"
     Write-Host $logEntry
     Add-Content -Path $LogFile -Value $logEntry -ErrorAction SilentlyContinue
 }
