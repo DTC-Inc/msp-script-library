@@ -122,25 +122,20 @@ if ($DisableScheduledTasks) {
 
     foreach ($taskPath in $tasksToDisable) {
         try {
-            $task = Get-ScheduledTask -TaskPath (Split-Path $taskPath -Parent).Replace('\Microsoft', '\Microsoft\') `
-                                     -TaskName (Split-Path $taskPath -Leaf) -ErrorAction SilentlyContinue
+            $taskName = Split-Path $taskPath -Leaf
+            $taskFolder = (Split-Path $taskPath -Parent) + "\"
+            $task = Get-ScheduledTask -TaskPath $taskFolder -TaskName $taskName -ErrorAction SilentlyContinue
 
             if ($task) {
-                Disable-ScheduledTask -TaskPath $task.TaskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue | Out-Null
+                Disable-ScheduledTask -InputObject $task -ErrorAction SilentlyContinue | Out-Null
                 Write-Host "Disabled: $taskPath" -ForegroundColor Green
                 $disabledCount++
             } else {
                 $notFoundCount++
             }
         } catch {
-            # Try alternative method
-            try {
-                Disable-ScheduledTask -TaskName $taskPath -ErrorAction Stop | Out-Null
-                Write-Host "Disabled: $taskPath" -ForegroundColor Green
-                $disabledCount++
-            } catch {
-                $notFoundCount++
-            }
+            Write-Host "Failed to process task: $taskPath - $_" -ForegroundColor Gray
+            $notFoundCount++
         }
     }
 

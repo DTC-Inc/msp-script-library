@@ -38,6 +38,12 @@ if ($RMM -ne 1) {
     }
 }
 
+# Ensure log directory exists before starting transcript
+$logDir = Split-Path -Path $LogPath -Parent
+if (!(Test-Path $logDir)) {
+    New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+}
+
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
