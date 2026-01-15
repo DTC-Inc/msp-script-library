@@ -1,5 +1,6 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
+## $DisableSmartScreen = $false  # Optional: Set to $true to disable SmartScreen (not recommended)
 
 # This script configures Windows telemetry and privacy settings:
 # 1. Disables telemetry via Group Policy registry keys
@@ -65,13 +66,27 @@ try {
     # Step 1: Disable telemetry via Group Policy
     Write-Host "Disabling telemetry via Group Policy..." -ForegroundColor Yellow
     Ensure-RegistryPath "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection"
-    # AllowTelemetry: 0 = Security (Enterprise only), 1 = Basic, 2 = Enhanced, 3 = Full
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Type DWord -Value 0
+
+    # Check Windows edition - AllowTelemetry=0 only works on Enterprise/Education
+    # Pro/Home minimum is 1 (Basic)
+    $osEdition = (Get-WmiObject -Class Win32_OperatingSystem).Caption
+    $isEnterpriseOrEducation = $osEdition -match "Enterprise|Education"
+
+    if ($isEnterpriseOrEducation) {
+        # AllowTelemetry: 0 = Security (Enterprise/Education only)
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Type DWord -Value 0
+        Write-Host "  Telemetry policy set to Security/Off (Enterprise/Education)" -ForegroundColor Green
+    } else {
+        # AllowTelemetry: 1 = Basic (minimum for Pro/Home)
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowTelemetry" -Type DWord -Value 1
+        Write-Host "  Telemetry policy set to Basic (minimum for $osEdition)" -ForegroundColor Yellow
+    }
+
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "AllowDeviceNameInTelemetry" -Type DWord -Value 0
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "DoNotShowFeedbackNotifications" -Type DWord -Value 1
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "DisableTelemetryOptInChangeNotification" -Type DWord -Value 1
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" -Name "DisableTelemetryOptInSettingsUx" -Type DWord -Value 1
-    Write-Host "  Telemetry policy set to Security/Off" -ForegroundColor Green
+    Write-Host "  Additional telemetry settings configured" -ForegroundColor Green
 
     # Step 2: Disable diagnostic data collection
     Write-Host "Disabling diagnostic data collection..." -ForegroundColor Yellow
@@ -183,10 +198,14 @@ try {
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\WiFi\AllowWiFiHotSpotReporting" -Name "value" -Type DWord -Value 0
     Write-Host "  WiFi Sense disabled" -ForegroundColor Green
 
-    # Step 12: Disable SmartScreen for Store Apps
-    Write-Host "Disabling SmartScreen for Store Apps..." -ForegroundColor Yellow
-    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Type DWord -Value 0
-    Write-Host "  SmartScreen for Store Apps disabled" -ForegroundColor Green
+    # Step 12: Disable SmartScreen for Store Apps (optional - controlled by $DisableSmartScreen variable)
+    if ($DisableSmartScreen -eq $true) {
+        Write-Host "Disabling SmartScreen for Store Apps..." -ForegroundColor Yellow
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Type DWord -Value 0
+        Write-Host "  SmartScreen for Store Apps disabled" -ForegroundColor Green
+    } else {
+        Write-Host "Skipping SmartScreen disable (security feature - set `$DisableSmartScreen=`$true to disable)" -ForegroundColor Gray
+    }
 
     #############################################
     # SUMMARY
@@ -215,7 +234,11 @@ try {
     Write-Host ""
     Write-Host "Network Privacy:" -ForegroundColor White
     Write-Host "  - WiFi Sense: Disabled" -ForegroundColor Green
-    Write-Host "  - SmartScreen (Store): Disabled" -ForegroundColor Green
+    if ($DisableSmartScreen -eq $true) {
+        Write-Host "  - SmartScreen (Store): Disabled" -ForegroundColor Green
+    } else {
+        Write-Host "  - SmartScreen (Store): Kept Enabled (security)" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""

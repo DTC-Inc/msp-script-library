@@ -174,10 +174,10 @@ try {
 
     Write-Host "    Backup file: $backupFileName" -ForegroundColor Cyan
 
-    # Build mysqldump command
+    # Build mysqldump command - use MYSQL_PWD env var to avoid password exposure in process list
+    $env:MYSQL_PWD = $mysqlRootPassword
     $mysqldumpArgs = @(
         "--user=root",
-        "--password=$mysqlRootPassword",
         "--all-databases",
         "--single-transaction",
         "--quick",
@@ -186,6 +186,9 @@ try {
     )
 
     $process = Start-Process -FilePath $mysqldumpPath -ArgumentList $mysqldumpArgs -NoNewWindow -Wait -PassThru
+
+    # Clear the password from environment
+    $env:MYSQL_PWD = $null
 
     if ($process.ExitCode -ne 0) {
         throw "mysqldump failed with exit code: $($process.ExitCode)"

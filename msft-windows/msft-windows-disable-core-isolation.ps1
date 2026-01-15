@@ -65,6 +65,13 @@ try {
     Write-Host "Running with Administrator privileges" -ForegroundColor Green
     Write-Host ""
 
+    # Track success/failure of each operation
+    $hvciSuccess = $false
+    $vbsSuccess = $false
+    $credGuardSuccess = $false
+    $dmaSuccess = $false
+    $vsmSuccess = $false
+
     # Step 1: Check current Core Isolation status
     Write-Host "Step 1: Checking current Core Isolation status..." -ForegroundColor Yellow
 
@@ -93,6 +100,7 @@ try {
     try {
         Set-ItemProperty -Path $hvciPath -Name "Enabled" -Value 0 -Type DWord -Force
         Write-Host "  HVCI Enabled = 0 (Disabled)" -ForegroundColor Green
+        $hvciSuccess = $true
     } catch {
         Write-Host "  Failed to disable HVCI: $($_.Exception.Message)" -ForegroundColor Red
     }
@@ -102,6 +110,7 @@ try {
         Write-Host "  HVCI Locked = 0 (Unlocked)" -ForegroundColor Green
     } catch {
         Write-Host "  Failed to unlock HVCI: $($_.Exception.Message)" -ForegroundColor Red
+        $hvciSuccess = $false
     }
 
     try {
@@ -125,6 +134,7 @@ try {
     try {
         Set-ItemProperty -Path $deviceGuardPath -Name "EnableVirtualizationBasedSecurity" -Value 0 -Type DWord -Force
         Write-Host "  EnableVirtualizationBasedSecurity = 0 (Disabled)" -ForegroundColor Green
+        $vbsSuccess = $true
     } catch {
         Write-Host "  Failed to disable VBS: $($_.Exception.Message)" -ForegroundColor Red
     }
@@ -150,6 +160,7 @@ try {
     try {
         Set-ItemProperty -Path $credGuardPath -Name "Enabled" -Value 0 -Type DWord -Force
         Write-Host "  Credential Guard Enabled = 0 (Disabled)" -ForegroundColor Green
+        $credGuardSuccess = $true
     } catch {
         Write-Host "  Failed to disable Credential Guard: $($_.Exception.Message)" -ForegroundColor Red
     }
@@ -182,6 +193,7 @@ try {
     try {
         Set-ItemProperty -Path $dmaGuardPath -Name "DeviceEnumerationPolicy" -Value 0 -Type DWord -Force
         Write-Host "  Kernel DMA Protection policy set to allow all" -ForegroundColor Green
+        $dmaSuccess = $true
     } catch {
         Write-Host "  Failed to set DMA policy: $($_.Exception.Message)" -ForegroundColor Yellow
     }
@@ -196,6 +208,7 @@ try {
         $result = bcdedit /set "{current}" vsmlaunchtype Off 2>&1
         if ($LASTEXITCODE -eq 0) {
             Write-Host "  VSM Launch Type set to Off" -ForegroundColor Green
+            $vsmSuccess = $true
         } else {
             Write-Host "  VSM Launch Type: $result" -ForegroundColor Gray
         }
@@ -218,17 +231,43 @@ try {
 
     Write-Host ""
 
-    # Final summary
+    # Final summary - report actual status
     Write-Host "=== Configuration Summary ===" -ForegroundColor Cyan
-    Write-Host "Memory Integrity (HVCI): Disabled" -ForegroundColor Green
-    Write-Host "Virtualization Based Security (VBS): Disabled" -ForegroundColor Green
-    Write-Host "Credential Guard: Disabled" -ForegroundColor Green
-    Write-Host "Kernel DMA Protection: Policy relaxed" -ForegroundColor Green
-    Write-Host "VSM/Hypervisor: Set to Off" -ForegroundColor Green
+    if ($hvciSuccess) {
+        Write-Host "Memory Integrity (HVCI): Disabled" -ForegroundColor Green
+    } else {
+        Write-Host "Memory Integrity (HVCI): Failed to disable" -ForegroundColor Red
+    }
+    if ($vbsSuccess) {
+        Write-Host "Virtualization Based Security (VBS): Disabled" -ForegroundColor Green
+    } else {
+        Write-Host "Virtualization Based Security (VBS): Failed to disable" -ForegroundColor Red
+    }
+    if ($credGuardSuccess) {
+        Write-Host "Credential Guard: Disabled" -ForegroundColor Green
+    } else {
+        Write-Host "Credential Guard: Failed to disable" -ForegroundColor Red
+    }
+    if ($dmaSuccess) {
+        Write-Host "Kernel DMA Protection: Policy relaxed" -ForegroundColor Green
+    } else {
+        Write-Host "Kernel DMA Protection: Failed to configure" -ForegroundColor Yellow
+    }
+    if ($vsmSuccess) {
+        Write-Host "VSM/Hypervisor: Set to Off" -ForegroundColor Green
+    } else {
+        Write-Host "VSM/Hypervisor: Could not modify (may require manual BIOS change)" -ForegroundColor Yellow
+    }
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
 
-    Write-Host "Core Isolation disabled successfully!" -ForegroundColor Green
+    # Determine overall success
+    $overallSuccess = $hvciSuccess -and $vbsSuccess
+    if ($overallSuccess) {
+        Write-Host "Core Isolation disabled successfully!" -ForegroundColor Green
+    } else {
+        Write-Host "Core Isolation partially disabled - some operations failed" -ForegroundColor Yellow
+    }
     Write-Host ""
     Write-Host "Performance impact removed:" -ForegroundColor Cyan
     Write-Host "  - ~10-15% CPU overhead eliminated" -ForegroundColor White

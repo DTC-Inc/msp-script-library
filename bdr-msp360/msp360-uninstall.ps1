@@ -1,3 +1,8 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## $RMM
+## $Description
+
 <#
 .SYNOPSIS
     Uninstalls DTCBSure Cloud Backup (MSP360)
@@ -9,6 +14,45 @@
     Date: 2025-12-01
     Compatible with: Windows 7+
 #>
+
+# Getting input from user if not running from RMM else set variables from RMM.
+
+$ScriptLogName = "msp360-uninstall.log"
+
+if ($RMM -ne 1) {
+    $ValidInput = 0
+    # Checking for valid input.
+    while ($ValidInput -ne 1) {
+        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
+        if ($Description) {
+            $ValidInput = 1
+        } else {
+            Write-Host "Invalid input. Please try again."
+        }
+    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+
+} else {
+    # Store the logs in the RMMScriptPath
+    if ($null -ne $RMMScriptPath) {
+        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+    } else {
+        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+    }
+
+    if ($null -eq $Description) {
+        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+        $Description = "MSP360 Uninstall"
+    }
+}
+
+# Start the script logic here.
+
+Start-Transcript -Path $LogPath
+
+Write-Host "Description: $Description"
+Write-Host "Log path: $LogPath"
+Write-Host "RMM: $RMM"
 
 # Set error action preference
 $ErrorActionPreference = 'Stop'
@@ -45,6 +89,7 @@ foreach ($path in $registryPaths) {
 
 if (-not $app) {
     Write-Log "DTCBSure Cloud Backup / MSP360 is not installed on this system" "WARNING"
+    Stop-Transcript
     exit 0
 }
 
@@ -53,6 +98,7 @@ $uninstallString = $app.UninstallString
 
 if (-not $uninstallString) {
     Write-Log "No uninstall string found for $($app.DisplayName)" "ERROR"
+    Stop-Transcript
     exit 1
 }
 
@@ -67,23 +113,26 @@ if ($uninstallString -match "msiexec") {
     $uninstallArgs = "/x $productCode /qn /norestart"
     Write-Log "Detected MSI installer. Product Code: $productCode"
 } else {
-    # EXE-based uninstaller
-    # Extract the executable path (remove quotes if present)
-    $exePath = $uninstallString -replace '"', ''
-
-    # Check if there are already arguments in the uninstall string
-    if ($exePath -match '^(.*\.exe)\s+(.*)$') {
+    # EXE-based uninstaller - handle paths with spaces by checking for quoted path first
+    if ($uninstallString -match '^"([^"]+)"\s*(.*)$') {
+        # Quoted path: "C:\Program Files\App\uninstall.exe" /args
         $uninstallCommand = $matches[1]
         $existingArgs = $matches[2]
-        # Add silent flags if not already present
-        if ($existingArgs -notmatch "/S|/silent|/quiet") {
-            $uninstallArgs = "$existingArgs /S /silent"
-        } else {
-            $uninstallArgs = $existingArgs
-        }
+    } elseif ($uninstallString -match '^([^"\s]+\.exe)\s*(.*)$') {
+        # Unquoted path without spaces: C:\App\uninstall.exe /args
+        $uninstallCommand = $matches[1]
+        $existingArgs = $matches[2]
     } else {
-        $uninstallCommand = $exePath
-        $uninstallArgs = "/S /silent"
+        # Fallback: treat entire string as command
+        $uninstallCommand = $uninstallString -replace '"', ''
+        $existingArgs = ""
+    }
+
+    # Add silent flags if not already present
+    if ($existingArgs -notmatch "/S|/silent|/quiet") {
+        $uninstallArgs = "$existingArgs /S /silent".Trim()
+    } else {
+        $uninstallArgs = $existingArgs
     }
     Write-Log "Detected EXE installer"
 }
@@ -102,12 +151,15 @@ try {
             Write-Log "A reboot is required to complete the uninstallation" "WARNING"
         }
 
+        Stop-Transcript
         exit 0
     } else {
         Write-Log "Uninstall completed with exit code: $($process.ExitCode)" "WARNING"
+        Stop-Transcript
         exit $process.ExitCode
     }
 } catch {
     Write-Log "Error during uninstallation: $($_.Exception.Message)" "ERROR"
+    Stop-Transcript
     exit 1
 }

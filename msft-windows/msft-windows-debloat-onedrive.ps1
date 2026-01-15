@@ -113,14 +113,14 @@ try {
     # Remove OneDrive from Explorer sidebar
     Write-Host "Removing OneDrive from Explorer..." -ForegroundColor Yellow
 
-    # 32-bit
-    $clsidPath32 = "HKCR:\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
+    # 32-bit - use Registry:: provider since HKCR: PSDrive doesn't exist by default
+    $clsidPath32 = "Registry::HKEY_CLASSES_ROOT\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
     if (Test-Path $clsidPath32) {
         Set-ItemProperty -Path $clsidPath32 -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -ErrorAction SilentlyContinue
     }
 
     # 64-bit
-    $clsidPath64 = "HKCR:\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
+    $clsidPath64 = "Registry::HKEY_CLASSES_ROOT\Wow6432Node\CLSID\{018D5C66-4533-4307-9B53-224DE2ED1FE6}"
     if (Test-Path $clsidPath64) {
         Set-ItemProperty -Path $clsidPath64 -Name "System.IsPinnedToNameSpaceTree" -Type DWord -Value 0 -ErrorAction SilentlyContinue
     }

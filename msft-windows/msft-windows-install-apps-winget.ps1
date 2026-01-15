@@ -88,6 +88,18 @@ $installedCount = 0
 $failedCount = 0
 $skippedCount = 0
 
+# Snapshot existing shortcuts before installation (to only remove new ones later)
+$desktopPaths = @(
+    "$env:PUBLIC\Desktop",
+    "$env:USERPROFILE\Desktop"
+)
+$existingShortcuts = @()
+foreach ($desktopPath in $desktopPaths) {
+    if (Test-Path $desktopPath) {
+        $existingShortcuts += Get-ChildItem -Path $desktopPath -Filter "*.lnk" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+    }
+}
+
 foreach ($appId in $apps) {
     Write-Host "Installing: $appId" -ForegroundColor Yellow
 
@@ -124,33 +136,32 @@ foreach ($appId in $apps) {
     }
 }
 
-# Clean up desktop shortcuts
+# Clean up desktop shortcuts (only those created during this installation)
 if ($CleanDesktopShortcuts) {
     Write-Host ""
-    Write-Host "Cleaning desktop shortcuts..." -ForegroundColor Yellow
-
-    $desktopPaths = @(
-        "$env:PUBLIC\Desktop",
-        "$env:USERPROFILE\Desktop"
-    )
+    Write-Host "Cleaning new desktop shortcuts..." -ForegroundColor Yellow
 
     $shortcutsRemoved = 0
 
     foreach ($desktopPath in $desktopPaths) {
         if (Test-Path $desktopPath) {
-            $shortcuts = Get-ChildItem -Path $desktopPath -Filter "*.lnk" -ErrorAction SilentlyContinue
-            foreach ($shortcut in $shortcuts) {
-                try {
-                    Remove-Item -Path $shortcut.FullName -Force -ErrorAction Stop
-                    $shortcutsRemoved++
-                } catch {
-                    # Ignore errors for shortcuts in use
+            $currentShortcuts = Get-ChildItem -Path $desktopPath -Filter "*.lnk" -ErrorAction SilentlyContinue
+            foreach ($shortcut in $currentShortcuts) {
+                # Only remove shortcuts that didn't exist before installation
+                if ($shortcut.FullName -notin $existingShortcuts) {
+                    try {
+                        Remove-Item -Path $shortcut.FullName -Force -ErrorAction Stop
+                        Write-Host "  Removed: $($shortcut.Name)" -ForegroundColor Gray
+                        $shortcutsRemoved++
+                    } catch {
+                        # Ignore errors for shortcuts in use
+                    }
                 }
             }
         }
     }
 
-    Write-Host "Removed $shortcutsRemoved desktop shortcut(s)" -ForegroundColor Green
+    Write-Host "Removed $shortcutsRemoved new desktop shortcut(s)" -ForegroundColor Green
 }
 
 Write-Host ""
