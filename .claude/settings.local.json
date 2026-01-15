@@ -2,7 +2,19 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "Read(//c/Users/NathanielSmith/Downloads/**)"
+      "Read(//c/Users/NathanielSmith/Downloads/**)",
+      "Bash(git checkout:*)",
+      "Skill(journaling-obsidian)",
+      "Skill(journaling-obsidian:*)",
+      "Bash(TZ=\"America/New_York\" date:*)",
+      "mcp__obsidian-mcp-tools__get_vault_file",
+      "mcp__obsidian-mcp-tools__create_vault_file",
+      "mcp__obsidian-mcp-tools__search_vault_simple",
+      "mcp__obsidian-mcp-tools__show_file_in_obsidian",
+      "mcp__obsidian-mcp-tools__update_active_file",
+      "mcp__obsidian-mcp-tools__search_vault_smart",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd workstation standards and configuration scripts\n\nNew scripts for Windows workstation configuration:\n- BSOD diagnostics and analysis\n- BitLocker configuration and enablement\n- Windows features management\n- SSD performance optimization\n- Registry backup automation\n- System restore configuration\n- Windows debloat \\(apps, OneDrive, services, telemetry\\)\n- Core isolation and MPO disable options\n- Offline files disable\n- Xbox services disable\n- Recovery partition extension\n- Winget app installation\n\nAdditional scripts:\n- Dentrix QoS configuration\n- MSP360 uninstall\n- MySQL database utilities\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ],
     "deny": [],
     "ask": []
