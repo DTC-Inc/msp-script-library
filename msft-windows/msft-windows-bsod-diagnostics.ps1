@@ -1,7 +1,8 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 ## $RMM
 ## $anthropicApiKey
+## $Description
 
 ### ————— MSP RMM VARIABLE INITIALIZATION GOES HERE —————
 # Example for NinjaRMM:
@@ -141,8 +142,8 @@ try {
     Write-Output "Could not retrieve Bug Check events: $_"
 }
 
-# Collect BlueScreen events (Event ID 1003) - Additional BSOD context
-Write-Output "Searching for BlueScreen events (Event ID 1003)..."
+# Collect BlueScreen events (WER Event ID 1001) - Additional BSOD context
+Write-Output "Searching for BlueScreen events (WER Event ID 1001)..."
 try {
     $blueScreenEvents = Get-WinEvent -FilterHashtable @{
         LogName = 'System'

@@ -209,7 +209,12 @@ try {
     Write-Host "=== Configuration Summary ===" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Telemetry & Data Collection:" -ForegroundColor White
-    Write-Host "  - Telemetry Policy: Security/Off" -ForegroundColor Green
+    if ($isEnterpriseOrEducation) {
+        Write-Host "  - Telemetry Policy: Security/Off (Enterprise/Education)" -ForegroundColor Green
+    } else {
+        Write-Host "  - Telemetry Policy: Basic (minimum for Pro/Home)" -ForegroundColor Yellow
+        Write-Host "    Note: Pro/Home editions cannot set telemetry to 0 (Security)" -ForegroundColor Gray
+    }
     Write-Host "  - Diagnostic Data: Minimized" -ForegroundColor Green
     Write-Host "  - CEIP: Disabled" -ForegroundColor Green
     Write-Host "  - Error Reporting: Disabled" -ForegroundColor Green

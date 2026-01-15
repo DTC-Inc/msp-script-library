@@ -148,11 +148,11 @@ foreach ($app in $appsToRemove) {
             Write-Host "Removing: $app" -ForegroundColor Yellow
 
             if ($appxPackage) {
-                $appxPackage | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
+                $appxPackage | Remove-AppxPackage -AllUsers -ErrorAction Stop
             }
 
             if ($provisionedPackage) {
-                $provisionedPackage | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
+                $provisionedPackage | Remove-AppxProvisionedPackage -Online -ErrorAction Stop
             }
 
             Write-Host "Removed: $app" -ForegroundColor Green

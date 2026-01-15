@@ -1,5 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
+## $Description
+## $RMMScriptPath
 
 # This script completely removes OneDrive from Windows:
 # - Stops OneDrive processes

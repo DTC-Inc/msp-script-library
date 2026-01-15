@@ -59,6 +59,7 @@ try {
 
     if (-not $isAdmin) {
         Write-Error "This script must be run as Administrator to modify system registry."
+        Stop-Transcript
         exit 1
     }
 
@@ -81,6 +82,7 @@ try {
         Write-Host "  OverlayTestMode = 5 (MPO Disabled)" -ForegroundColor Green
     } catch {
         Write-Host "  Failed to set OverlayTestMode: $($_.Exception.Message)" -ForegroundColor Red
+        Stop-Transcript
         exit 1
     }
 
@@ -123,6 +125,7 @@ try {
 } catch {
     Write-Error "An error occurred: $($_.Exception.Message)"
     Write-Host "Error details: $($_.Exception)" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 

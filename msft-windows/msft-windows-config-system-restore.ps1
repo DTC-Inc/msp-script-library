@@ -63,10 +63,23 @@ try {
         Checkpoint-Computer -Description "Initial Setup - $(Get-Date -Format 'yyyy-MM-dd HH:mm')" -RestorePointType MODIFY_SETTINGS -ErrorAction Stop
         Write-Host "Initial restore point created" -ForegroundColor Green
     } catch {
-        # Restore point creation has a 24-hour throttle - this is normal
-        if ($_.Exception.Message -like "*1058*" -or $_.Exception.Message -like "*cannot create*") {
+        # Check for specific error conditions
+        $errorCode = $_.Exception.HResult
+        $errorMessage = $_.Exception.Message
+
+        # Error 1058 (0x8007041A) = Service is disabled
+        if ($errorCode -eq 0x8007041A -or $errorCode -eq 1058) {
+            Write-Host "ERROR: System Restore service is disabled. Cannot create restore point." -ForegroundColor Red
+            Write-Host "Please enable the 'Volume Shadow Copy' and 'Microsoft Software Shadow Copy Provider' services." -ForegroundColor Yellow
+            throw
+        }
+        # 24-hour throttle error
+        elseif ($errorMessage -match "already been created within the past 24 hours") {
             Write-Host "Restore point creation throttled (24-hour limit) - this is expected behavior" -ForegroundColor Yellow
-        } else {
+            Write-Host "A restore point was created within the last 24 hours. No action needed." -ForegroundColor Gray
+        }
+        # Other errors
+        else {
             throw
         }
     }
@@ -85,6 +98,7 @@ try {
 
 } catch {
     Write-Host "Error configuring System Restore: $_" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 

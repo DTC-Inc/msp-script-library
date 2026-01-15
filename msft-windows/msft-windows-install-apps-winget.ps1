@@ -107,7 +107,7 @@ foreach ($appId in $apps) {
         # Check if already installed
         $checkInstalled = winget list --id $appId --exact --accept-source-agreements 2>&1
 
-        if ($checkInstalled -match $appId) {
+        if ($checkInstalled -like "*$appId*") {
             Write-Host "  Already installed, checking for updates..." -ForegroundColor Gray
             $result = winget upgrade --id $appId --exact --silent --accept-package-agreements --accept-source-agreements 2>&1
 

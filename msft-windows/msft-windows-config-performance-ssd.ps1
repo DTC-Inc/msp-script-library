@@ -48,14 +48,14 @@ Write-Host ""
 
 Write-Host "=== SSD Performance Optimization ===" -ForegroundColor Cyan
 
-# Detect SSD
+# Detect SSD (including NVMe drives which may report MediaType as Unspecified)
 $ssdDetected = $false
-$disks = Get-PhysicalDisk | Select-Object DeviceId, MediaType, FriendlyName
+$disks = Get-PhysicalDisk | Select-Object DeviceId, MediaType, BusType, FriendlyName
 
 Write-Host "Detected Disks:" -ForegroundColor Yellow
 foreach ($disk in $disks) {
-    Write-Host "  $($disk.FriendlyName) - MediaType: $($disk.MediaType)" -ForegroundColor Gray
-    if ($disk.MediaType -eq "SSD") {
+    Write-Host "  $($disk.FriendlyName) - MediaType: $($disk.MediaType) - BusType: $($disk.BusType)" -ForegroundColor Gray
+    if ($disk.MediaType -eq "SSD" -or $disk.BusType -eq "NVMe") {
         $ssdDetected = $true
     }
 }

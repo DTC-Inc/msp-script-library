@@ -185,10 +185,21 @@ try {
         "--result-file=`"$backupFilePath`""
     )
 
-    $process = Start-Process -FilePath $mysqldumpPath -ArgumentList $mysqldumpArgs -NoNewWindow -Wait -PassThru
+    # Capture stderr to log any mysqldump warnings or errors
+    $stderrFile = Join-Path -Path $backupRootPath -ChildPath "mysqldump_stderr.tmp"
+    $process = Start-Process -FilePath $mysqldumpPath -ArgumentList $mysqldumpArgs -NoNewWindow -Wait -PassThru -RedirectStandardError $stderrFile
 
     # Clear the password from environment
     $env:MYSQL_PWD = $null
+
+    # Log any stderr output
+    if (Test-Path $stderrFile) {
+        $stderrContent = Get-Content $stderrFile -Raw -ErrorAction SilentlyContinue
+        if ($stderrContent) {
+            Write-Host "    mysqldump stderr: $stderrContent" -ForegroundColor Yellow
+        }
+        Remove-Item $stderrFile -Force -ErrorAction SilentlyContinue
+    }
 
     if ($process.ExitCode -ne 0) {
         throw "mysqldump failed with exit code: $($process.ExitCode)"

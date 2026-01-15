@@ -94,6 +94,7 @@ try {
 
 } catch {
     Write-Host "Error configuring registry backup: $_" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 

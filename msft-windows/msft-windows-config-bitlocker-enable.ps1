@@ -81,11 +81,32 @@ if (!$tpm -or !$tpm.IsEnabled_InitialValue) {
 
 Write-Host "TPM Status: Enabled and ready" -ForegroundColor Green
 
-# Create recovery key directory
+# Create recovery key directory with restricted permissions
 $recoveryKeyPath = "$env:SystemDrive\BitLocker-Recovery-Keys"
 if (!(Test-Path $recoveryKeyPath)) {
     New-Item -Path $recoveryKeyPath -ItemType Directory -Force | Out-Null
+
+    # Restrict directory access to Administrators and SYSTEM only
+    $dirAcl = Get-Acl $recoveryKeyPath
+    $dirAcl.SetAccessRuleProtection($true, $false)  # Disable inheritance
+    $dirAcl.Access | ForEach-Object { $dirAcl.RemoveAccessRule($_) | Out-Null }
+
+    # Add Administrators full control
+    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "BUILTIN\Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
+    )
+    $dirAcl.AddAccessRule($adminRule)
+
+    # Add SYSTEM full control
+    $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "NT AUTHORITY\SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
+    )
+    $dirAcl.AddAccessRule($systemRule)
+
+    Set-Acl -Path $recoveryKeyPath -AclObject $dirAcl
+    Write-Host "Recovery directory created with restricted permissions (Administrators + SYSTEM only)" -ForegroundColor Gray
 }
+
 $recoveryFile = Join-Path $recoveryKeyPath "BitLocker-Recovery-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').txt"
 
 # Initialize recovery file
@@ -103,6 +124,26 @@ encrypted drives if TPM fails.
 
 "@
 $header | Out-File -FilePath $recoveryFile -Encoding UTF8
+
+# Restrict file permissions to Administrators and SYSTEM only
+$fileAcl = Get-Acl $recoveryFile
+$fileAcl.SetAccessRuleProtection($true, $false)  # Disable inheritance
+$fileAcl.Access | ForEach-Object { $fileAcl.RemoveAccessRule($_) | Out-Null }
+
+# Add Administrators full control
+$adminFileRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "BUILTIN\Administrators", "FullControl", "Allow"
+)
+$fileAcl.AddAccessRule($adminFileRule)
+
+# Add SYSTEM full control
+$systemFileRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    "NT AUTHORITY\SYSTEM", "FullControl", "Allow"
+)
+$fileAcl.AddAccessRule($systemFileRule)
+
+Set-Acl -Path $recoveryFile -AclObject $fileAcl
+Write-Host "Recovery file permissions restricted to Administrators and SYSTEM" -ForegroundColor Gray
 
 try {
     # Enable BitLocker on OS drive
@@ -241,16 +282,72 @@ Encryption Method: XtsAes256
         }
     }
 
+    # Attempt to backup recovery keys to Active Directory (if domain-joined)
+    Write-Host ""
+    Write-Host "Checking for Active Directory backup..." -ForegroundColor Yellow
+    try {
+        $computerInfo = Get-WmiObject -Class Win32_ComputerSystem
+        if ($computerInfo.PartOfDomain) {
+            Write-Host "Computer is domain-joined. Attempting to backup recovery keys to AD..." -ForegroundColor Gray
+
+            # Backup OS drive recovery key to AD
+            $osVolume = Get-BitLockerVolume -MountPoint $osDrive.MountPoint
+            foreach ($keyProtector in $osVolume.KeyProtector) {
+                if ($keyProtector.KeyProtectorType -eq 'RecoveryPassword') {
+                    try {
+                        Backup-BitLockerKeyProtector -MountPoint $osDrive.MountPoint -KeyProtectorId $keyProtector.KeyProtectorId -ErrorAction Stop
+                        Write-Host "  OS drive recovery key backed up to Active Directory" -ForegroundColor Green
+                    } catch {
+                        Write-Host "  Warning: Could not backup OS drive to AD: $_" -ForegroundColor Yellow
+                    }
+                }
+            }
+
+            # Backup data drive recovery keys to AD
+            if ($EncryptDataDrives -and $dataVolumes) {
+                foreach ($volume in $dataVolumes) {
+                    $dataVol = Get-BitLockerVolume -MountPoint $volume.MountPoint
+                    foreach ($keyProtector in $dataVol.KeyProtector) {
+                        if ($keyProtector.KeyProtectorType -eq 'RecoveryPassword') {
+                            try {
+                                Backup-BitLockerKeyProtector -MountPoint $volume.MountPoint -KeyProtectorId $keyProtector.KeyProtectorId -ErrorAction Stop
+                                Write-Host "  $($volume.MountPoint) recovery key backed up to Active Directory" -ForegroundColor Green
+                            } catch {
+                                Write-Host "  Warning: Could not backup $($volume.MountPoint) to AD: $_" -ForegroundColor Yellow
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            Write-Host "Computer is not domain-joined. Skipping AD backup." -ForegroundColor Gray
+        }
+    } catch {
+        Write-Host "Could not determine domain status: $_" -ForegroundColor Yellow
+    }
+
     Write-Host ""
     Write-Host "=== BitLocker Configuration Complete ===" -ForegroundColor Cyan
     Write-Host "Recovery keys saved to: $recoveryFile" -ForegroundColor Yellow
+    Write-Host "File permissions: Administrators and SYSTEM only" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "IMPORTANT: Collect this file via RMM and store securely!" -ForegroundColor Red
-    Write-Host "Path: $recoveryFile" -ForegroundColor Yellow
-    Write-Host "=========================================" -ForegroundColor Cyan
+    Write-Host "=========================================" -ForegroundColor Red
+    Write-Host "CRITICAL SECURITY STEPS:" -ForegroundColor Red
+    Write-Host "=========================================" -ForegroundColor Red
+    Write-Host "1. COLLECT this file via your RMM platform immediately" -ForegroundColor Yellow
+    Write-Host "2. STORE the collected file in a secure password manager or encrypted vault" -ForegroundColor Yellow
+    Write-Host "3. SECURELY DELETE the local file after RMM collection using:" -ForegroundColor Yellow
+    Write-Host "   Remove-Item '$recoveryFile' -Force" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "File Path: $recoveryFile" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Without these recovery keys, encrypted drives CANNOT be unlocked" -ForegroundColor Red
+    Write-Host "if TPM fails or the system is moved to different hardware!" -ForegroundColor Red
+    Write-Host "=========================================" -ForegroundColor Red
 
 } catch {
     Write-Host "Error configuring BitLocker: $_" -ForegroundColor Red
+    Stop-Transcript
     exit 1
 }
 
