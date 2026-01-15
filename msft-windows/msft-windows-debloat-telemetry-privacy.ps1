@@ -1,6 +1,5 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $RMM = 1
-## $DisableSmartScreen = $false  # Optional: Set to $true to disable SmartScreen (not recommended)
 
 # This script configures Windows telemetry and privacy settings:
 # 1. Disables telemetry via Group Policy registry keys
@@ -198,14 +197,10 @@ try {
     Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\PolicyManager\default\WiFi\AllowWiFiHotSpotReporting" -Name "value" -Type DWord -Value 0
     Write-Host "  WiFi Sense disabled" -ForegroundColor Green
 
-    # Step 12: Disable SmartScreen for Store Apps (optional - controlled by $DisableSmartScreen variable)
-    if ($DisableSmartScreen -eq $true) {
-        Write-Host "Disabling SmartScreen for Store Apps..." -ForegroundColor Yellow
-        Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Type DWord -Value 0
-        Write-Host "  SmartScreen for Store Apps disabled" -ForegroundColor Green
-    } else {
-        Write-Host "Skipping SmartScreen disable (security feature - set `$DisableSmartScreen=`$true to disable)" -ForegroundColor Gray
-    }
+    # Step 12: Disable SmartScreen for Store Apps
+    Write-Host "Disabling SmartScreen for Store Apps..." -ForegroundColor Yellow
+    Set-ItemProperty -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\System" -Name "EnableSmartScreen" -Type DWord -Value 0
+    Write-Host "  SmartScreen for Store Apps disabled" -ForegroundColor Green
 
     #############################################
     # SUMMARY
@@ -234,11 +229,7 @@ try {
     Write-Host ""
     Write-Host "Network Privacy:" -ForegroundColor White
     Write-Host "  - WiFi Sense: Disabled" -ForegroundColor Green
-    if ($DisableSmartScreen -eq $true) {
-        Write-Host "  - SmartScreen (Store): Disabled" -ForegroundColor Green
-    } else {
-        Write-Host "  - SmartScreen (Store): Kept Enabled (security)" -ForegroundColor Yellow
-    }
+    Write-Host "  - SmartScreen (Store): Disabled" -ForegroundColor Green
     Write-Host ""
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
