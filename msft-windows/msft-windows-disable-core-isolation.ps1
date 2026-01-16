@@ -212,9 +212,33 @@ try {
 
     Write-Host ""
 
-    # Note: We intentionally do NOT disable the hypervisor (bcdedit hypervisorlaunchtype Off)
-    # because some GPU drivers depend on it being present. Disabling just HVCI/VBS via registry
-    # is sufficient to remove the security overhead while maintaining driver compatibility.
+    # Step 7: Ensure hypervisor is enabled (some GPU drivers depend on it)
+    Write-Host "Step 7: Ensuring hypervisor is enabled (for GPU driver compatibility)..." -ForegroundColor Yellow
+
+    $hypervisorRestored = $false
+    try {
+        $result = bcdedit /set "{current}" hypervisorlaunchtype Auto 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Hypervisor Launch Type set to Auto" -ForegroundColor Green
+            $hypervisorRestored = $true
+        } else {
+            Write-Host "  Hypervisor setting: $result" -ForegroundColor Gray
+        }
+    } catch {
+        Write-Host "  Could not modify hypervisor launch type" -ForegroundColor Gray
+    }
+
+    try {
+        # Remove vsmlaunchtype if it was previously set to Off
+        $result = bcdedit /deletevalue "{current}" vsmlaunchtype 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  VSM Launch Type reset to default" -ForegroundColor Green
+        }
+    } catch {
+        # Ignore - may not exist
+    }
+
+    Write-Host ""
 
     # Final summary - report actual status
     Write-Host "=== Configuration Summary ===" -ForegroundColor Cyan
@@ -238,7 +262,11 @@ try {
     } else {
         Write-Host "Kernel DMA Protection: Failed to configure" -ForegroundColor Yellow
     }
-    Write-Host "Hypervisor: Preserved (for GPU driver compatibility)" -ForegroundColor Cyan
+    if ($hypervisorRestored) {
+        Write-Host "Hypervisor: Enabled (for GPU driver compatibility)" -ForegroundColor Green
+    } else {
+        Write-Host "Hypervisor: Could not verify (check manually if issues occur)" -ForegroundColor Yellow
+    }
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
 
