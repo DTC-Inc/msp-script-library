@@ -102,30 +102,16 @@ try {
     }
     Write-Host ""
 
-    # Step 1b: Set Balanced power plan as active
-    Write-Host "Step 1b: Setting Balanced power plan as active..." -ForegroundColor Yellow
+    # Step 1b: Disable display timeout on ALL power plans (never turn off display)
+    Write-Host "Step 1b: Disabling display timeout on all power plans..." -ForegroundColor Yellow
     try {
-        # Balanced power plan GUID is the same on all Windows installations
-        $balancedGUID = "381b4222-f694-41f0-9685-ff5bb260df2e"
-        powercfg /setactive $balancedGUID
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  Balanced power plan activated" -ForegroundColor Green
-        } else {
-            Write-Host "  Could not set Balanced plan (may not exist)" -ForegroundColor Yellow
+        # SUB_VIDEO = 7516b95f-f776-4464-8c53-06167f40cc99
+        # VIDEOIDLE (display timeout) = 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e
+        foreach ($scheme in $powerSchemes) {
+            powercfg /setacvalueindex $($scheme.GUID) 7516b95f-f776-4464-8c53-06167f40cc99 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e 0 | Out-Null
+            powercfg /setdcvalueindex $($scheme.GUID) 7516b95f-f776-4464-8c53-06167f40cc99 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e 0 | Out-Null
+            Write-Host "  Display timeout disabled for '$($scheme.Name)'" -ForegroundColor Green
         }
-    } catch {
-        Write-Host "  Failed to set Balanced power plan: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-    Write-Host ""
-
-    # Step 1c: Disable display timeout (never turn off display)
-    Write-Host "Step 1c: Disabling display timeout..." -ForegroundColor Yellow
-    try {
-        # Set display timeout to 0 (never) for both AC and DC
-        powercfg /change monitor-timeout-ac 0
-        powercfg /change monitor-timeout-dc 0
-        Write-Host "  Display timeout disabled (AC): Never" -ForegroundColor Green
-        Write-Host "  Display timeout disabled (DC): Never" -ForegroundColor Green
     } catch {
         Write-Host "  Failed to disable display timeout: $($_.Exception.Message)" -ForegroundColor Yellow
     }
@@ -222,9 +208,6 @@ try {
              # Critical battery actions: 0=Do nothing, 1=Sleep, 2=Hibernate, 3=Shut down
              # Using actual GUIDs: SUB_BATTERY = E73A048D-BF27-4F12-9731-8B2076E8891F, CRITBATTERYACTION = 637EA02F-BBCB-4015-8E2C-A1C7B9C0B546
              powercfg /setdcvalueindex $($scheme.GUID) E73A048D-BF27-4F12-9731-8B2076E8891F 637EA02F-BBCB-4015-8E2C-A1C7B9C0B546 3 | Out-Null
-            
-            # Apply the settings to the scheme
-            powercfg /setactive $($scheme.GUID) | Out-Null
             
             Write-Host "✓ Power scheme '$($scheme.Name)' configured successfully" -ForegroundColor Green
             
@@ -382,6 +365,22 @@ try {
         } catch {
             Write-Host "Could not retrieve detailed power settings" -ForegroundColor Yellow
         }
+    }
+    Write-Host ""
+
+    # Step 8: Set Balanced power plan as active (do this LAST after all configuration)
+    Write-Host "Step 8: Setting Balanced power plan as active..." -ForegroundColor Yellow
+    try {
+        # Balanced power plan GUID is the same on all Windows installations
+        $balancedGUID = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        powercfg /setactive $balancedGUID
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Balanced power plan activated" -ForegroundColor Green
+        } else {
+            Write-Host "  Could not set Balanced plan (may not exist)" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  Failed to set Balanced power plan: $($_.Exception.Message)" -ForegroundColor Yellow
     }
     Write-Host ""
 
