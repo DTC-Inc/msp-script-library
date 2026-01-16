@@ -83,7 +83,6 @@ try {
     $vbsSuccess = $false
     $credGuardSuccess = $false
     $dmaSuccess = $false
-    $vsmSuccess = $false
 
     # Step 1: Check current Core Isolation status
     Write-Host "Step 1: Checking current Core Isolation status..." -ForegroundColor Yellow
@@ -213,36 +212,9 @@ try {
 
     Write-Host ""
 
-    # Step 7: Remove UEFI lock if present (requires bcdedit)
-    Write-Host "Step 7: Removing UEFI lock on VBS..." -ForegroundColor Yellow
-
-    try {
-        # Disable Secure Launch
-        $result = bcdedit /set "{current}" vsmlaunchtype Off 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  VSM Launch Type set to Off" -ForegroundColor Green
-            $vsmSuccess = $true
-        } else {
-            Write-Host "  VSM Launch Type: $result" -ForegroundColor Gray
-        }
-    } catch {
-        Write-Host "  Could not modify VSM launch type" -ForegroundColor Gray
-    }
-
-    try {
-        # Disable Hypervisor launch
-        $result = bcdedit /set "{current}" hypervisorlaunchtype Off 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  Hypervisor Launch Type set to Off" -ForegroundColor Green
-            Write-Host "  WARNING: This will disable Hyper-V, WSL2, and Windows Sandbox!" -ForegroundColor Yellow
-        } else {
-            Write-Host "  Hypervisor setting: $result" -ForegroundColor Gray
-        }
-    } catch {
-        Write-Host "  Could not modify hypervisor launch type" -ForegroundColor Gray
-    }
-
-    Write-Host ""
+    # Note: We intentionally do NOT disable the hypervisor (bcdedit hypervisorlaunchtype Off)
+    # because some GPU drivers depend on it being present. Disabling just HVCI/VBS via registry
+    # is sufficient to remove the security overhead while maintaining driver compatibility.
 
     # Final summary - report actual status
     Write-Host "=== Configuration Summary ===" -ForegroundColor Cyan
@@ -266,11 +238,7 @@ try {
     } else {
         Write-Host "Kernel DMA Protection: Failed to configure" -ForegroundColor Yellow
     }
-    if ($vsmSuccess) {
-        Write-Host "VSM/Hypervisor: Set to Off" -ForegroundColor Green
-    } else {
-        Write-Host "VSM/Hypervisor: Could not modify (may require manual BIOS change)" -ForegroundColor Yellow
-    }
+    Write-Host "Hypervisor: Preserved (for GPU driver compatibility)" -ForegroundColor Cyan
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
 
@@ -290,7 +258,7 @@ try {
     Write-Host "IMPORTANT NOTES:" -ForegroundColor Yellow
     Write-Host "  - A system restart is REQUIRED for changes to take effect" -ForegroundColor Yellow
     Write-Host "  - If UEFI locked, may require BIOS changes to fully disable" -ForegroundColor Yellow
-    Write-Host "  - Hyper-V, WSL2, and Windows Sandbox will be disabled" -ForegroundColor Yellow
+    Write-Host "  - Hyper-V, WSL2, and Windows Sandbox will still work" -ForegroundColor Green
     Write-Host "  - This reduces security - only use on systems that need it" -ForegroundColor Yellow
 
 } catch {
