@@ -2,19 +2,21 @@
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
 # This script configures Windows power management settings:
-# 1. Disables hybrid sleep across all plans
-# 2. Disables fast startup globally
-# 3. Disables hibernation completely  
-# 4. Stops hard disks from turning off on all plans
-# 5. Disables sleeping completely across all plans
-# 6. Allows sleeping only when the lid is shut for laptops across all plans
-# 7. Sets critical battery action to shutdown across all plans
-# 8. Disables USB selective suspend across all plans
-# 9. Disables PCIE Link State Power Management across all plans
-# 10. Enables all wake timers across all plans
-# 11. Sets wireless adapters to maximum performance across all plans
-# 12. Sets video playback to maximum quality across all plans
-# 13. Optimizes multimedia settings for best performance across all plans
+# 1. Sets Balanced power plan as active
+# 2. Disables display timeout (never turn off display)
+# 3. Disables hybrid sleep across all plans
+# 4. Disables fast startup globally
+# 5. Disables hibernation completely
+# 6. Stops hard disks from turning off on all plans
+# 7. Disables sleeping completely across all plans
+# 8. Allows sleeping only when the lid is shut for laptops across all plans
+# 9. Sets critical battery action to shutdown across all plans
+# 10. Disables USB selective suspend across all plans
+# 11. Disables PCIE Link State Power Management across all plans
+# 12. Enables all wake timers across all plans
+# 13. Sets wireless adapters to maximum performance across all plans
+# 14. Sets video playback to maximum quality across all plans
+# 15. Optimizes multimedia settings for best performance across all plans
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -51,7 +53,13 @@ if ($RMM -ne 1) {
 
 # Start the script logic here.
 
-Start-Transcript -Path $LogPath
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop
+    $TranscriptStarted = $true
+} catch {
+    Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
+}
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
@@ -68,6 +76,7 @@ try {
     
     if (-not $isAdmin) {
         Write-Error "This script must be run as Administrator to modify power settings."
+        if ($TranscriptStarted) { Stop-Transcript }
         exit 1
     }
     
@@ -90,6 +99,35 @@ try {
     foreach ($scheme in $powerSchemes) {
         $activeIndicator = if ($scheme.IsActive) { " (ACTIVE)" } else { "" }
         Write-Host "  - $($scheme.Name)$activeIndicator" -ForegroundColor Gray
+    }
+    Write-Host ""
+
+    # Step 1b: Set Balanced power plan as active
+    Write-Host "Step 1b: Setting Balanced power plan as active..." -ForegroundColor Yellow
+    try {
+        # Balanced power plan GUID is the same on all Windows installations
+        $balancedGUID = "381b4222-f694-41f0-9685-ff5bb260df2e"
+        powercfg /setactive $balancedGUID
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  Balanced power plan activated" -ForegroundColor Green
+        } else {
+            Write-Host "  Could not set Balanced plan (may not exist)" -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  Failed to set Balanced power plan: $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+    Write-Host ""
+
+    # Step 1c: Disable display timeout (never turn off display)
+    Write-Host "Step 1c: Disabling display timeout..." -ForegroundColor Yellow
+    try {
+        # Set display timeout to 0 (never) for both AC and DC
+        powercfg /change monitor-timeout-ac 0
+        powercfg /change monitor-timeout-dc 0
+        Write-Host "  Display timeout disabled (AC): Never" -ForegroundColor Green
+        Write-Host "  Display timeout disabled (DC): Never" -ForegroundColor Green
+    } catch {
+        Write-Host "  Failed to disable display timeout: $($_.Exception.Message)" -ForegroundColor Yellow
     }
     Write-Host ""
 
@@ -349,19 +387,21 @@ try {
 
     # Final summary
     Write-Host "=== Configuration Summary ===" -ForegroundColor Cyan
-    Write-Host "✓ Hybrid sleep disabled across all power plans" -ForegroundColor Green
-    Write-Host "✓ Fast startup disabled globally" -ForegroundColor Green
-    Write-Host "✓ Hibernation disabled completely" -ForegroundColor Green
-    Write-Host "✓ Hard disk turn off disabled on all plans" -ForegroundColor Green
-    Write-Host "✓ Automatic sleep disabled across all plans" -ForegroundColor Green
-    Write-Host "✓ Lid close action set to sleep (laptops only)" -ForegroundColor Green
-    Write-Host "✓ Critical battery action set to shutdown" -ForegroundColor Green
-    Write-Host "✓ USB selective suspend disabled for stability" -ForegroundColor Green
-    Write-Host "✓ PCIE Link State Power Management disabled for stability" -ForegroundColor Green
-    Write-Host "✓ Wake timers enabled to allow scheduled tasks" -ForegroundColor Green
-    Write-Host "✓ Wireless adapters set to maximum performance" -ForegroundColor Green
-    Write-Host "✓ Video playback optimized for maximum quality" -ForegroundColor Green
-    Write-Host "✓ Multimedia settings optimized for best performance" -ForegroundColor Green
+    Write-Host "Balanced power plan set as active" -ForegroundColor Green
+    Write-Host "Display timeout disabled (never turn off)" -ForegroundColor Green
+    Write-Host "Hybrid sleep disabled across all power plans" -ForegroundColor Green
+    Write-Host "Fast startup disabled globally" -ForegroundColor Green
+    Write-Host "Hibernation disabled completely" -ForegroundColor Green
+    Write-Host "Hard disk turn off disabled on all plans" -ForegroundColor Green
+    Write-Host "Automatic sleep disabled across all plans" -ForegroundColor Green
+    Write-Host "Lid close action set to sleep (laptops only)" -ForegroundColor Green
+    Write-Host "Critical battery action set to shutdown" -ForegroundColor Green
+    Write-Host "USB selective suspend disabled for stability" -ForegroundColor Green
+    Write-Host "PCIE Link State Power Management disabled for stability" -ForegroundColor Green
+    Write-Host "Wake timers enabled to allow scheduled tasks" -ForegroundColor Green
+    Write-Host "Wireless adapters set to maximum performance" -ForegroundColor Green
+    Write-Host "Video playback optimized for maximum quality" -ForegroundColor Green
+    Write-Host "Multimedia settings optimized for best performance" -ForegroundColor Green
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
     
@@ -371,7 +411,8 @@ try {
 } catch {
     Write-Error "An error occurred during power management configuration: $($_.Exception.Message)"
     Write-Host "Error details: $($_.Exception)" -ForegroundColor Red
+    if ($TranscriptStarted) { Stop-Transcript }
     exit 1
 }
 
-Stop-Transcript 
+if ($TranscriptStarted) { Stop-Transcript }
