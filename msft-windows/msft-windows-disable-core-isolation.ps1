@@ -48,7 +48,13 @@ if (!(Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-Start-Transcript -Path $LogPath
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop
+    $TranscriptStarted = $true
+} catch {
+    Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
+}
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
@@ -65,7 +71,7 @@ try {
 
     if (-not $isAdmin) {
         Write-Error "This script must be run as Administrator to modify system security settings."
-        Stop-Transcript
+        if ($TranscriptStarted) { Stop-Transcript }
         exit 1
     }
 
@@ -290,8 +296,8 @@ try {
 } catch {
     Write-Error "An error occurred: $($_.Exception.Message)"
     Write-Host "Error details: $($_.Exception)" -ForegroundColor Red
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     exit 1
 }
 
-Stop-Transcript
+if ($TranscriptStarted) { Stop-Transcript }
