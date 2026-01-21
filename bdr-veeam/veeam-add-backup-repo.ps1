@@ -1,24 +1,109 @@
 ## Please note this script can only support the following backup repository types ##
-# S3 Compabitble & Local. Both are forced.
+# S3 Compatible & Local. Both are forced.
+
+# ===========================================
+# PowerShell 7 x64 Check, Install, and Bootstrap
+# ===========================================
+
+$ps7Path = "C:\Program Files\PowerShell\7\pwsh.exe"
+
+# If running in PS5, we need to ensure PS7 x64 exists and relaunch
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    
+    # Check if PS7 x64 is installed
+    if (-not (Test-Path $ps7Path)) {
+        Write-Host "PowerShell 7 x64 not found. Installing..."
+        
+        try {
+            $msiUrl = "https://github.com/PowerShell/PowerShell/releases/download/v7.4.7/PowerShell-7.4.7-win-x64.msi"
+            $msiPath = "$env:TEMP\PS7-x64.msi"
+            
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $msiUrl -OutFile $msiPath -UseBasicParsing
+            
+            Write-Host "Downloaded PS7 installer. Running silent install..."
+            $install = Start-Process msiexec.exe -ArgumentList "/i `"$msiPath`" /qn REGISTER_MANIFEST=1" -Wait -NoNewWindow -PassThru
+            
+            Remove-Item $msiPath -Force -ErrorAction SilentlyContinue
+            
+            if (-not (Test-Path $ps7Path)) {
+                Write-Error "PowerShell 7 x64 installation failed"
+                exit 1
+            }
+            Write-Host "PowerShell 7 x64 installed successfully"
+        }
+        catch {
+            Write-Error "Failed to download/install PowerShell 7: $_"
+            exit 1
+        }
+    }
+    
+    # ===========================================
+    # Capture NinjaRMM variables to pass to PS7
+    # ===========================================
+    Write-Host "Capturing RMM variables for PS7 session..."
+    
+    $varsToPass = @{
+        repositoryType      = $repositoryType
+        moveBackups         = $moveBackups
+        description         = $description
+        immutabilityPeriod  = $immutabilityPeriod
+        accessKey           = $accessKey
+        secretKey           = $secretKey
+        endpoint            = $endpoint
+        regionId            = $regionId
+        bucketName          = $bucketName
+        driveLetters        = $driveLetters
+        folderName          = $folderName
+        moveListedBackups   = $moveListedBackups
+    }
+    
+    # Build variable declarations for PS7 session
+    $varBlock = ""
+    foreach ($var in $varsToPass.GetEnumerator()) {
+        if ($null -ne $var.Value) {
+            $escapedValue = $var.Value -replace "'", "''"
+            $varBlock += "`$$($var.Key) = '$escapedValue'`n"
+        }
+    }
+    
+    # Read the script content and inject variables after the bootstrap section
+    $scriptContent = Get-Content -Path $MyInvocation.MyCommand.Path -Raw
+    
+    # Find where the main script starts (after this bootstrap block)
+    $mainScriptMarker = "# === MAIN SCRIPT START ==="
+    $markerPosition = $scriptContent.IndexOf($mainScriptMarker)
+    
+    if ($markerPosition -gt 0) {
+        $mainScript = $scriptContent.Substring($markerPosition + $mainScriptMarker.Length)
+        $fullScript = $varBlock + $mainScript
+        
+        # Write to temp file and execute in PS7
+        $tempScript = "$env:TEMP\veeam-repo-ps7.ps1"
+        $fullScript | Out-File -FilePath $tempScript -Encoding UTF8 -Force
+        
+        Write-Host "Relaunching script in PowerShell 7..."
+        & $ps7Path -NoProfile -ExecutionPolicy Bypass -File $tempScript
+        $exitCode = $LASTEXITCODE
+        
+        Remove-Item $tempScript -Force -ErrorAction SilentlyContinue
+        exit $exitCode
+    }
+    else {
+        Write-Error "Could not find main script marker"
+        exit 1
+    }
+}
+
+# === MAIN SCRIPT START ===
+# ===========================================
+# If we get here, we're running in PS7 x64
+# ===========================================
+Write-Host "Running in PowerShell $($PSVersionTable.PSVersion) - Proceeding with Veeam configuration"
 
 Start-Transcript -Path $env:WINDIR\logs\veeam-add-backup-repo.log
 
 Write-Host "Checking if we are running from a RMM or not."
-
-# if ($rmm -ne 1) { 
-    # Set the repository details
-    # $repositoryType = "Please enter the repository type (1 S3 Compatible; 2 Windows Local; 3 Both)"
-    # $moveBackups = "Enter 1 if you wish to move your local backups"
-    # $description = Read-Host "Please enter the ticket # or project ticket # related to this configuration"
-    # $immutabilityPeriod = Read-Host "Enter how many days every object is immutable for"
-    # $repositoryName = Read-Host "Enter the repository name" | Out-String
-    # $accessKey = Read-Host "Enter the access key"
-    # $secretKey = Read-Host "Enter the secret key"
-    # $endpoint = Read-Host "Enter the S3 endpoint url"
-    # $regionId = Read-Host "Enter the region ID"
-    # $bucketName = Read-Host "Enter the bucket name"
-
-# }
 
 Write-Host "The varialbes are now set."
 Write-Host "Repository type: $repositoryType"
@@ -46,11 +131,6 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             throw "Failed to load Veeam Modules"
             }
  }
-
-# Set Timestamp
-# Write-Host "Getting timestamp for repository names."
-# $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
-# REMOVED TO MAKE FOLDERNAME LOCATION GUID $folderName = $timeStamp
 
 
 if ($repositoryType -eq 1 -Or $repositoryType -eq 3) {
@@ -108,7 +188,6 @@ if ($repositoryType -eq 2 -Or $repositoryType -eq 3){
 
     # Create the local repository
     $filteredDrives | ForEach-Object { 
-        # $timeStamp = [int](Get-Date -UFormat %s -Millisecond 0)
         $repositoryPath = Join-Path -Path $_.DeviceID -ChildPath "\veeam\$FolderName"
         $repositoryName = "Local $FolderName"
         Write-Host "Repository name: $repositoryName"
@@ -143,8 +222,5 @@ if ($moveListedBackups){
     }
 
 }
-
-# Move local/scale out repo to new repo
-
 
 Stop-Transcript
