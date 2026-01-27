@@ -202,20 +202,22 @@ function Send-UserNotification {
 `$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
 `$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
 `$toastXml = @'
-<toast duration="long" scenario="urgent">
+<toast duration="long">
     <visual>
         <binding template="ToastGeneric">
             <text>$toastTitle</text>
             <text>$toastBody</text>
         </binding>
     </visual>
-    <audio src="ms-winsoundevent:Notification.Looping.Alarm2" loop="false"/>
+    <audio src="ms-winsoundevent:Notification.Default"/>
 </toast>
 '@
 `$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
 `$xml.LoadXml(`$toastXml)
 `$toast = New-Object Windows.UI.Notifications.ToastNotification `$xml
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Microsoft.Windows.Shell.RunDialog').Show(`$toast)
+# Use PowerShell's registered app ID for reliable toast display
+`$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier(`$appId).Show(`$toast)
 "@
         # Encode the script for safe execution
         $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($toastScript))
@@ -243,8 +245,8 @@ function Send-UserNotification {
 **Key Points**:
 - No external files created (avoids AV/malware detection that VBS triggers)
 - Uses Windows 10/11 native toast notification API via encoded PowerShell command
+- Uses PowerShell's registered app ID for reliable toast display
 - Scheduled task auto-deletes after 30 minutes via trigger EndBoundary
-- Uses `scenario="urgent"` for high-priority notification appearance
 - Always include a configurable delay (`$NotificationDelaySeconds`) before the impactful action
 
 **Example Usage**:
