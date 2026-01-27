@@ -170,6 +170,93 @@ Invoke-WebRequest -Uri $downloadURL -OutFile $output
 Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
 ```
 
+### User Notification for Impactful Scripts
+
+When a script will perform actions that impact the user (closing applications, rebooting, installing updates that require restarts, etc.), **always display a visible warning to the user** before taking action. This gives users time to save their work.
+
+**Required RMM Variables for User Notifications**:
+```powershell
+## $NotificationDelaySeconds - Delay before impactful action (default: 120 / 2 minutes)
+## $SupportPhone - Phone number to display in notification (optional)
+## $SupportEmail - Email address to display in notification (optional)
+```
+
+**User Notification Pattern** (works when running as SYSTEM from RMM):
+
+The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + toast notification pattern instead, which displays a Windows toast notification in the user's session without triggering AV/malware detection:
+
+```powershell
+function Send-UserNotification {
+    param(
+        [string]$Title,
+        [string]$Message
+    )
+
+    try {
+        # Escape single quotes for embedding in script
+        $toastTitle = $Title -replace "'", "''"
+        $toastBody = $Message -replace "'", "''"
+
+        # Build toast notification PowerShell script (no external files needed)
+        $toastScript = @"
+`$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+`$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+`$toastXml = @'
+<toast duration="long" scenario="urgent">
+    <visual>
+        <binding template="ToastGeneric">
+            <text>$toastTitle</text>
+            <text>$toastBody</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Looping.Alarm2" loop="false"/>
+</toast>
+'@
+`$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+`$xml.LoadXml(`$toastXml)
+`$toast = New-Object Windows.UI.Notifications.ToastNotification `$xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Microsoft.Windows.Shell.RunDialog').Show(`$toast)
+"@
+        # Encode the script for safe execution
+        $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($toastScript))
+
+        # Create scheduled task to run in user context (works when script runs as SYSTEM)
+        $taskName = "UserNotification_$(Get-Random)"
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encodedScript"
+        $principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
+        $trigger.EndBoundary = (Get-Date).AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss")
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DeleteExpiredTaskAfter 00:00:01
+
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Trigger $trigger -Settings $settings -Force | Out-Null
+        Start-ScheduledTask -TaskName $taskName
+
+        Write-Host "  [SUCCESS] User notification displayed"
+        return $true
+    } catch {
+        Write-Host "  [WARNING] Could not display user notification: $_"
+        return $false
+    }
+}
+```
+
+**Key Points**:
+- No external files created (avoids AV/malware detection that VBS triggers)
+- Uses Windows 10/11 native toast notification API via encoded PowerShell command
+- Scheduled task auto-deletes after 30 minutes via trigger EndBoundary
+- Uses `scenario="urgent"` for high-priority notification appearance
+- Always include a configurable delay (`$NotificationDelaySeconds`) before the impactful action
+
+**Example Usage**:
+```powershell
+# Before closing applications
+if ($runningProcs.Count -gt 0 -and $ForceClose -eq 1) {
+    Send-UserNotification -Title "Security Update" -Message "Applications will close in 2 minutes. Please save your work!"
+    Start-Sleep -Seconds $NotificationDelaySeconds
+    # Now close applications...
+}
+```
+
 ### API Integration Best Practices
 
 **Anthropic API Integration** (from `msft-windows-upgrade-diagnostics.ps1`):
