@@ -183,50 +183,54 @@ When a script will perform actions that impact the user (closing applications, r
 
 **User Notification Pattern** (works when running as SYSTEM from RMM):
 
-The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + VBScript pattern instead, which displays a modal message box in the user's session:
+The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + toast notification pattern instead, which displays a Windows toast notification in the user's session without triggering AV/malware detection:
 
 ```powershell
 function Send-UserNotification {
     param(
         [string]$Title,
-        [string]$Message,
-        [string]$SupportPhone,
-        [string]$SupportEmail
+        [string]$Message
     )
 
-    # Build contact info
-    $contactInfo = "If you have questions, contact your IT administrator."
-    if ($SupportPhone -or $SupportEmail) {
-        $contactParts = @()
-        if ($SupportPhone) { $contactParts += "Phone: $SupportPhone" }
-        if ($SupportEmail) { $contactParts += "Email: $SupportEmail" }
-        $contactInfo = "Questions? Contact IT Support: $($contactParts -join ' | ')"
-    }
-
-    $fullMessage = "$Message`n`n$contactInfo"
-
     try {
-        # Create self-deleting VBS in a location all users can access
-        $vbsPath = "C:\Users\Public\notification_$(Get-Random).vbs"
-        $vbsContent = @"
-MsgBox "$($fullMessage -replace '"', '""' -replace "`r`n", '" & vbCrLf & "')", vbExclamation + vbSystemModal, "$Title"
-' Self-delete after user clicks OK
-Set fso = CreateObject("Scripting.FileSystemObject")
-fso.DeleteFile WScript.ScriptFullName, True
+        # Escape single quotes for embedding in script
+        $toastTitle = $Title -replace "'", "''"
+        $toastBody = $Message -replace "'", "''"
+
+        # Build toast notification PowerShell script (no external files needed)
+        $toastScript = @"
+`$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
+`$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
+`$toastXml = @'
+<toast duration="long" scenario="urgent">
+    <visual>
+        <binding template="ToastGeneric">
+            <text>$toastTitle</text>
+            <text>$toastBody</text>
+        </binding>
+    </visual>
+    <audio src="ms-winsoundevent:Notification.Looping.Alarm2" loop="false"/>
+</toast>
+'@
+`$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
+`$xml.LoadXml(`$toastXml)
+`$toast = New-Object Windows.UI.Notifications.ToastNotification `$xml
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Microsoft.Windows.Shell.RunDialog').Show(`$toast)
 "@
-        $vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII
+        # Encode the script for safe execution
+        $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($toastScript))
 
         # Create scheduled task to run in user context (works when script runs as SYSTEM)
         $taskName = "UserNotification_$(Get-Random)"
-        $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`""
+        $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -WindowStyle Hidden -EncodedCommand $encodedScript"
         $principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date)
+        $trigger.EndBoundary = (Get-Date).AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss")
         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DeleteExpiredTaskAfter 00:00:01
 
-        $task = Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force
-        $task.Triggers | ForEach-Object { $_.EndBoundary = (Get-Date).AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss") }
-        $task | Set-ScheduledTask | Out-Null
-
+        Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Trigger $trigger -Settings $settings -Force | Out-Null
         Start-ScheduledTask -TaskName $taskName
+
         Write-Host "  [SUCCESS] User notification displayed"
         return $true
     } catch {
@@ -237,18 +241,17 @@ fso.DeleteFile WScript.ScriptFullName, True
 ```
 
 **Key Points**:
-- VBS file goes in `C:\Users\Public\` so all users can access it
-- VBS self-deletes after user clicks OK
-- Scheduled task auto-deletes after 30 minutes
-- Uses `vbSystemModal` flag to ensure message appears on top
+- No external files created (avoids AV/malware detection that VBS triggers)
+- Uses Windows 10/11 native toast notification API via encoded PowerShell command
+- Scheduled task auto-deletes after 30 minutes via trigger EndBoundary
+- Uses `scenario="urgent"` for high-priority notification appearance
 - Always include a configurable delay (`$NotificationDelaySeconds`) before the impactful action
-- Always provide support contact info when available
 
 **Example Usage**:
 ```powershell
 # Before closing applications
 if ($runningProcs.Count -gt 0 -and $ForceClose -eq 1) {
-    Send-UserNotification -Title "Security Update" -Message "Applications will close in 2 minutes. Please save your work!" -SupportPhone $SupportPhone -SupportEmail $SupportEmail
+    Send-UserNotification -Title "Security Update" -Message "Applications will close in 2 minutes. Please save your work!"
     Start-Sleep -Seconds $NotificationDelaySeconds
     # Now close applications...
 }
