@@ -170,6 +170,90 @@ Invoke-WebRequest -Uri $downloadURL -OutFile $output
 Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
 ```
 
+### User Notification for Impactful Scripts
+
+When a script will perform actions that impact the user (closing applications, rebooting, installing updates that require restarts, etc.), **always display a visible warning to the user** before taking action. This gives users time to save their work.
+
+**Required RMM Variables for User Notifications**:
+```powershell
+## $NotificationDelaySeconds - Delay before impactful action (default: 120 / 2 minutes)
+## $SupportPhone - Phone number to display in notification (optional)
+## $SupportEmail - Email address to display in notification (optional)
+```
+
+**User Notification Pattern** (works when running as SYSTEM from RMM):
+
+The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + VBScript pattern instead, which displays a modal message box in the user's session:
+
+```powershell
+function Send-UserNotification {
+    param(
+        [string]$Title,
+        [string]$Message,
+        [string]$SupportPhone,
+        [string]$SupportEmail
+    )
+
+    # Build contact info
+    $contactInfo = "If you have questions, contact your IT administrator."
+    if ($SupportPhone -or $SupportEmail) {
+        $contactParts = @()
+        if ($SupportPhone) { $contactParts += "Phone: $SupportPhone" }
+        if ($SupportEmail) { $contactParts += "Email: $SupportEmail" }
+        $contactInfo = "Questions? Contact IT Support: $($contactParts -join ' | ')"
+    }
+
+    $fullMessage = "$Message`n`n$contactInfo"
+
+    try {
+        # Create self-deleting VBS in a location all users can access
+        $vbsPath = "C:\Users\Public\notification_$(Get-Random).vbs"
+        $vbsContent = @"
+MsgBox "$($fullMessage -replace '"', '""' -replace "`r`n", '" & vbCrLf & "')", vbExclamation + vbSystemModal, "$Title"
+' Self-delete after user clicks OK
+Set fso = CreateObject("Scripting.FileSystemObject")
+fso.DeleteFile WScript.ScriptFullName, True
+"@
+        $vbsContent | Out-File -FilePath $vbsPath -Encoding ASCII
+
+        # Create scheduled task to run in user context (works when script runs as SYSTEM)
+        $taskName = "UserNotification_$(Get-Random)"
+        $action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsPath`""
+        $principal = New-ScheduledTaskPrincipal -GroupId "S-1-5-32-545" -RunLevel Limited
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -DeleteExpiredTaskAfter 00:00:01
+
+        $task = Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings -Force
+        $task.Triggers | ForEach-Object { $_.EndBoundary = (Get-Date).AddMinutes(30).ToString("yyyy-MM-ddTHH:mm:ss") }
+        $task | Set-ScheduledTask | Out-Null
+
+        Start-ScheduledTask -TaskName $taskName
+        Write-Host "  [SUCCESS] User notification displayed"
+        return $true
+    } catch {
+        Write-Host "  [WARNING] Could not display user notification: $_"
+        return $false
+    }
+}
+```
+
+**Key Points**:
+- VBS file goes in `C:\Users\Public\` so all users can access it
+- VBS self-deletes after user clicks OK
+- Scheduled task auto-deletes after 30 minutes
+- Uses `vbSystemModal` flag to ensure message appears on top
+- Always include a configurable delay (`$NotificationDelaySeconds`) before the impactful action
+- Always provide support contact info when available
+
+**Example Usage**:
+```powershell
+# Before closing applications
+if ($runningProcs.Count -gt 0 -and $ForceClose -eq 1) {
+    Send-UserNotification -Title "Security Update" -Message "Applications will close in 2 minutes. Please save your work!" -SupportPhone $SupportPhone -SupportEmail $SupportEmail
+    Start-Sleep -Seconds $NotificationDelaySeconds
+    # Now close applications...
+}
+```
+
 ### API Integration Best Practices
 
 **Anthropic API Integration** (from `msft-windows-upgrade-diagnostics.ps1`):
