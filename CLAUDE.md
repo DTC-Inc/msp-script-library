@@ -183,42 +183,36 @@ When a script will perform actions that impact the user (closing applications, r
 
 **User Notification Pattern** (works when running as SYSTEM from RMM):
 
-The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + toast notification pattern instead, which displays a Windows toast notification in the user's session without triggering AV/malware detection:
+The standard `msg.exe` command often fails on modern Windows workstations. Use this scheduled task + balloon notification pattern instead, which displays a system tray balloon tip in the user's session. This method is more reliable than Windows toast notifications and doesn't trigger AV/malware detection like VBScript:
 
 ```powershell
 function Send-UserNotification {
     param(
         [string]$Title,
-        [string]$Message
+        [string]$Message,
+        [int]$DurationSeconds = 30
     )
 
     try {
-        # Escape single quotes for embedding in script
-        $toastTitle = $Title -replace "'", "''"
-        $toastBody = $Message -replace "'", "''"
+        # Escape quotes for embedding in script
+        $balloonTitle = $Title -replace '"', '`"'
+        $balloonBody = $Message -replace '"', '`"'
 
-        # Build toast notification PowerShell script (no external files needed)
-        $toastScript = @"
-`$null = [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime]
-`$null = [Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime]
-`$toastXml = @'
-<toast duration="long" scenario="urgent">
-    <visual>
-        <binding template="ToastGeneric">
-            <text>$toastTitle</text>
-            <text>$toastBody</text>
-        </binding>
-    </visual>
-    <audio src="ms-winsoundevent:Notification.Looping.Alarm2" loop="false"/>
-</toast>
-'@
-`$xml = New-Object Windows.Data.Xml.Dom.XmlDocument
-`$xml.LoadXml(`$toastXml)
-`$toast = New-Object Windows.UI.Notifications.ToastNotification `$xml
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Microsoft.Windows.Shell.RunDialog').Show(`$toast)
+        # PowerShell script to show balloon notification using Windows Forms
+        $balloonScript = @"
+Add-Type -AssemblyName System.Windows.Forms
+`$balloon = New-Object System.Windows.Forms.NotifyIcon
+`$balloon.Icon = [System.Drawing.SystemIcons]::Warning
+`$balloon.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Warning
+`$balloon.BalloonTipTitle = "$balloonTitle"
+`$balloon.BalloonTipText = "$balloonBody"
+`$balloon.Visible = `$true
+`$balloon.ShowBalloonTip($($DurationSeconds * 1000))
+Start-Sleep -Seconds $DurationSeconds
+`$balloon.Dispose()
 "@
         # Encode the script for safe execution
-        $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($toastScript))
+        $encodedScript = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($balloonScript))
 
         # Create scheduled task to run in user context (works when script runs as SYSTEM)
         $taskName = "UserNotification_$(Get-Random)"
@@ -241,10 +235,11 @@ function Send-UserNotification {
 ```
 
 **Key Points**:
+- Uses `System.Windows.Forms.NotifyIcon` - a reliable, mature API that works consistently
 - No external files created (avoids AV/malware detection that VBS triggers)
-- Uses Windows 10/11 native toast notification API via encoded PowerShell command
+- Runs via scheduled task in user context (works when main script runs as SYSTEM)
 - Scheduled task auto-deletes after 30 minutes via trigger EndBoundary
-- Uses `scenario="urgent"` for high-priority notification appearance
+- Balloon tip shows in system tray with warning icon
 - Always include a configurable delay (`$NotificationDelaySeconds`) before the impactful action
 
 **Example Usage**:
