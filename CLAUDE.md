@@ -195,8 +195,8 @@ function Send-UserNotification {
 
     try {
         # Escape quotes for embedding in script
-        $balloonTitle = $Title -replace '"', '\"'
-        $balloonBody = $Message -replace '"', '\"'
+        $balloonTitle = $Title -replace '"', '`"'
+        $balloonBody = $Message -replace '"', '`"'
 
         # PowerShell script to show balloon notification using Windows Forms
         $balloonScript = @"
