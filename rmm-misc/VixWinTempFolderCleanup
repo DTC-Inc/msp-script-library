@@ -8,7 +8,7 @@
     Maintains 5 rotating archive versions for recovery purposes.
     Runs only on workstations, never on servers.
 .NOTES
-    Version: 1.1.0
+    Version: 1.1.3
     Exit Codes:
         0 = Success (or not applicable - server, no folder, under threshold)
         1 = General failure
@@ -18,7 +18,7 @@
 #>
 
 #region Version
-$ScriptVersion = "1.1.2"
+$ScriptVersion = "1.1.3"
 #endregion
 
 ## ============================================================================
@@ -206,7 +206,8 @@ function Get-FolderSizeMB {
 }
 
 function Get-UnixTimestamp {
-    return [int][double]::Parse((Get-Date -UFormat %s))
+    # Use DateTimeOffset for locale-independent timestamp (avoids decimal separator issues)
+    return [int64]([DateTimeOffset]::UtcNow).ToUnixTimeSeconds()
 }
 
 function Get-ArchivePath {
@@ -262,15 +263,19 @@ function New-VixTempArchive {
         $filePaths = @()
 
         foreach ($file in $Files) {
+            $stream = $null
             try {
-                # Test if file is accessible
-                $null = [System.IO.File]::OpenRead($file.FullName).Close()
+                # Test if file is accessible (with proper resource disposal)
+                $stream = [System.IO.File]::OpenRead($file.FullName)
                 $filePaths += $file.FullName
                 $archivedFiles += $file
                 $originalSizeBytes += $file.Length
             }
             catch {
                 Write-Log "[WARN] Could not access file (skipping): $($file.FullName) - $_" -Level WARN
+            }
+            finally {
+                if ($stream) { $stream.Dispose() }
             }
         }
 
@@ -583,7 +588,7 @@ try {
         Stop-Transcript
         exit 2
     }
-    Write-Log "[INFO] Disk space check: $($spaceCheck.FreeMB) GB free, $($spaceCheck.RequiredMB) MB required. OK."
+    Write-Log "[INFO] Disk space check: $($spaceCheck.FreeMB) MB free, $($spaceCheck.RequiredMB) MB required. OK."
 
     # 9. Create archive
     $archivePath = Get-ArchivePath
