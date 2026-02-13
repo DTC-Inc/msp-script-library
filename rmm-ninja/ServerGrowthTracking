@@ -239,14 +239,12 @@ function Import-HistoryFromFile {
         return $history
     }
     catch {
+        Write-VerboseLog "Import-HistoryFromFile: Failed to parse '$FilePath': $_"
         return $null
     }
 }
 
 function Load-History {
-    $maxRetries = 3
-    $retryDelay = 5
-
     if (-not (Test-Path $Script:HISTORY_FILE)) {
         Write-VerboseLog "Existing JSON: No - creating new history"
         return New-EmptyHistory
@@ -255,21 +253,39 @@ function Load-History {
     $fileInfo = Get-Item $Script:HISTORY_FILE -ErrorAction SilentlyContinue
     Write-VerboseLog "Existing JSON: Yes ($([math]::Round($fileInfo.Length / 1KB)) KB)"
 
+    # Attempt to read and parse, retrying only on I/O errors
+    $maxRetries = 3
+    $retryDelay = 5
+    $content = $null
+
     for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            $content = Get-Content -Path $Script:HISTORY_FILE -Raw -Encoding UTF8 -ErrorAction Stop
+            break  # I/O succeeded, move on to parsing
+        }
+        catch {
+            Write-Log "WARNING: Failed to read history file (attempt $attempt/$maxRetries): $_"
+            if ($attempt -lt $maxRetries) {
+                Start-Sleep -Seconds $retryDelay
+            }
+        }
+    }
+
+    # If I/O succeeded, attempt parse (no retry - parse errors are not transient)
+    if ($null -ne $content) {
         $result = Import-HistoryFromFile -FilePath $Script:HISTORY_FILE
         if ($null -ne $result) {
             return $result
         }
-
-        if ($attempt -lt $maxRetries) {
-            Write-Log "WARNING: Failed to load history (attempt $attempt/$maxRetries), retrying in ${retryDelay}s..."
-            Start-Sleep -Seconds $retryDelay
-        }
+        Write-Log "WARNING: Primary history file failed to parse."
+    }
+    else {
+        Write-Log "WARNING: Could not read primary history file after $maxRetries attempts."
     }
 
-    # Primary file corrupted after all retries - attempt backup recovery
+    # Primary file failed - attempt backup recovery
     if (Test-Path $Script:BACKUP_FILE) {
-        Write-Log "WARNING: Primary history corrupted. Attempting backup recovery..."
+        Write-Log "WARNING: Attempting backup recovery..."
         $backupResult = Import-HistoryFromFile -FilePath $Script:BACKUP_FILE
         if ($null -ne $backupResult) {
             Write-Log "Backup recovery successful - restored from $($Script:BACKUP_FILE)"
@@ -279,7 +295,7 @@ function Load-History {
     }
 
     # Both primary and backup failed - rename corrupted file and start fresh
-    Write-Log "WARNING: History unrecoverable after $maxRetries attempts. Renaming and starting fresh."
+    Write-Log "WARNING: History unrecoverable. Renaming and starting fresh."
     $corruptedPath = $Script:HISTORY_FILE + ".corrupted"
     try {
         Move-Item -Path $Script:HISTORY_FILE -Destination $corruptedPath -Force -ErrorAction Stop
@@ -512,8 +528,10 @@ function Update-History {
         }
 
         if ($prunedHistory.Count -gt 0) {
-            $oldest = $prunedHistory[0].timestamp.Substring(0, 10)
-            $newest = $prunedHistory[$prunedHistory.Count - 1].timestamp.Substring(0, 10)
+            $oldestTs = $prunedHistory[0].timestamp
+            $newestTs = $prunedHistory[$prunedHistory.Count - 1].timestamp
+            $oldest = if ($oldestTs.Length -ge 10) { $oldestTs.Substring(0, 10) } else { $oldestTs }
+            $newest = if ($newestTs.Length -ge 10) { $newestTs.Substring(0, 10) } else { $newestTs }
             Write-VerboseLog "Drive ${letter}: History - $($prunedHistory.Count) points loaded, $afterCount after pruning (oldest: $oldest, newest: $newest)"
         }
     }
