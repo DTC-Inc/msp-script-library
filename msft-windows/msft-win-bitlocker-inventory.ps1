@@ -1,11 +1,19 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## $RMM = 1
+## $RMMRecoveryPasswordField = "bitlockerRecoveryPassword"  # RMM custom field name for all recovery passwords
+## $RMMBitlockerStatusField = "bitlockerStatus"             # RMM custom field name for BitLocker status
 
-# Getting input from user if not running from RMM else set variables from RMM.
-
-# This script should only be run from a RMM
+# This script inventories BitLocker status across all volumes:
+# - Checks BitLocker encryption status on all drives
+# - Generates recovery passwords if missing
+# - Backs up recovery keys to Active Directory (if domain-joined)
+# - Writes recovery passwords and status to RMM custom fields
 
 $ScriptLogName = "msft-win-bitlocker-inventory.log"
+
+# Default values
+if ($null -eq $RMMRecoveryPasswordField) { $RMMRecoveryPasswordField = "bitlockerRecoveryPassword" }
+if ($null -eq $RMMBitlockerStatusField) { $RMMBitlockerStatusField = "bitlockerStatus" }
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -22,23 +30,16 @@ if ($RMM -ne 1) {
     }
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+} else {
+    if ($null -ne $RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
     } else {
         $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
     }
 
     if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
+        $Description = "RMM-initiated BitLocker inventory"
+    }
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -188,8 +189,44 @@ foreach ($volume in $volumes) {
     }
 }
 
-# Output the recovery passwords (Disabled for now)
-# $recoveryPasswords
+# Output recovery passwords and status to RMM custom fields
+if ($RMM -eq 1) {
+    Write-Host ""
+    Write-Host "=== RMM Output ===" -ForegroundColor Cyan
 
+    # Build recovery password field (all drives in one field)
+    $recoveryEntries = @()
+    foreach ($drive in $recoveryPasswords.Keys) {
+        $pw = $recoveryPasswords[$drive]
+        if ($pw) {
+            $recoveryEntries += "$drive $pw"
+        }
+    }
+    $recoveryFieldValue = $recoveryEntries -join " | "
+
+    # Build status field (all drives in one field)
+    $statusEntries = @()
+    foreach ($volume in $volumes) {
+        $encStatus = if ($volume.ProtectionStatus -eq "On") { "Encrypted" } else { "Not Encrypted" }
+        $statusEntries += "$($volume.MountPoint) $encStatus"
+    }
+    $statusFieldValue = $statusEntries -join " | "
+
+    Write-Host "Recovery field: $recoveryFieldValue"
+    Write-Host "Status field: $statusFieldValue"
+
+    $ninjaCmd = Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue
+    if ($ninjaCmd) {
+        if ($recoveryFieldValue) {
+            Ninja-Property-Set $RMMRecoveryPasswordField "$recoveryFieldValue"
+            Write-Host "NinjaRMM: Set $RMMRecoveryPasswordField" -ForegroundColor Green
+        }
+        Ninja-Property-Set $RMMBitlockerStatusField "$statusFieldValue"
+        Write-Host "NinjaRMM: Set $RMMBitlockerStatusField" -ForegroundColor Green
+    } else {
+        Write-Host "BITLOCKER_RECOVERY_PASSWORDS=$recoveryFieldValue"
+        Write-Host "BITLOCKER_STATUS=$statusFieldValue"
+    }
+}
 
 Stop-Transcript

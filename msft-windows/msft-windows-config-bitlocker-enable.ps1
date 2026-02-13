@@ -3,6 +3,7 @@
 ## $EncryptDataDrives = $true    # Also encrypt fixed data drives
 ## $UseUsedSpaceOnly = $true     # Faster encryption, only encrypts used space
 ## $RMMRecoveryPasswordField = "bitlockerRecoveryPassword"  # RMM custom field name for all recovery passwords
+## $RMMBitlockerStatusField = "bitlockerStatus"             # RMM custom field name for BitLocker status
 
 # This script enables BitLocker encryption:
 # - Checks for TPM 2.0 (exits gracefully if not present)
@@ -21,6 +22,7 @@ $ScriptLogName = "msft-windows-config-bitlocker-enable.log"
 if ($null -eq $EncryptDataDrives) { $EncryptDataDrives = $true }
 if ($null -eq $UseUsedSpaceOnly) { $UseUsedSpaceOnly = $true }
 if ($null -eq $RMMRecoveryPasswordField) { $RMMRecoveryPasswordField = "bitlockerRecoveryPassword" }
+if ($null -eq $RMMBitlockerStatusField) { $RMMBitlockerStatusField = "bitlockerStatus" }
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -339,16 +341,28 @@ Encryption Method: XtsAes256
         $recoveryFieldValue = $recoveryEntries -join " | "
         Write-Host "Recovery field value: $recoveryFieldValue"
 
+        # Build status field (all drives in one field)
+        $statusEntries = @()
+        foreach ($vol in $allVolumes) {
+            $encStatus = if ($vol.ProtectionStatus -eq "On") { "Encrypted" } else { "Not Encrypted" }
+            $statusEntries += "$($vol.MountPoint) $encStatus"
+        }
+        $statusFieldValue = $statusEntries -join " | "
+        Write-Host "Status field value: $statusFieldValue"
+
         # Try NinjaRMM first
         $ninjaCmd = Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue
         if ($ninjaCmd) {
-            if ($RMMRecoveryPasswordField) {
+            if ($recoveryFieldValue) {
                 Ninja-Property-Set $RMMRecoveryPasswordField "$recoveryFieldValue"
                 Write-Host "NinjaRMM: Set $RMMRecoveryPasswordField" -ForegroundColor Green
             }
+            Ninja-Property-Set $RMMBitlockerStatusField "$statusFieldValue"
+            Write-Host "NinjaRMM: Set $RMMBitlockerStatusField" -ForegroundColor Green
         } else {
             # Generic RMM output - recovery info in parseable format for any RMM
             Write-Host "BITLOCKER_RECOVERY_PASSWORDS=$recoveryFieldValue"
+            Write-Host "BITLOCKER_STATUS=$statusFieldValue"
         }
     }
 
