@@ -60,12 +60,14 @@ function Get-DomainJoinStatus {
 }
 
 # Function to check if BitLocker is enabled on a volume
+# Checks VolumeStatus instead of ProtectionStatus because protection can be
+# suspended (Off) while the drive is still encrypted (e.g., pending reboot, firmware updates)
 function Get-BitLockerStatus {
     param(
         [string]$DriveLetter
     )
     $status = Get-BitLockerVolume -MountPoint $DriveLetter
-    return $status.ProtectionStatus -eq "On"
+    return $status.VolumeStatus -ne "FullyDecrypted"
 }
 
 # Function to get or generate a BitLocker recovery password for a volume
@@ -207,7 +209,7 @@ if ($RMM -eq 1) {
     # Build status field (all drives in one field)
     $statusEntries = @()
     foreach ($volume in $volumes) {
-        $encStatus = if ($volume.ProtectionStatus -eq "On") { "Encrypted" } else { "Not Encrypted" }
+        $encStatus = if ($volume.VolumeStatus -ne "FullyDecrypted") { "Encrypted" } else { "Not Encrypted" }
         $statusEntries += "$($volume.MountPoint) $encStatus"
     }
     $statusFieldValue = $statusEntries -join " | "

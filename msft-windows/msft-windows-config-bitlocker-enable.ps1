@@ -341,10 +341,10 @@ Encryption Method: XtsAes256
         $recoveryFieldValue = $recoveryEntries -join " | "
         Write-Host "Recovery field value: $recoveryFieldValue"
 
-        # Build status field (all drives in one field)
+        # Build status field (all drives, not just encrypted ones)
         $statusEntries = @()
-        foreach ($vol in $allVolumes) {
-            $encStatus = if ($vol.ProtectionStatus -eq "On") { "Encrypted" } else { "Not Encrypted" }
+        foreach ($vol in (Get-BitLockerVolume)) {
+            $encStatus = if ($vol.VolumeStatus -ne "FullyDecrypted") { "Encrypted" } else { "Not Encrypted" }
             $statusEntries += "$($vol.MountPoint) $encStatus"
         }
         $statusFieldValue = $statusEntries -join " | "
