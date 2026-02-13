@@ -54,6 +54,16 @@ $Script:EXCLUDED_LABELS = @("Recovery", "EFI", "System Reserved", "SYSTEM", "Win
 $Script:EXCLUDED_FILESYSTEMS = @("FAT", "FAT32", "RAW")
 $Script:JSON_VERSION = "1.0"
 
+# Ninja RMM field name constants (Section 10)
+$Script:FIELD_SERVER_STATUS = "Server Storage Status"
+$Script:FIELD_OS_STATUS = "OS Drive Status"
+$Script:FIELD_OS_GROWTH = "OS Drive GB per Month"
+$Script:FIELD_OS_DAYS = "OS Drive Days Until Full"
+$Script:FIELD_DATA_LETTER = "Data Drive {0} Letter"
+$Script:FIELD_DATA_STATUS = "Data Drive {0} Status"
+$Script:FIELD_DATA_GROWTH = "Data Drive {0} GB per Month"
+$Script:FIELD_DATA_DAYS = "Data Drive {0} Days Until Full"
+
 # ============================================================================
 # LOGGING
 # ============================================================================
@@ -145,6 +155,23 @@ function Save-LogFile {
 }
 
 # ============================================================================
+# SAFE TIMESTAMP PARSING HELPER
+# ============================================================================
+function ConvertTo-SafeDateTime {
+    <#
+    .SYNOPSIS
+        Safely parses a timestamp string, returning $null on failure instead of throwing.
+    #>
+    param([string]$Timestamp)
+
+    $parsed = $null
+    if ([DateTime]::TryParse($Timestamp, [ref]$parsed)) {
+        return $parsed
+    }
+    return $null
+}
+
+# ============================================================================
 # JSON PERSISTENCE (Section 6)
 # ============================================================================
 function New-EmptyHistory {
@@ -154,6 +181,65 @@ function New-EmptyHistory {
         lastUpdated          = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
         excessDriveAlertSent = $false
         drives               = [ordered]@{}
+    }
+}
+
+function Import-HistoryFromFile {
+    <#
+    .SYNOPSIS
+        Attempts to parse a history JSON file. Returns $null on failure.
+    #>
+    param([string]$FilePath)
+
+    if (-not (Test-Path $FilePath)) { return $null }
+
+    try {
+        $content = Get-Content -Path $FilePath -Raw -Encoding UTF8 -ErrorAction Stop
+        $data = $content | ConvertFrom-Json -ErrorAction Stop
+
+        if (-not $data.version -or -not $data.drives) {
+            throw "Invalid JSON structure - missing version or drives"
+        }
+
+        $history = [ordered]@{
+            version              = $data.version
+            deviceId             = if ($data.deviceId) { $data.deviceId } else { $env:COMPUTERNAME }
+            lastUpdated          = if ($data.lastUpdated) { $data.lastUpdated } else { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss") }
+            excessDriveAlertSent = if ($null -ne $data.excessDriveAlertSent) { [bool]$data.excessDriveAlertSent } else { $false }
+            drives               = [ordered]@{}
+        }
+
+        foreach ($prop in $data.drives.PSObject.Properties) {
+            $driveLetter = $prop.Name
+            $driveData = $prop.Value
+
+            $historyEntries = [System.Collections.ArrayList]::new()
+            if ($driveData.history) {
+                foreach ($entry in $driveData.history) {
+                    [void]$historyEntries.Add([ordered]@{
+                        timestamp    = $entry.timestamp
+                        usedGB       = [double]$entry.usedGB
+                        freeGB       = [double]$entry.freeGB
+                        usagePercent = [double]$entry.usagePercent
+                    })
+                }
+            }
+
+            $history.drives[$driveLetter] = [ordered]@{
+                volumeLabel = if ($driveData.volumeLabel) { $driveData.volumeLabel } else { "" }
+                totalSizeGB = [double]$driveData.totalSizeGB
+                driveType   = if ($driveData.driveType) { $driveData.driveType } else { "Data" }
+                alertSent   = if ($null -ne $driveData.alertSent) { [bool]$driveData.alertSent } else { $false }
+                status      = if ($driveData.status) { $driveData.status } else { "Online" }
+                lastSeen    = if ($driveData.lastSeen) { $driveData.lastSeen } else { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss") }
+                history     = $historyEntries
+            }
+        }
+
+        return $history
+    }
+    catch {
+        return $null
     }
 }
 
@@ -170,77 +256,44 @@ function Load-History {
     Write-VerboseLog "Existing JSON: Yes ($([math]::Round($fileInfo.Length / 1KB)) KB)"
 
     for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
-        try {
-            $content = Get-Content -Path $Script:HISTORY_FILE -Raw -Encoding UTF8 -ErrorAction Stop
-            $data = $content | ConvertFrom-Json -ErrorAction Stop
-
-            # Validate JSON structure
-            if (-not $data.version -or -not $data.drives) {
-                throw "Invalid JSON structure - missing version or drives"
-            }
-
-            # Convert PSCustomObject to ordered hashtable for manipulation
-            $history = [ordered]@{
-                version              = $data.version
-                deviceId             = if ($data.deviceId) { $data.deviceId } else { $env:COMPUTERNAME }
-                lastUpdated          = if ($data.lastUpdated) { $data.lastUpdated } else { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss") }
-                excessDriveAlertSent = if ($null -ne $data.excessDriveAlertSent) { [bool]$data.excessDriveAlertSent } else { $false }
-                drives               = [ordered]@{}
-            }
-
-            foreach ($prop in $data.drives.PSObject.Properties) {
-                $driveLetter = $prop.Name
-                $driveData = $prop.Value
-
-                $historyEntries = [System.Collections.ArrayList]::new()
-                if ($driveData.history) {
-                    foreach ($entry in $driveData.history) {
-                        [void]$historyEntries.Add([ordered]@{
-                            timestamp    = $entry.timestamp
-                            usedGB       = [double]$entry.usedGB
-                            freeGB       = [double]$entry.freeGB
-                            usagePercent = [double]$entry.usagePercent
-                        })
-                    }
-                }
-
-                $history.drives[$driveLetter] = [ordered]@{
-                    volumeLabel = if ($driveData.volumeLabel) { $driveData.volumeLabel } else { "" }
-                    totalSizeGB = [double]$driveData.totalSizeGB
-                    driveType   = if ($driveData.driveType) { $driveData.driveType } else { "Data" }
-                    alertSent   = if ($null -ne $driveData.alertSent) { [bool]$driveData.alertSent } else { $false }
-                    status      = if ($driveData.status) { $driveData.status } else { "Online" }
-                    lastSeen    = if ($driveData.lastSeen) { $driveData.lastSeen } else { (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss") }
-                    history     = $historyEntries
-                }
-            }
-
-            return $history
+        $result = Import-HistoryFromFile -FilePath $Script:HISTORY_FILE
+        if ($null -ne $result) {
+            return $result
         }
-        catch {
-            if ($attempt -lt $maxRetries) {
-                Write-Log "WARNING: Failed to load history (attempt $attempt/$maxRetries), retrying in ${retryDelay}s..."
-                Start-Sleep -Seconds $retryDelay
-            }
-            else {
-                Write-Log "WARNING: History file corrupted after $maxRetries attempts. Renaming and starting fresh."
-                $corruptedPath = $Script:HISTORY_FILE + ".corrupted"
-                try {
-                    Move-Item -Path $Script:HISTORY_FILE -Destination $corruptedPath -Force -ErrorAction Stop
-                }
-                catch {
-                    Write-Log "WARNING: Could not rename corrupted file: $_"
-                }
-                return New-EmptyHistory
-            }
+
+        if ($attempt -lt $maxRetries) {
+            Write-Log "WARNING: Failed to load history (attempt $attempt/$maxRetries), retrying in ${retryDelay}s..."
+            Start-Sleep -Seconds $retryDelay
         }
     }
+
+    # Primary file corrupted after all retries - attempt backup recovery
+    if (Test-Path $Script:BACKUP_FILE) {
+        Write-Log "WARNING: Primary history corrupted. Attempting backup recovery..."
+        $backupResult = Import-HistoryFromFile -FilePath $Script:BACKUP_FILE
+        if ($null -ne $backupResult) {
+            Write-Log "Backup recovery successful - restored from $($Script:BACKUP_FILE)"
+            return $backupResult
+        }
+        Write-Log "WARNING: Backup file also corrupted."
+    }
+
+    # Both primary and backup failed - rename corrupted file and start fresh
+    Write-Log "WARNING: History unrecoverable after $maxRetries attempts. Renaming and starting fresh."
+    $corruptedPath = $Script:HISTORY_FILE + ".corrupted"
+    try {
+        Move-Item -Path $Script:HISTORY_FILE -Destination $corruptedPath -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Log "WARNING: Could not rename corrupted file: $_"
+    }
+    return New-EmptyHistory
 }
 
 function Save-History {
     param([hashtable]$History)
 
-    # Backup existing file
+    # Backup existing file before overwriting
     if (Test-Path $Script:HISTORY_FILE) {
         try {
             Copy-Item -Path $Script:HISTORY_FILE -Destination $Script:BACKUP_FILE -Force -ErrorAction Stop
@@ -250,13 +303,15 @@ function Save-History {
         }
     }
 
-    # Update lastUpdated
     $History.lastUpdated = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
 
-    try {
-        $History | ConvertTo-Json -Depth 10 | Set-Content -Path $Script:HISTORY_FILE -Encoding UTF8 -ErrorAction Stop
+    # Atomic write: write to temp file first, then rename to prevent corruption
+    $tempFile = $Script:HISTORY_FILE + ".tmp"
 
-        # Count total data points
+    try {
+        $History | ConvertTo-Json -Depth 10 | Set-Content -Path $tempFile -Encoding UTF8 -ErrorAction Stop
+        Move-Item -Path $tempFile -Destination $Script:HISTORY_FILE -Force -ErrorAction Stop
+
         $totalPoints = 0
         $driveCount = 0
         foreach ($drive in $History.drives.Values) {
@@ -267,6 +322,10 @@ function Save-History {
     }
     catch {
         Write-Log "ERROR: Failed to save history file: $_"
+        # Clean up temp file if it exists
+        if (Test-Path $tempFile) {
+            Remove-Item -Path $tempFile -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -431,12 +490,16 @@ function Update-History {
             usagePercent = $drive.UsagePercent
         })
 
-        # Prune entries older than 65-day retention window
+        # Prune entries older than 65-day retention window (defensive parsing)
         $driveHistory = $History.drives[$letter].history
         $beforeCount = $driveHistory.Count
         $prunedHistory = [System.Collections.ArrayList]::new()
         foreach ($entry in $driveHistory) {
-            $entryDate = [DateTime]::Parse($entry.timestamp)
+            $entryDate = ConvertTo-SafeDateTime -Timestamp $entry.timestamp
+            if ($null -eq $entryDate) {
+                Write-VerboseLog "Drive ${letter}: Skipping entry with unparseable timestamp: $($entry.timestamp)"
+                continue
+            }
             if ($entryDate -ge $cutoffDate) {
                 [void]$prunedHistory.Add($entry)
             }
@@ -467,13 +530,18 @@ function Update-History {
                 $driveData.status = "Offline"
             }
 
-            # Remove if offline > 30 days (Section 7.1)
+            # Remove if offline > 30 days (Section 7.1) - defensive parsing
             if ($driveData.lastSeen) {
-                $lastSeenDate = [DateTime]::Parse($driveData.lastSeen)
-                $daysOffline = ((Get-Date) - $lastSeenDate).TotalDays
-                if ($daysOffline -gt $Script:OFFLINE_REMOVAL_DAYS) {
-                    Write-Log "Drive ${letter}: Offline for $([math]::Round($daysOffline, 0)) days - removing from history"
-                    [void]$drivesToRemove.Add($letter)
+                $lastSeenDate = ConvertTo-SafeDateTime -Timestamp $driveData.lastSeen
+                if ($null -ne $lastSeenDate) {
+                    $daysOffline = ((Get-Date) - $lastSeenDate).TotalDays
+                    if ($daysOffline -gt $Script:OFFLINE_REMOVAL_DAYS) {
+                        Write-Log "Drive ${letter}: Offline for $([math]::Round($daysOffline, 0)) days - removing from history"
+                        [void]$drivesToRemove.Add($letter)
+                    }
+                }
+                else {
+                    Write-VerboseLog "Drive ${letter}: Unparseable lastSeen timestamp: $($driveData.lastSeen)"
                 }
             }
         }
@@ -499,17 +567,25 @@ function Get-LinearRegression {
         return @{ Slope = 0; Intercept = 0; RSquared = 0 }
     }
 
-    # Convert timestamps to days from first measurement (Section 8.1)
-    $firstTimestamp = [DateTime]::Parse($HistoryData[0].timestamp)
+    # Convert timestamps to days from first measurement (Section 8.1) - defensive parsing
+    $firstTimestamp = ConvertTo-SafeDateTime -Timestamp $HistoryData[0].timestamp
+    if ($null -eq $firstTimestamp) {
+        Write-VerboseLog "Linear regression: Cannot parse first timestamp, returning zero slope"
+        return @{ Slope = 0; Intercept = 0; RSquared = 0 }
+    }
 
     $sumX = 0.0
     $sumY = 0.0
     $sumXY = 0.0
     $sumX2 = 0.0
     $sumY2 = 0.0
+    $validPoints = 0
 
     foreach ($point in $HistoryData) {
-        $x = ([DateTime]::Parse($point.timestamp) - $firstTimestamp).TotalDays
+        $pointDate = ConvertTo-SafeDateTime -Timestamp $point.timestamp
+        if ($null -eq $pointDate) { continue }
+
+        $x = ($pointDate - $firstTimestamp).TotalDays
         $y = [double]$point.usedGB
 
         $sumX += $x
@@ -517,23 +593,31 @@ function Get-LinearRegression {
         $sumXY += ($x * $y)
         $sumX2 += ($x * $x)
         $sumY2 += ($y * $y)
+        $validPoints++
+    }
+
+    if ($validPoints -lt 2) {
+        return @{ Slope = 0; Intercept = 0; RSquared = 0 }
     }
 
     # OLS formula (Section 8.3)
-    $denominator = ($n * $sumX2) - ($sumX * $sumX)
+    $denominator = ($validPoints * $sumX2) - ($sumX * $sumX)
     if ([math]::Abs($denominator) -lt 1e-10) {
-        return @{ Slope = 0; Intercept = $sumY / $n; RSquared = 0 }
+        return @{ Slope = 0; Intercept = $sumY / $validPoints; RSquared = 0 }
     }
 
-    $slope = (($n * $sumXY) - ($sumX * $sumY)) / $denominator
-    $intercept = ($sumY - ($slope * $sumX)) / $n
+    $slope = (($validPoints * $sumXY) - ($sumX * $sumY)) / $denominator
+    $intercept = ($sumY - ($slope * $sumX)) / $validPoints
 
     # Calculate R-squared for trend confidence
-    $meanY = $sumY / $n
-    $ssTot = $sumY2 - ($n * $meanY * $meanY)
+    $meanY = $sumY / $validPoints
+    $ssTot = $sumY2 - ($validPoints * $meanY * $meanY)
     $ssRes = 0.0
     foreach ($point in $HistoryData) {
-        $x = ([DateTime]::Parse($point.timestamp) - $firstTimestamp).TotalDays
+        $pointDate = ConvertTo-SafeDateTime -Timestamp $point.timestamp
+        if ($null -eq $pointDate) { continue }
+
+        $x = ($pointDate - $firstTimestamp).TotalDays
         $y = [double]$point.usedGB
         $predicted = $slope * $x + $intercept
         $ssRes += ($y - $predicted) * ($y - $predicted)
@@ -624,7 +708,6 @@ function Get-DriveAnalysis {
             $result.DaysUntilFull = "No Growth"
         } else {
             $result.DaysUntilFull = "Declining"
-            $result.GBPerMonth = $monthlyGrowth.ToString("F3")
         }
     } else {
         $daysUntilFull = $currentFreeGB / $dailyGrowth
@@ -820,24 +903,29 @@ function Update-NinjaFields {
 
     try {
         # Overall Status (Section 10.1)
-        Ninja-Property-Set "Server Storage Status" $ServerStatus
+        Ninja-Property-Set $Script:FIELD_SERVER_STATUS $ServerStatus
 
         # OS Drive fields
         if ($OSAnalysis) {
-            Ninja-Property-Set "OS Drive Status" $OSAnalysis.Status
-            Ninja-Property-Set "OS Drive GB per Month" $OSAnalysis.GBPerMonth
-            Ninja-Property-Set "OS Drive Days Until Full" $OSAnalysis.DaysUntilFull
+            Ninja-Property-Set $Script:FIELD_OS_STATUS $OSAnalysis.Status
+            Ninja-Property-Set $Script:FIELD_OS_GROWTH $OSAnalysis.GBPerMonth
+            Ninja-Property-Set $Script:FIELD_OS_DAYS $OSAnalysis.DaysUntilFull
         }
         else {
-            Ninja-Property-Set "OS Drive Status" "NO DRIVE"
-            Ninja-Property-Set "OS Drive GB per Month" "NO DRIVE"
-            Ninja-Property-Set "OS Drive Days Until Full" "NO DRIVE"
+            Ninja-Property-Set $Script:FIELD_OS_STATUS "NO DRIVE"
+            Ninja-Property-Set $Script:FIELD_OS_GROWTH "NO DRIVE"
+            Ninja-Property-Set $Script:FIELD_OS_DAYS "NO DRIVE"
         }
 
         # Data Drive 1-3 fields (Section 10.4)
         for ($i = 0; $i -lt $Script:MAX_DATA_DRIVES; $i++) {
             $slotNum = $i + 1
             $slot = if ($i -lt $DataDriveSlots.Count) { $DataDriveSlots[$i] } else { $null }
+
+            $letterField = $Script:FIELD_DATA_LETTER -f $slotNum
+            $statusField = $Script:FIELD_DATA_STATUS -f $slotNum
+            $growthField = $Script:FIELD_DATA_GROWTH -f $slotNum
+            $daysField   = $Script:FIELD_DATA_DAYS -f $slotNum
 
             if ($null -ne $slot -and $slot.Status -ne "NO DRIVE") {
                 # Letter display: strip colon for Ninja, add (OFFLINE) if offline
@@ -847,17 +935,17 @@ function Update-NinjaFields {
                     $slot.Letter -replace ':$', ''
                 }
 
-                Ninja-Property-Set "Data Drive $slotNum Letter" $letterDisplay
-                Ninja-Property-Set "Data Drive $slotNum Status" $slot.Status
-                Ninja-Property-Set "Data Drive $slotNum GB per Month" $slot.GBPerMonth
-                Ninja-Property-Set "Data Drive $slotNum Days Until Full" $slot.DaysUntilFull
+                Ninja-Property-Set $letterField $letterDisplay
+                Ninja-Property-Set $statusField $slot.Status
+                Ninja-Property-Set $growthField $slot.GBPerMonth
+                Ninja-Property-Set $daysField $slot.DaysUntilFull
             }
             else {
                 # Empty slot (Section 10.2)
-                Ninja-Property-Set "Data Drive $slotNum Letter" "NO DRIVE"
-                Ninja-Property-Set "Data Drive $slotNum Status" "NO DRIVE"
-                Ninja-Property-Set "Data Drive $slotNum GB per Month" "NO DRIVE"
-                Ninja-Property-Set "Data Drive $slotNum Days Until Full" "NO DRIVE"
+                Ninja-Property-Set $letterField "NO DRIVE"
+                Ninja-Property-Set $statusField "NO DRIVE"
+                Ninja-Property-Set $growthField "NO DRIVE"
+                Ninja-Property-Set $daysField "NO DRIVE"
             }
         }
 
@@ -983,11 +1071,10 @@ function Write-Summary {
 # MAIN EXECUTION (Section 12)
 # ============================================================================
 function Main {
-    $exitCode = 0
     $hostname = $env:COMPUTERNAME
     $runningInNinja = $null -ne (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue)
 
-    # ── 1. INITIALIZE ────────────────────────────────────────────────────────
+    # ── Step 1: Initialize ───────────────────────────────────────────────────
 
     # Test mode banner (Section 13)
     if (-not $runningInNinja) {
@@ -1024,7 +1111,7 @@ function Main {
     # Capture previous excess-drive alert state for fire-once logic (Section 11.2)
     $previousExcessAlertSent = [bool]$history.excessDriveAlertSent
 
-    # ── 2. DISCOVER & COLLECT ────────────────────────────────────────────────
+    # ── Step 2: Discover & Collect ───────────────────────────────────────────
 
     $currentDrives = $null
     try {
@@ -1042,11 +1129,11 @@ function Main {
         Write-Log "WARNING: No qualifying drives found."
     }
 
-    # ── 3. UPDATE DRIVE STATUS ───────────────────────────────────────────────
+    # ── Step 3: Update Drive Status ──────────────────────────────────────────
 
     $history = Update-History -History $history -CurrentDrives $currentDrives
 
-    # ── 5-6. CALCULATE TRENDS ───────────────────────────────────────────────
+    # ── Step 4: Calculate Trends ─────────────────────────────────────────────
 
     $osAnalysis = $null
     $dataAnalyses = [System.Collections.ArrayList]::new()
@@ -1063,11 +1150,11 @@ function Main {
         }
     }
 
-    # ── 7. RANK & ORGANIZE ──────────────────────────────────────────────────
+    # ── Step 5: Rank & Organize ──────────────────────────────────────────────
 
     $sortedDataDrives = @(Sort-DataDrives -Analyses $dataAnalyses)
 
-    # ── 4. CHECK DRIVE COUNT (Section 10.3) ─────────────────────────────────
+    # ── Step 6: Check Drive Count (Section 10.3) ────────────────────────────
 
     $onlineDataCount = @($dataAnalyses | Where-Object { $_.DriveStatus -ne "Offline" }).Count
     $excludedDrives = @()
@@ -1133,7 +1220,7 @@ function Main {
         }
     }
 
-    # ── 8. CHECK FOR CRITICAL - Fire-Once Logic (Section 11.2) ──────────────
+    # ── Step 7: Check Critical - Fire-Once Logic (Section 11.2) ─────────────
 
     $newCriticalDrives = [System.Collections.ArrayList]::new()
 
@@ -1179,7 +1266,7 @@ function Main {
         Write-CriticalAlert -CriticalDrives $newCriticalDrives -Hostname $hostname
     }
 
-    # ── 9. PERSIST & REPORT ─────────────────────────────────────────────────
+    # ── Step 8: Persist & Report ─────────────────────────────────────────────
 
     # Console output summary
     Write-Summary -Hostname $hostname -OSAnalysis $osAnalysis -DataDriveSlots $dataSlots `
@@ -1208,7 +1295,7 @@ function Main {
     # Write log file with rotation
     Save-LogFile
 
-    exit $exitCode
+    exit 0
 }
 
 # ============================================================================
