@@ -2,13 +2,15 @@
 ## $RMM = 1
 ## $EncryptDataDrives = $true    # Also encrypt fixed data drives
 ## $UseUsedSpaceOnly = $true     # Faster encryption, only encrypts used space
+## $RMMRecoveryPasswordField = "bitlockerRecoveryPassword"  # RMM custom field name for all recovery passwords
 
 # This script enables BitLocker encryption:
-# - Checks for TPM 2.0
+# - Checks for TPM 2.0 (exits gracefully if not present)
+# - Configures TPM PCR validation profile (PCR 7 + 11 only for UEFI)
 # - Enables BitLocker on OS drive with TPM protector
 # - Adds recovery password protector
 # - Optionally encrypts data drives with auto-unlock
-# - Saves recovery keys to local file (for RMM collection)
+# - Saves recovery keys to local file and RMM custom field (all drives in one field)
 # Use Case: Deploy via RMM for workstation encryption
 
 #Requires -RunAsAdministrator
@@ -18,6 +20,7 @@ $ScriptLogName = "msft-windows-config-bitlocker-enable.log"
 # Default values
 if ($null -eq $EncryptDataDrives) { $EncryptDataDrives = $true }
 if ($null -eq $UseUsedSpaceOnly) { $UseUsedSpaceOnly = $true }
+if ($null -eq $RMMRecoveryPasswordField) { $RMMRecoveryPasswordField = "bitlockerRecoveryPassword" }
 
 if ($RMM -ne 1) {
     $ValidInput = 0
@@ -76,43 +79,36 @@ if (!$supportsBitLocker) {
 Write-Host "Windows Edition: $($osInfo.Caption)" -ForegroundColor Green
 
 # Check for TPM
-$tpm = Get-WmiObject -Namespace "Root\CIMv2\Security\MicrosoftTpm" -Class Win32_Tpm -ErrorAction SilentlyContinue
+$tpm = Get-CimInstance -Namespace "Root\CIMv2\Security\MicrosoftTpm" -ClassName Win32_Tpm -ErrorAction SilentlyContinue
 
 if (!$tpm -or !$tpm.IsEnabled_InitialValue) {
-    Write-Host "ERROR: TPM not found or not enabled" -ForegroundColor Red
-    Write-Host "BitLocker requires a TPM 2.0 chip for automatic encryption" -ForegroundColor Yellow
+    Write-Host "TPM not found or not enabled. Skipping BitLocker configuration." -ForegroundColor Yellow
     Stop-Transcript
-    exit 1
+    exit 0
 }
 
 Write-Host "TPM Status: Enabled and ready" -ForegroundColor Green
 
-# Create recovery key directory with restricted permissions
-$recoveryKeyPath = "$env:SystemDrive\BitLocker-Recovery-Keys"
-if (!(Test-Path $recoveryKeyPath)) {
-    New-Item -Path $recoveryKeyPath -ItemType Directory -Force | Out-Null
-
-    # Restrict directory access to Administrators and SYSTEM only
-    $dirAcl = Get-Acl $recoveryKeyPath
-    $dirAcl.SetAccessRuleProtection($true, $false)  # Disable inheritance
-    $dirAcl.Access | ForEach-Object { $dirAcl.RemoveAccessRule($_) | Out-Null }
-
-    # Add Administrators full control
-    $adminRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "BUILTIN\Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $dirAcl.AddAccessRule($adminRule)
-
-    # Add SYSTEM full control
-    $systemRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "NT AUTHORITY\SYSTEM", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $dirAcl.AddAccessRule($systemRule)
-
-    Set-Acl -Path $recoveryKeyPath -AclObject $dirAcl
-    Write-Host "Recovery directory created with restricted permissions (Administrators + SYSTEM only)" -ForegroundColor Gray
+# Configure TPM PCR validation profile for UEFI (PCR 7 + 11 only)
+# PCR 7 = Secure Boot state, PCR 11 = BitLocker access control
+# This reduces false recovery events from firmware updates while maintaining security
+# Equivalent GP: Computer Config > Admin Templates > Windows Components > BitLocker > OS Drives >
+#   "Configure TPM platform validation profile for native UEFI firmware configurations"
+$pcrRegPath = "HKLM:\SOFTWARE\Policies\Microsoft\FVE\OSPlatformValidation_UEFI"
+if (!(Test-Path $pcrRegPath)) {
+    New-Item -Path $pcrRegPath -Force | Out-Null
 }
+# Enable the policy
+Set-ItemProperty -Path $pcrRegPath -Name "Enabled" -Value 1 -Type DWord
+# Disable all PCRs, then enable only 7 and 11
+for ($i = 0; $i -le 23; $i++) {
+    Set-ItemProperty -Path $pcrRegPath -Name "$i" -Value 0 -Type DWord
+}
+Set-ItemProperty -Path $pcrRegPath -Name "7" -Value 1 -Type DWord
+Set-ItemProperty -Path $pcrRegPath -Name "11" -Value 1 -Type DWord
+Write-Host "PCR validation profile configured: PCR 7 (Secure Boot) + PCR 11 (BitLocker)" -ForegroundColor Green
 
+$recoveryKeyPath = "$ENV:WINDIR\temp"
 $recoveryFile = Join-Path $recoveryKeyPath "BitLocker-Recovery-$(Get-Date -Format 'yyyy-MM-dd-HHmmss').txt"
 
 # Initialize recovery file
@@ -134,20 +130,9 @@ $header | Out-File -FilePath $recoveryFile -Encoding UTF8
 # Restrict file permissions to Administrators and SYSTEM only
 $fileAcl = Get-Acl $recoveryFile
 $fileAcl.SetAccessRuleProtection($true, $false)  # Disable inheritance
-$fileAcl.Access | ForEach-Object { $fileAcl.RemoveAccessRule($_) | Out-Null }
-
-# Add Administrators full control
-$adminFileRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    "BUILTIN\Administrators", "FullControl", "Allow"
-)
-$fileAcl.AddAccessRule($adminFileRule)
-
-# Add SYSTEM full control
-$systemFileRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-    "NT AUTHORITY\SYSTEM", "FullControl", "Allow"
-)
-$fileAcl.AddAccessRule($systemFileRule)
-
+foreach ($rule in @($fileAcl.Access)) { $fileAcl.RemoveAccessRule($rule) | Out-Null }
+$fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("BUILTIN\Administrators", "FullControl", "Allow")))
+$fileAcl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule("NT AUTHORITY\SYSTEM", "FullControl", "Allow")))
 Set-Acl -Path $recoveryFile -AclObject $fileAcl
 Write-Host "Recovery file permissions restricted to Administrators and SYSTEM" -ForegroundColor Gray
 
@@ -223,7 +208,7 @@ Recovery Password: $recoveryPassword
         # Filter out external/USB drives
         foreach ($vol in $allDataVolumes) {
             try {
-                $driveLetter = $vol.MountPoint.TrimEnd(':').TrimEnd('\')
+                $driveLetter = $vol.MountPoint[0]
                 $partition = Get-Partition | Where-Object { $_.DriveLetter -eq $driveLetter } | Select-Object -First 1
 
                 if ($partition) {
@@ -292,7 +277,7 @@ Encryption Method: XtsAes256
     Write-Host ""
     Write-Host "Checking for Active Directory backup..." -ForegroundColor Yellow
     try {
-        $computerInfo = Get-WmiObject -Class Win32_ComputerSystem
+        $computerInfo = Get-CimInstance -ClassName Win32_ComputerSystem
         if ($computerInfo.PartOfDomain) {
             Write-Host "Computer is domain-joined. Attempting to backup recovery keys to AD..." -ForegroundColor Gray
 
@@ -332,24 +317,48 @@ Encryption Method: XtsAes256
         Write-Host "Could not determine domain status: $_" -ForegroundColor Yellow
     }
 
+    # Output all recovery passwords to single RMM custom field
+    if ($RMM -eq 1) {
+        Write-Host ""
+        Write-Host "=== RMM Recovery Output ===" -ForegroundColor Cyan
+
+        # Collect recovery passwords from all encrypted drives
+        $recoveryEntries = @()
+        $allVolumes = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq "On" -or $_.VolumeStatus -ne "FullyDecrypted" }
+
+        foreach ($vol in $allVolumes) {
+            $keyProtector = $vol.KeyProtector |
+                Where-Object { $_.KeyProtectorType -eq 'RecoveryPassword' } |
+                Select-Object -First 1
+
+            if ($keyProtector) {
+                $recoveryEntries += "$($vol.MountPoint) $($keyProtector.RecoveryPassword)"
+            }
+        }
+
+        $recoveryFieldValue = $recoveryEntries -join " | "
+        Write-Host "Recovery field value: $recoveryFieldValue"
+
+        # Try NinjaRMM first
+        $ninjaCmd = Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue
+        if ($ninjaCmd) {
+            if ($RMMRecoveryPasswordField) {
+                Ninja-Property-Set $RMMRecoveryPasswordField "$recoveryFieldValue"
+                Write-Host "NinjaRMM: Set $RMMRecoveryPasswordField" -ForegroundColor Green
+            }
+        } else {
+            # Generic RMM output - recovery info in parseable format for any RMM
+            Write-Host "BITLOCKER_RECOVERY_PASSWORDS=$recoveryFieldValue"
+        }
+    }
+
     Write-Host ""
     Write-Host "=== BitLocker Configuration Complete ===" -ForegroundColor Cyan
     Write-Host "Recovery keys saved to: $recoveryFile" -ForegroundColor Yellow
     Write-Host "File permissions: Administrators and SYSTEM only" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "=========================================" -ForegroundColor Red
-    Write-Host "CRITICAL SECURITY STEPS:" -ForegroundColor Red
-    Write-Host "=========================================" -ForegroundColor Red
-    Write-Host "1. COLLECT this file via your RMM platform immediately" -ForegroundColor Yellow
-    Write-Host "2. STORE the collected file in a secure password manager or encrypted vault" -ForegroundColor Yellow
-    Write-Host "3. SECURELY DELETE the local file after RMM collection using:" -ForegroundColor Yellow
-    Write-Host "   Remove-Item '$recoveryFile' -Force" -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host "File Path: $recoveryFile" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "Without these recovery keys, encrypted drives CANNOT be unlocked" -ForegroundColor Red
-    Write-Host "if TPM fails or the system is moved to different hardware!" -ForegroundColor Red
-    Write-Host "=========================================" -ForegroundColor Red
+    Write-Host "IMPORTANT: Recovery file at $recoveryFile should be collected and securely deleted." -ForegroundColor Yellow
+    Write-Host "Without recovery keys, encrypted drives CANNOT be unlocked if TPM fails." -ForegroundColor Red
 
 } catch {
     Write-Host "Error configuring BitLocker: $_" -ForegroundColor Red
