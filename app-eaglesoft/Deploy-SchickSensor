@@ -81,11 +81,6 @@ $Script:Config = @{
             FileName = "AEUSBInterfaceSetup.exe"
             SHA256   = $null  # TODO: Populate after first verified download
         }
-        AEUSBFirmware = @{
-            Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/AE_USB_Firmware_Upgrade%5B1%5D.exe"
-            FileName = "AE_USB_Firmware_Upgrade.exe"
-            SHA256   = $null  # TODO: Populate after first verified download
-        }
         IOSS          = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/IOSS_v3.2/IOSS_v3.2/Autorun.exe"
             FileName = "IOSS_Autorun.exe"
@@ -143,12 +138,12 @@ function Write-Log {
 
     Write-Host "$timestamp $prefix $Message" -ForegroundColor $color
 
-    # Add to results log
-    $Script:Results.Log += @{
+    # Add to results log (using .Add() for O(1) performance)
+    $Script:Results.Log.Add(@{
         Timestamp = $timestamp
         Level     = $Level
         Message   = $Message
-    }
+    })
 }
 
 #endregion
@@ -213,7 +208,7 @@ function Get-EaglesoftVersion {
             }
 
             # Try cleaning the version string
-            $cleanVersion = $versionString -replace '[^0-9.]', '' -replace '\.+', '.' -replace '^\.|\.§', ''
+            $cleanVersion = $versionString -replace '[^0-9.]', '' -replace '\.+', '.' -replace '^\.|\.+$', ''
             if ([Version]::TryParse($cleanVersion, [ref]$parsedVersion)) {
                 Write-Log "  Parsed cleaned version: $cleanVersion" -Level Info
                 return $parsedVersion
@@ -265,9 +260,13 @@ function Get-CurrentInstallState {
         Where-Object { $_.DeviceName -like "*AE*USB*" -or $_.Description -like "*Schick*" }
     $state.AEUSBDriverInstalled = $null -ne $aeDriver
 
-    # Check MSXML 4.0
-    $msxml = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "*MSXML 4*" }
+    # Check MSXML 4.0 (search both 64-bit and 32-bit registry hives)
+    $msxml = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    ) | ForEach-Object { Get-ItemProperty $_ -ErrorAction SilentlyContinue } |
+        Where-Object { $_.DisplayName -like "*MSXML 4*" } |
+        Select-Object -First 1
     $state.MSXML4Installed = $null -ne $msxml
 
     # Check Core Isolation (Memory Integrity)
@@ -321,9 +320,9 @@ function Test-Prerequisites {
     $passed = $true
     $checks = @()
 
-    # Check PowerShell version
-    if ($PSVersionTable.PSVersion.Major -lt 5) {
-        $checks += @{ Name = "PowerShell 5.1+"; Status = "FAIL"; Message = "PowerShell $($PSVersionTable.PSVersion) detected" }
+    # Check PowerShell version (5.1 minimum for PnP cmdlets and CIM)
+    if ($PSVersionTable.PSVersion -lt [Version]'5.1') {
+        $checks += @{ Name = "PowerShell 5.1+"; Status = "FAIL"; Message = "PowerShell $($PSVersionTable.PSVersion) detected - 5.1 required" }
         $passed = $false
     }
     else {
@@ -666,8 +665,9 @@ function Uninstall-LegacyComponents {
         foreach ($pattern in $legacyProducts) {
             $products = Get-ItemProperty $path -ErrorAction SilentlyContinue |
                 Where-Object {
+                    $productPublisher = $_.Publisher
                     $_.DisplayName -like $pattern -and
-                    ($validPublishers | ForEach-Object { $_.Publisher -like $_ }) -contains $true
+                    ($validPublishers | ForEach-Object { $productPublisher -like $_ }) -contains $true
                 }
             if ($products) {
                 $foundProducts += $products
@@ -863,14 +863,21 @@ function Install-IOSS {
 
     $process = Start-Process -FilePath $InstallerPath -ArgumentList $arguments -Wait -PassThru -NoNewWindow
 
-    if ($process.ExitCode -eq 0 -or $process.ExitCode -eq 3010) {
-        Write-Log "IOSS installed successfully" -Level Success
+    # Known acceptable exit codes
+    $acceptableExitCodes = @(0, 3010, 1641)
+
+    if ($process.ExitCode -in $acceptableExitCodes) {
+        if ($process.ExitCode -eq 0) {
+            Write-Log "IOSS installed successfully" -Level Success
+        }
+        else {
+            Write-Log "IOSS installed (exit code $($process.ExitCode) - reboot may be required)" -Level Success
+        }
         return $true
     }
     else {
-        Write-Log "IOSS installation returned exit code: $($process.ExitCode)" -Level Warning
-        # Continue anyway - service configuration will verify
-        return $true
+        Write-Log "IOSS installation failed with exit code: $($process.ExitCode)" -Level Error
+        return $false
     }
 }
 
@@ -1203,11 +1210,8 @@ function Test-Installation {
         $validation.Success = $false
     }
 
-    # Check required DLLs
-    $requiredDLLs = @("CDRData.dll", "OMEGADLL.dll")
-    if ($Mode -eq 'IOSS') {
-        $requiredDLLs += "CDRImageProcess.dll"
-    }
+    # Check required DLLs (CDRImageProcess.dll created by CDR Patch in both modes)
+    $requiredDLLs = @("CDRData.dll", "OMEGADLL.dll", "CDRImageProcess.dll")
 
     foreach ($dll in $requiredDLLs) {
         $dllPath = Join-Path $Script:Config.Paths.SharedFiles $dll
@@ -1265,7 +1269,7 @@ function Invoke-LegacyInstallation {
 
     # Step 0b: Disable USB sensor if connected (per Patterson: "disconnect all Schick equipment")
     Write-Host "`n=== Pre-Installation: Disconnecting Sensor ===" -ForegroundColor Cyan
-    Disable-USBSensorForInstall
+    $null = Disable-USBSensorForInstall
 
     $installSuccess = $false
 
@@ -1283,7 +1287,9 @@ function Invoke-LegacyInstallation {
         }
 
         # Step 3: Rename CDRImageProcess.dll to .dllOLD (per Patterson docs)
-        Rename-CDRImageProcessDLL
+        if (-not (Rename-CDRImageProcessDLL)) {
+            return $false
+        }
 
         # Step 4: CDR Patch (creates correct CDRImageProcess.dll v5.15.1877)
         if ($Installers.ContainsKey('CDRPatch')) {
@@ -1303,7 +1309,7 @@ function Invoke-LegacyInstallation {
     finally {
         # ALWAYS re-enable USB sensor, even if installation failed
         Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
-        Enable-USBSensorAfterInstall
+        $null = Enable-USBSensorAfterInstall
 
         if (-not $installSuccess) {
             Write-Log "Installation failed but USB sensor has been re-enabled" -Level Warning
@@ -1321,11 +1327,11 @@ function Invoke-IOSSInstallation {
 
     # Step 0b: Disable USB sensor if connected (per Patterson: "Unplug USB cable from Schick remote")
     Write-Host "`n=== Pre-Installation: Disconnecting Sensor ===" -ForegroundColor Cyan
-    Disable-USBSensorForInstall
+    $null = Disable-USBSensorForInstall
 
     # Step 0c: Uninstall legacy CDR components (required for IOSS per Patterson docs)
     Write-Host "`n=== Removing Legacy Components ===" -ForegroundColor Cyan
-    Uninstall-LegacyComponents
+    $null = Uninstall-LegacyComponents
 
     $installSuccess = $false
 
@@ -1368,7 +1374,7 @@ function Invoke-IOSSInstallation {
     finally {
         # ALWAYS re-enable USB sensor, even if installation failed
         Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
-        Enable-USBSensorAfterInstall
+        $null = Enable-USBSensorAfterInstall
 
         if (-not $installSuccess) {
             Write-Log "Installation failed but USB sensor has been re-enabled" -Level Warning
@@ -1399,7 +1405,7 @@ $Script:Results = @{
     Success        = $false
     Prerequisites  = @()
     Validation     = @{}
-    Log            = @()
+    Log            = [System.Collections.Generic.List[object]]::new()
 }
 
 Write-Host @"
