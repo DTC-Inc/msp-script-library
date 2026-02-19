@@ -145,22 +145,24 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 4: Measure $PatchCache$ separately ---
     $patchCachePath = Join-Path $installerPath '$PatchCache$'
-    $patchCacheSize = 0
+    $patchCacheSize = [long]0
     if (Test-Path $patchCachePath) {
         $patchCacheSize = (Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
-            Measure-Object Length -Sum).Sum
+            Measure-Object Length -Sum).Sum -as [long]
+        if (-not $patchCacheSize) { $patchCacheSize = [long]0 }
     }
 
     # --- STEP 5: Return results ---
+    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections
     [PSCustomObject]@{
-        TotalFiles          = ($allFiles | Measure-Object).Count
-        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum
+        TotalFiles          = ($allFiles | Measure-Object).Count -as [int]
+        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
         ReferencedFiles     = $referenced
         ReferencedCount     = $referenced.Count
-        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum
+        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
         OrphanedFiles       = $orphaned
         OrphanedCount       = $orphaned.Count
-        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum
+        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
         PatchCacheSizeBytes = $patchCacheSize
         ScanDuration        = (Get-Date) - $startTime
         Errors              = $errors
@@ -182,29 +184,38 @@ $referencedCount = 0
 $referencedSizeGB = 0
 $patchCacheSizeGB = 0
 $winsxsSizeGB = 0
+$totalFiles = 0
+$scanDurationSec = 0
 $scanErrors = @()
 
 try {
     # --- Run orphan detection ---
     $results = Get-OrphanedInstallerFiles
 
-    $totalSizeGB     = [math]::Round($results.TotalSizeBytes / 1GB, 2)
-    $orphanedSizeGB  = [math]::Round($results.OrphanedSizeBytes / 1GB, 2)
-    $orphanedCount   = $results.OrphanedCount
-    $referencedCount = $results.ReferencedCount
+    $totalSizeGB      = [math]::Round($results.TotalSizeBytes / 1GB, 2)
+    $orphanedSizeGB   = [math]::Round($results.OrphanedSizeBytes / 1GB, 2)
+    $orphanedCount    = $results.OrphanedCount
+    $referencedCount  = $results.ReferencedCount
     $referencedSizeGB = [math]::Round($results.ReferencedSizeBytes / 1GB, 2)
     $patchCacheSizeGB = [math]::Round($results.PatchCacheSizeBytes / 1GB, 2)
-    $scanErrors      = $results.Errors
+    $totalFiles       = $results.TotalFiles
+    $scanDurationSec  = $results.ScanDuration.TotalSeconds
+    $scanErrors       = $results.Errors
 
     # --- Measure WinSxS size (secondary indicator) ---
+    # NOTE: WinSxS uses hardlinks extensively. Recursive enumeration overcounts actual disk
+    # footprint by 2-3x because the same physical data is counted per hardlink. This value
+    # is a rough indicator, not an exact measurement. Use DISM /AnalyzeComponentStore for
+    # precise sizing if needed.
     $winsxsSize = (Get-ChildItem "C:\Windows\WinSxS" -Recurse -Force -ErrorAction SilentlyContinue |
-        Measure-Object Length -Sum).Sum
+        Measure-Object Length -Sum).Sum -as [long]
+    if (-not $winsxsSize) { $winsxsSize = [long]0 }
     $winsxsSizeGB = [math]::Round($winsxsSize / 1GB, 2)
 
     # --- Determine status based on total Installer folder size ---
-    if ($totalSizeGB -gt $CriticalThresholdGB) {
+    if ($totalSizeGB -ge $CriticalThresholdGB) {
         $status = "Critical"
-    } elseif ($totalSizeGB -gt $WarningThresholdGB) {
+    } elseif ($totalSizeGB -ge $WarningThresholdGB) {
         $status = "Warning"
     } else {
         $status = "Healthy"
@@ -235,19 +246,30 @@ try {
 # ============================================================================
 $source = "DTC-InstallerMonitor"
 $logName = "Application"
-if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
-    try {
+# SourceExists() throws SecurityException if caller lacks permission to enumerate sources —
+# wrap in try/catch to prevent script termination
+try {
+    if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
         [System.Diagnostics.EventLog]::CreateEventSource($source, $logName)
-    } catch {
-        # May fail without admin — continue anyway
     }
+} catch {
+    # SourceExists or CreateEventSource may fail without admin — continue anyway
+    Write-Warning "Event source registration skipped: $($_.Exception.Message)"
 }
 
+# Distinct Event IDs per severity for monitoring tool granularity
 $eventId = switch ($status) {
     "Healthy"  { 1000 }
     "Warning"  { 2000 }
-    "Critical" { 2000 }
+    "Critical" { 2500 }
     "Error"    { 3000 }
+}
+# Map EntryType to actual severity so SIEM/monitoring tools can filter
+$entryType = switch ($status) {
+    "Healthy"  { "Information" }
+    "Warning"  { "Warning" }
+    "Critical" { "Error" }
+    "Error"    { "Error" }
 }
 $message = @"
 DTC Installer Patch Monitor — Scan Complete
@@ -256,14 +278,14 @@ Total Installer Folder: $totalSizeGB GB
 Orphaned Files: $orphanedCount ($orphanedSizeGB GB)
 Referenced Files: $referencedCount ($referencedSizeGB GB)
 PatchCache: $patchCacheSizeGB GB
-WinSxS: $winsxsSizeGB GB
-Scan Duration: $($results.ScanDuration.TotalSeconds) seconds
+WinSxS: $winsxsSizeGB GB (approximate — hardlink overcount)
+Scan Duration: $scanDurationSec seconds
 "@
 if ($scanErrors.Count -gt 0) {
     $message += "`nErrors:`n" + ($scanErrors -join "`n")
 }
 try {
-    Write-EventLog -LogName $logName -Source $source -EventId $eventId -EntryType Information -Message $message
+    Write-EventLog -LogName $logName -Source $source -EventId $eventId -EntryType $entryType -Message $message
 } catch {
     Write-Warning "Event log write failed: $($_.Exception.Message)"
 }
@@ -273,12 +295,12 @@ try {
 # ============================================================================
 Write-Output "=== SCAN RESULTS ==="
 Write-Output "Status:             $status"
-Write-Output "Installer Folder:   $totalSizeGB GB ($($results.TotalFiles) files)"
+Write-Output "Installer Folder:   $totalSizeGB GB ($totalFiles files)"
 Write-Output "  Referenced:       $referencedSizeGB GB ($referencedCount files)"
 Write-Output "  Orphaned:         $orphanedSizeGB GB ($orphanedCount files)"
 Write-Output "  PatchCache:       $patchCacheSizeGB GB"
-Write-Output "WinSxS:             $winsxsSizeGB GB"
-Write-Output "Scan Duration:      $($results.ScanDuration.TotalSeconds) seconds"
+Write-Output "WinSxS:             $winsxsSizeGB GB (approximate — hardlink overcount)"
+Write-Output "Scan Duration:      $scanDurationSec seconds"
 if ($scanErrors.Count -gt 0) {
     Write-Output ""
     Write-Output "Non-critical errors ($($scanErrors.Count)):"
