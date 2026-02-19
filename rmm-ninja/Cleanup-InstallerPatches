@@ -34,6 +34,7 @@ param(
     [switch]$WhatIf,
     [switch]$SkipDISM,
     [switch]$Force,
+    [ValidateRange(1, 365)]
     [int]$QuarantineDays = 30
 )
 
@@ -165,22 +166,24 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 4: Measure $PatchCache$ separately ---
     $patchCachePath = Join-Path $installerPath '$PatchCache$'
-    $patchCacheSize = 0
+    $patchCacheSize = [long]0
     if (Test-Path $patchCachePath) {
         $patchCacheSize = (Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
-            Measure-Object Length -Sum).Sum
+            Measure-Object Length -Sum).Sum -as [long]
+        if (-not $patchCacheSize) { $patchCacheSize = [long]0 }
     }
 
     # --- STEP 5: Return results ---
+    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections
     [PSCustomObject]@{
-        TotalFiles          = ($allFiles | Measure-Object).Count
-        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum
+        TotalFiles          = ($allFiles | Measure-Object).Count -as [int]
+        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
         ReferencedFiles     = $referenced
         ReferencedCount     = $referenced.Count
-        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum
+        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
         OrphanedFiles       = $orphaned
         OrphanedCount       = $orphaned.Count
-        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum
+        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
         PatchCacheSizeBytes = $patchCacheSize
         ScanDuration        = (Get-Date) - $startTime
         Errors              = $errors
@@ -200,9 +203,15 @@ Write-Output ""
 # ============================================================================
 Write-Output "[PHASE 0] Pre-flight checks..."
 
-$cDrive = Get-WmiObject Win32_LogicalDisk -Filter "DeviceID='C:'"
-$freePercent = [math]::Round(($cDrive.FreeSpace / $cDrive.Size) * 100, 1)
-$freeSizeGB = [math]::Round($cDrive.FreeSpace / 1GB, 2)
+$cDrive = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DeviceID='C:'"
+if (-not $cDrive) {
+    Write-Warning "Could not query C: drive info via CIM — skipping free-space check / auto-Force logic."
+    $freePercent = 100
+    $freeSizeGB  = -1
+} else {
+    $freePercent = [math]::Round(($cDrive.FreeSpace / $cDrive.Size) * 100, 1)
+    $freeSizeGB  = [math]::Round($cDrive.FreeSpace / 1GB, 2)
+}
 
 Write-Output "  C: drive free space: $freeSizeGB GB ($freePercent%)"
 
@@ -214,7 +223,8 @@ if ($freePercent -lt $AutoForceThresholdPct -and -not $Force) {
 
 # Record baseline
 $baselineSize = (Get-ChildItem "C:\Windows\Installer" -Recurse -Force -ErrorAction SilentlyContinue |
-    Measure-Object Length -Sum).Sum
+    Measure-Object Length -Sum).Sum -as [long]
+if (-not $baselineSize) { $baselineSize = [long]0 }
 $baselineSizeGB = [math]::Round($baselineSize / 1GB, 2)
 Write-Output "  Installer folder baseline: $baselineSizeGB GB"
 Write-Output ""
@@ -231,6 +241,9 @@ if (-not $SkipDISM) {
         # Do NOT use /ResetBase — prevents future update uninstalls, too destructive for automation
         $dismResult = & DISM /Online /Cleanup-Image /StartComponentCleanup 2>&1
         $dismResult | ForEach-Object { Write-Output "[DISM] $_" }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "[PHASE 1] DISM exited with code $LASTEXITCODE — component cleanup may be incomplete."
+        }
         Write-Output ""
     }
 } else {
@@ -257,7 +270,9 @@ Write-Output "  Referenced:  $($results.ReferencedCount) ($([math]::Round($resul
 Write-Output "  Orphaned:    $($results.OrphanedCount) ($([math]::Round($results.OrphanedSizeBytes / 1GB, 2)) GB)"
 Write-Output ""
 
-$quarantinePath = "C:\DTC\InstallerCleanup\Quarantine\$(Get-Date -Format 'yyyy-MM-dd')"
+# Include time in quarantine folder name to prevent same-day collision (Move-Item -Force
+# would silently overwrite a previously quarantined file with the same name)
+$quarantinePath = "C:\DTC\InstallerCleanup\Quarantine\$(Get-Date -Format 'yyyy-MM-dd_HHmmss')"
 $logPath = "C:\DTC\InstallerCleanup\Logs"
 $logFile = Join-Path $logPath "cleanup_$(Get-Date -Format 'yyyy-MM-dd_HHmmss').log"
 
@@ -313,7 +328,8 @@ Write-Output ""
 $patchCachePath = "C:\Windows\Installer\`$PatchCache`$"
 if (Test-Path $patchCachePath) {
     $patchCacheSize = (Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
-        Measure-Object Length -Sum).Sum
+        Measure-Object Length -Sum).Sum -as [long]
+    if (-not $patchCacheSize) { $patchCacheSize = [long]0 }
     $patchCacheSizeGB = [math]::Round($patchCacheSize / 1GB, 2)
 
     if ($patchCacheSizeGB -gt $PatchCacheThresholdGB) {
@@ -352,7 +368,8 @@ if (Test-Path $quarantineRoot) {
             if ($WhatIf) {
                 Write-Output "[WHATIF] [PHASE4] Would purge expired quarantine: $($folder.Name)"
             } else {
-                $folderSize = (Get-ChildItem $folder.FullName -Recurse -Force | Measure-Object Length -Sum).Sum
+                $folderSize = (Get-ChildItem $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -as [long]
+                if (-not $folderSize) { $folderSize = [long]0 }
                 Remove-Item $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue
                 Write-Output "[PHASE 4] Purged expired quarantine: $($folder.Name) ($([math]::Round($folderSize/1MB,1)) MB)"
                 "[$(Get-Date -Format 'o')] [PHASE4] [PURGED] $($folder.FullName) ($folderSize bytes)" |
@@ -387,8 +404,8 @@ if (-not $WhatIf) {
         $postResults = Get-OrphanedInstallerFiles
         $postTotalGB = [math]::Round($postResults.TotalSizeBytes / 1GB, 2)
         $postOrphanedGB = [math]::Round($postResults.OrphanedSizeBytes / 1GB, 2)
-        $postStatus = if ($postTotalGB -gt $CriticalThresholdGB) { "Critical" }
-                      elseif ($postTotalGB -gt $WarningThresholdGB) { "Warning" }
+        $postStatus = if ($postTotalGB -ge $CriticalThresholdGB) { "Critical" }
+                      elseif ($postTotalGB -ge $WarningThresholdGB) { "Warning" }
                       else { "Healthy" }
 
         try {
@@ -407,15 +424,19 @@ if (-not $WhatIf) {
     # Write Event Log
     $source = "DTC-InstallerMonitor"
     $logName = "Application"
-    if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
-        try {
+    # SourceExists() throws SecurityException if caller lacks permission to enumerate sources
+    try {
+        if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
             [System.Diagnostics.EventLog]::CreateEventSource($source, $logName)
-        } catch {}
+        }
+    } catch {
+        Write-Warning "Event source registration skipped: $($_.Exception.Message)"
     }
 
+    # Inside if (-not $WhatIf) block, so mode is only Direct Delete or Quarantine
     $eventMessage = @"
 DTC Installer Patch Cleanup — Complete
-Mode: $(if ($Force) {"Direct Delete"} elseif ($WhatIf) {"WhatIf (no changes)"} else {"Quarantine"})
+Mode: $(if ($Force) {"Direct Delete"} else {"Quarantine"})
 Total Recovered: $totalRecoveredGB GB
 Orphaned Files Processed: $($results.OrphanedCount)
 "@
