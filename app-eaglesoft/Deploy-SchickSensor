@@ -475,25 +475,40 @@ function Get-Installer {
 
     Write-Log "Downloading $Name from $url" -Level Info
 
-    try {
-        $ProgressPreference = 'SilentlyContinue'
-        Invoke-WebRequest -Uri $url -OutFile $destination -UseBasicParsing -TimeoutSec 300
+    $maxRetries = 3
+    $retryDelay = 2  # seconds, doubles each retry (exponential backoff)
 
-        $fileSize = (Get-Item $destination).Length
-        Write-Log "Downloaded $Name successfully ($([math]::Round($fileSize/1MB, 2)) MB)" -Level Success
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        try {
+            $ProgressPreference = 'SilentlyContinue'
+            Invoke-WebRequest -Uri $url -OutFile $destination -UseBasicParsing -TimeoutSec 300
 
-        # Verify hash of newly downloaded file
-        if (-not (Test-InstallerHash -FilePath $destination -ExpectedHash $expectedHash -Name $Name)) {
-            Write-Log "Downloaded file failed integrity check - removing" -Level Error
-            Remove-Item -Path $destination -Force
-            return $null
+            $fileSize = (Get-Item $destination).Length
+            Write-Log "Downloaded $Name successfully ($([math]::Round($fileSize/1MB, 2)) MB)" -Level Success
+
+            # Verify hash of newly downloaded file
+            if (-not (Test-InstallerHash -FilePath $destination -ExpectedHash $expectedHash -Name $Name)) {
+                Write-Log "Downloaded file failed integrity check - removing" -Level Error
+                Remove-Item -Path $destination -Force
+                return $null
+            }
+
+            return $destination
         }
-
-        return $destination
-    }
-    catch {
-        Write-Log "Failed to download $Name`: $_" -Level Error
-        return $null
+        catch {
+            if ($attempt -lt $maxRetries) {
+                $backoff = $retryDelay * [math]::Pow(2, $attempt - 1)
+                Write-Log "Download attempt $attempt/$maxRetries failed for $Name - retrying in ${backoff}s..." -Level Warning
+                Start-Sleep -Seconds $backoff
+                # Clean up partial download
+                if (Test-Path $destination) { Remove-Item -Path $destination -Force -ErrorAction SilentlyContinue }
+            }
+            else {
+                Write-Log "Failed to download $Name after $maxRetries attempts: $_" -Level Error
+                if (Test-Path $destination) { Remove-Item -Path $destination -Force -ErrorAction SilentlyContinue }
+                return $null
+            }
+        }
     }
 }
 
@@ -708,9 +723,28 @@ function Uninstall-LegacyComponents {
                 Write-Log "      Uninstalled via MSI" -Level Success
             }
             elseif ($uninstallString) {
-                # EXE uninstall - try silent
-                $uninstallString = $uninstallString -replace '"', ''
-                Start-Process -FilePath $uninstallString -ArgumentList "/S /SILENT /VERYSILENT /NORESTART" -Wait -NoNewWindow -ErrorAction SilentlyContinue
+                # EXE uninstall - parse exe path from embedded arguments
+                # Handles: "C:\path\uninstall.exe" /arg1 /arg2
+                #          C:\path\uninstall.exe /arg1 /arg2
+                $exePath = $null
+                $embeddedArgs = ""
+
+                if ($uninstallString -match '^"([^"]+)"\s*(.*)$') {
+                    # Quoted path: "C:\path\exe" args...
+                    $exePath = $Matches[1]
+                    $embeddedArgs = $Matches[2]
+                }
+                elseif ($uninstallString -match '^(\S+\.exe)\s*(.*)$') {
+                    # Unquoted path ending in .exe
+                    $exePath = $Matches[1]
+                    $embeddedArgs = $Matches[2]
+                }
+                else {
+                    $exePath = $uninstallString -replace '"', ''
+                }
+
+                $silentArgs = "$embeddedArgs /S /SILENT /VERYSILENT /NORESTART".Trim()
+                Start-Process -FilePath $exePath -ArgumentList $silentArgs -Wait -NoNewWindow -ErrorAction SilentlyContinue
                 Write-Log "      Uninstall attempted" -Level Info
             }
         }
@@ -961,12 +995,13 @@ function Find-SchickUSBDevices {
         [switch]$ActiveOnly  # Only return devices with Status 'OK'
     )
 
-    # Search patterns for Schick/AE USB devices
+    # Search patterns for Schick/AE USB devices (friendly name)
+    # Note: FTDI (VID_0403) is matched by hardware ID below, not by friendly name,
+    # to avoid disabling unrelated FTDI devices (Arduino, lab equipment, etc.)
     $devicePatterns = @(
         "*Schick*",
         "*AE*USB*",
-        "*Dental*Sensor*",
-        "*FTDI*"  # Common USB-serial chip used in dental sensors
+        "*Dental*Sensor*"
     )
 
     $foundDevices = @()
@@ -984,7 +1019,9 @@ function Find-SchickUSBDevices {
         }
     }
 
-    # Also search by hardware ID patterns (VID_0403=FTDI, VID_20D6=Schick)
+    # Also search by hardware ID patterns
+    # VID_20D6 = Schick (always match)
+    # VID_0403 = FTDI (only match if device description mentions Schick/AE/Dental to avoid Arduino etc.)
     $classFilter = if ($ActiveOnly) {
         Get-PnpDevice -Class 'USB', 'Image', 'Ports' -Status 'OK' -ErrorAction SilentlyContinue
     }
@@ -994,15 +1031,23 @@ function Find-SchickUSBDevices {
 
     foreach ($device in $classFilter) {
         $hwIds = (Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
-        if ($hwIds -match 'VID_0403|VID_20D6|Schick') {
+        if ($hwIds -match 'VID_20D6|Schick') {
             if ($device.InstanceId -notin $foundDevices.InstanceId) {
                 $foundDevices += $device
             }
         }
+        elseif ($hwIds -match 'VID_0403') {
+            # FTDI device - only include if description suggests dental/Schick hardware
+            if ($device.FriendlyName -match 'Schick|Dental|AE.*USB|Sensor') {
+                if ($device.InstanceId -notin $foundDevices.InstanceId) {
+                    $foundDevices += $device
+                }
+            }
+        }
     }
 
-    # Remove duplicates and return
-    return ($foundDevices | Select-Object -Unique)
+    # Remove duplicates by InstanceId (Select-Object -Unique is unreliable for CimInstance)
+    return ($foundDevices | Sort-Object -Property InstanceId -Unique)
 }
 
 function Reset-USBSensor {
@@ -1329,13 +1374,14 @@ function Invoke-IOSSInstallation {
     Write-Host "`n=== Pre-Installation: Disconnecting Sensor ===" -ForegroundColor Cyan
     $null = Disable-USBSensorForInstall
 
-    # Step 0c: Uninstall legacy CDR components (required for IOSS per Patterson docs)
-    Write-Host "`n=== Removing Legacy Components ===" -ForegroundColor Cyan
-    $null = Uninstall-LegacyComponents
-
     $installSuccess = $false
 
     try {
+        # Step 0c: Uninstall legacy CDR components (required for IOSS per Patterson docs)
+        # Inside try/finally to guarantee USB sensor re-enablement on failure
+        Write-Host "`n=== Removing Legacy Components ===" -ForegroundColor Cyan
+        $null = Uninstall-LegacyComponents
+
         # Step 1: MSXML 4.0 (if needed)
         if ($Installers.ContainsKey('MSXML4')) {
             if (-not (Install-MSXML4 -InstallerPath $Installers.MSXML4)) {
