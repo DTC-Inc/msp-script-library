@@ -110,7 +110,7 @@ function Test-DellSystem {
     Write-Log "Verifying Dell system..."
 
     try {
-        $manufacturer = (Get-WmiObject -Class Win32_ComputerSystem).Manufacturer
+        $manufacturer = (Get-CimInstance -ClassName Win32_ComputerSystem).Manufacturer
 
         if ($manufacturer -notmatch "Dell") {
             Write-Log "System manufacturer '$manufacturer' is not Dell" "ERROR"
@@ -452,7 +452,11 @@ try {
         # Compare versions
         $comparison = Compare-FirmwareVersion -Current $drive.FirmwareVersion -Target $TargetFirmwareVersion
 
-        if ($comparison -lt 0) {
+        if ($null -eq $comparison) {
+            Write-Host "Status: VERSION COMPARISON ERROR" -ForegroundColor Red
+            Write-Log "Could not compare firmware version for drive $($drive.DiskId)" "ERROR"
+            continue
+        } elseif ($comparison -lt 0) {
             Write-Host "Status: UPDATE REQUIRED" -ForegroundColor Yellow
             $needsUpdate = $true
             if ($drive.Variant -notin $updateVariants) {
@@ -469,7 +473,7 @@ try {
     if ($hasWI) {
         Write-Host "`n*** Script cannot continue - WI drives require manual firmware installation ***" -ForegroundColor Red
         Write-Log "Exiting: WI variant requires manual installation" "WARN"
-        exit 0
+        exit 1
     }
 
     # Perform update if needed
@@ -513,6 +517,9 @@ try {
                 Write-Host "`nRestart skipped (NoRestart flag set)" -ForegroundColor Yellow
                 Write-Log "Restart skipped by NoRestart parameter"
             } elseif ($AutoRestart) {
+                Write-Host "`nThe system will restart in 30 seconds..." -ForegroundColor Yellow
+                Write-Log "AutoRestart enabled - restarting in 30 seconds"
+                Start-Sleep -Seconds 30
                 Write-Log "Initiating automatic system restart"
                 Restart-Computer -Force
             } else {
