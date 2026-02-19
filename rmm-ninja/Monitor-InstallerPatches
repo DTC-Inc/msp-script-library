@@ -43,7 +43,7 @@ function Get-OrphanedInstallerFiles {
         Uses registry queries only.
     .OUTPUTS
         PSCustomObject with properties:
-        - InstallerFolderTotalBytes (long) — unfiltered folder total (all file types)
+        - InstallerFolderTotalBytes (long) — folder total incl. $PatchCache$ (matches Explorer)
         - TotalFiles (int) — MSI/MSP files only
         - TotalSizeBytes (long) — MSI/MSP files only
         - ReferencedFiles (array of PSCustomObject: FullPath, SizeBytes)
@@ -121,7 +121,7 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 2: Enumerate actual files in C:\Windows\Installer ---
     # Top-level only — do NOT include $PatchCache$ subfolder contents
-    $installerPath = "C:\Windows\Installer"
+    $installerPath = Join-Path $env:SystemRoot "Installer"
     # Enumerate all files first (unfiltered) for accurate folder-total metric, then filter for orphan detection.
     # This avoids misleading operators when comparing script output against Explorer-reported folder sizes.
     $allInstallerFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue
@@ -158,10 +158,11 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 5: Return results ---
     # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections.
-    # InstallerFolderTotalBytes = unfiltered folder total (matches Explorer-reported size).
+    # InstallerFolderTotalBytes = top-level files + $PatchCache$ (matches Explorer-reported size).
     # TotalFiles/TotalSizeBytes = MSI/MSP-only subset used for orphan detection.
+    $topLevelTotal = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
     [PSCustomObject]@{
-        InstallerFolderTotalBytes = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
+        InstallerFolderTotalBytes = $topLevelTotal + $patchCacheSize
         TotalFiles                = ($allFiles | Measure-Object).Count -as [int]
         TotalSizeBytes            = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
         ReferencedFiles           = $referenced
@@ -220,7 +221,8 @@ try {
     # blocking the script for 2-10+ minutes on HDD-backed or heavily-loaded servers.
     try {
         $winsxsSize = [long]0
-        foreach ($f in [System.IO.Directory]::EnumerateFiles("C:\Windows\WinSxS", "*", [System.IO.SearchOption]::AllDirectories)) {
+        $winsxsPath = Join-Path $env:SystemRoot "WinSxS"
+        foreach ($f in [System.IO.Directory]::EnumerateFiles($winsxsPath, "*", [System.IO.SearchOption]::AllDirectories)) {
             try { $winsxsSize += ([System.IO.FileInfo]::new($f)).Length } catch { }
         }
     } catch {
