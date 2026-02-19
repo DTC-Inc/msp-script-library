@@ -65,31 +65,33 @@ param(
 # ============================================================================
 $Script:Config = @{
     # Full download URLs with SHA256 hashes for integrity verification
+    # To populate hashes: download each installer on a trusted machine, then run:
+    #   (Get-FileHash -Path ".\filename.exe" -Algorithm SHA256).Hash
     Downloads = @{
         CDRElite      = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/CDRElite5_16/CDRElite/CDR%20Elite%20Setup.exe"
             FileName = "CDR Elite Setup.exe"
-            SHA256   = $null  # TODO: Populate after first verified download
+            SHA256   = $null  # ACTION REQUIRED: Populate from verified download
         }
         CDRPatch      = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/CDRElite5_16/CDRElite/Patch/CDRPatch-2808.msi"
             FileName = "CDRPatch-2808.msi"
-            SHA256   = $null  # TODO: Populate after first verified download
+            SHA256   = $null  # ACTION REQUIRED: Populate from verified download
         }
         AEUSBDriver   = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/AEUSBInterfaceSetup.exe"
             FileName = "AEUSBInterfaceSetup.exe"
-            SHA256   = $null  # TODO: Populate after first verified download
+            SHA256   = $null  # ACTION REQUIRED: Populate from verified download
         }
         IOSS          = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/IOSS_v3.2/IOSS_v3.2/Autorun.exe"
             FileName = "IOSS_Autorun.exe"
-            SHA256   = $null  # TODO: Populate after first verified download
+            SHA256   = $null  # ACTION REQUIRED: Populate from verified download
         }
         MSXML4        = @{
             Url      = "https://download.microsoft.com/download/1/E/E/1EE06E22-A56F-4E76-B6F6-E7670B4F8163/msxml4-KB2758694-enu.exe"
             FileName = "msxml4-KB2758694-enu.exe"
-            SHA256   = $null  # TODO: Populate after first verified download
+            SHA256   = $null  # ACTION REQUIRED: Populate from verified download
         }
     }
 
@@ -375,6 +377,19 @@ function Test-Prerequisites {
         $checks += @{ Name = "Core Isolation"; Status = "PASS"; Message = "Memory Integrity disabled" }
     }
 
+    # Check SHA256 hash configuration
+    $missingHashes = $Script:Config.Downloads.GetEnumerator() |
+        Where-Object { [string]::IsNullOrEmpty($_.Value.SHA256) } |
+        ForEach-Object { $_.Key }
+    if ($missingHashes.Count -gt 0) {
+        $hashList = $missingHashes -join ', '
+        $checks += @{ Name = "SHA256 Hashes"; Status = "WARN"; Message = "Missing for: $hashList - downloads will not be integrity-verified" }
+        Write-Log "WARNING: SHA256 hashes not configured for: $hashList. Run Get-FileHash on verified installers to populate." -Level Warning
+    }
+    else {
+        $checks += @{ Name = "SHA256 Hashes"; Status = "PASS"; Message = "All installer hashes configured" }
+    }
+
     # Check RDP session
     if ($Script:CurrentState.RDPSession) {
         $checks += @{ Name = "RDP Session"; Status = "WARN"; Message = "Running via RDP - USB devices may not be visible" }
@@ -488,8 +503,15 @@ function Get-Installer {
 
             # Verify hash of newly downloaded file
             if (-not (Test-InstallerHash -FilePath $destination -ExpectedHash $expectedHash -Name $Name)) {
-                Write-Log "Downloaded file failed integrity check - removing" -Level Error
-                Remove-Item -Path $destination -Force
+                Write-Log "Downloaded file failed integrity check" -Level Error
+                Remove-Item -Path $destination -Force -ErrorAction SilentlyContinue
+                if ($attempt -lt $maxRetries) {
+                    $backoff = $retryDelay * [math]::Pow(2, $attempt - 1)
+                    Write-Log "Hash mismatch on attempt $attempt/$maxRetries - retrying in ${backoff}s..." -Level Warning
+                    Start-Sleep -Seconds $backoff
+                    continue
+                }
+                Write-Log "Failed hash verification for $Name after $maxRetries attempts" -Level Error
                 return $null
             }
 
@@ -710,6 +732,8 @@ function Uninstall-LegacyComponents {
 
     Write-Log "  Found $($foundProducts.Count) legacy component(s) to uninstall:" -Level Info
 
+    $uninstallFailures = 0
+
     foreach ($product in $foundProducts) {
         Write-Log "    - $($product.DisplayName)" -Level Info
 
@@ -719,8 +743,14 @@ function Uninstall-LegacyComponents {
                 # MSI uninstall
                 $productCode = $product.PSChildName
                 $arguments = "/x $productCode /qn /norestart"
-                Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -NoNewWindow
-                Write-Log "      Uninstalled via MSI" -Level Success
+                $proc = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru -NoNewWindow
+                if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010 -or $proc.ExitCode -eq 1641) {
+                    Write-Log "      Uninstalled via MSI (exit code: $($proc.ExitCode))" -Level Success
+                }
+                else {
+                    Write-Log "      MSI uninstall returned exit code: $($proc.ExitCode)" -Level Warning
+                    $uninstallFailures++
+                }
             }
             elseif ($uninstallString) {
                 # EXE uninstall - parse exe path from embedded arguments
@@ -744,13 +774,29 @@ function Uninstall-LegacyComponents {
                 }
 
                 $silentArgs = "$embeddedArgs /S /SILENT /VERYSILENT /NORESTART".Trim()
-                Start-Process -FilePath $exePath -ArgumentList $silentArgs -Wait -NoNewWindow -ErrorAction SilentlyContinue
-                Write-Log "      Uninstall attempted" -Level Info
+                $proc = Start-Process -FilePath $exePath -ArgumentList $silentArgs -Wait -PassThru -NoNewWindow -ErrorAction SilentlyContinue
+                if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+                    Write-Log "      Uninstalled (exit code: $($proc.ExitCode))" -Level Success
+                }
+                else {
+                    Write-Log "      Uninstall returned exit code: $($proc.ExitCode)" -Level Warning
+                    $uninstallFailures++
+                }
+            }
+            else {
+                Write-Log "      No uninstall string found" -Level Warning
+                $uninstallFailures++
             }
         }
         catch {
             Write-Log "      Failed to uninstall: $_" -Level Warning
+            $uninstallFailures++
         }
+    }
+
+    if ($uninstallFailures -gt 0) {
+        Write-Log "  $uninstallFailures of $($foundProducts.Count) legacy component(s) failed to uninstall" -Level Error
+        return $false
     }
 
     return $true
@@ -931,6 +977,7 @@ function Set-IOSSServiceConfiguration {
     }
 
     $serviceName = $iossService.Name
+    $configSuccess = $true
 
     try {
         # Set delayed auto-start
@@ -939,7 +986,8 @@ function Set-IOSSServiceConfiguration {
             Write-Log "  Set startup type: Delayed Auto-Start" -Level Info
         }
         else {
-            Write-Log "  Failed to set startup type (exit code: $LASTEXITCODE)" -Level Warning
+            Write-Log "  Failed to set startup type (exit code: $LASTEXITCODE)" -Level Error
+            $configSuccess = $false
         }
 
         # Set recovery options: restart on first, second, and subsequent failures
@@ -957,7 +1005,8 @@ function Set-IOSSServiceConfiguration {
             Write-Log "  Set logon account: Local System" -Level Info
         }
         else {
-            Write-Log "  Failed to set logon account (exit code: $LASTEXITCODE)" -Level Warning
+            Write-Log "  Failed to set logon account (exit code: $LASTEXITCODE)" -Level Error
+            $configSuccess = $false
         }
 
         # Start the service
@@ -970,14 +1019,15 @@ function Set-IOSSServiceConfiguration {
                 Write-Log "  Service started successfully" -Level Success
             }
             else {
-                Write-Log "  Service not running - Status: $($iossService.Status)" -Level Warning
+                Write-Log "  Service not running - Status: $($iossService.Status)" -Level Error
+                $configSuccess = $false
             }
         }
         else {
             Write-Log "  Service already running" -Level Info
         }
 
-        return $true
+        return $configSuccess
     }
     catch {
         Write-Log "Error configuring IOSS service: $_" -Level Error
@@ -1000,7 +1050,7 @@ function Find-SchickUSBDevices {
     # to avoid disabling unrelated FTDI devices (Arduino, lab equipment, etc.)
     $devicePatterns = @(
         "*Schick*",
-        "*AE*USB*",
+        "*AE USB*",         # Tightened: no inner wildcard to avoid "Creative AE-5 USB Audio" etc.
         "*Dental*Sensor*"
     )
 
@@ -1380,7 +1430,10 @@ function Invoke-IOSSInstallation {
         # Step 0c: Uninstall legacy CDR components (required for IOSS per Patterson docs)
         # Inside try/finally to guarantee USB sensor re-enablement on failure
         Write-Host "`n=== Removing Legacy Components ===" -ForegroundColor Cyan
-        $null = Uninstall-LegacyComponents
+        if (-not (Uninstall-LegacyComponents)) {
+            Write-Log "Legacy component removal failed - IOSS installation cannot proceed" -Level Error
+            return $false
+        }
 
         # Step 1: MSXML 4.0 (if needed)
         if ($Installers.ContainsKey('MSXML4')) {
