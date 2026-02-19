@@ -69,6 +69,8 @@ function Get-OrphanedInstallerFiles {
     # reference files in C:\Windows\Installer. Missing per-user SIDs inflates orphan counts.
     #
     # LocalPackage values contain standard file paths — no GUID decompression needed.
+    # Test-Path is intentionally omitted: the HashSet is only compared against Get-ChildItem
+    # output (guaranteed-existing files), so stale registry paths are harmless dead weight.
 
     $referencedFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
@@ -92,7 +94,7 @@ function Get-OrphanedInstallerFiles {
                         $installProps = Join-Path $product.PSPath "InstallProperties"
                         if (Test-Path $installProps) {
                             $localPackage = (Get-ItemProperty $installProps -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
-                            if ($localPackage -and (Test-Path $localPackage)) {
+                            if ($localPackage) {
                                 [void]$referencedFiles.Add($localPackage)
                             }
                         }
@@ -112,7 +114,7 @@ function Get-OrphanedInstallerFiles {
                 foreach ($patch in (Get-ChildItem $patchesPath -ErrorAction Stop)) {
                     try {
                         $localPackage = (Get-ItemProperty $patch.PSPath -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
-                        if ($localPackage -and (Test-Path $localPackage)) {
+                        if ($localPackage) {
                             [void]$referencedFiles.Add($localPackage)
                         }
                     } catch {
@@ -232,7 +234,9 @@ try {
             try { $winsxsSize += ([System.IO.FileInfo]::new($f)).Length } catch { }
         }
     } catch {
-        $winsxsSize = [long]0
+        # Preserve partial accumulation — $winsxsSize retains bytes counted before the
+        # iterator error. The value is already documented as approximate (hardlink overcount).
+        Write-Warning "WinSxS enumeration interrupted (partial result: $([math]::Round($winsxsSize/1GB,2)) GB): $($_.Exception.Message)"
     }
     $winsxsSizeGB = [math]::Round($winsxsSize / 1GB, 2)
 
