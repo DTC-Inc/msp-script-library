@@ -64,31 +64,37 @@ param(
 # DOWNLOAD URLS - Backblaze B2 + Microsoft
 # ============================================================================
 $Script:Config = @{
-    # Full download URLs (different subfolders require full paths)
+    # Full download URLs with SHA256 hashes for integrity verification
     Downloads = @{
         CDRElite      = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/CDRElite5_16/CDRElite/CDR%20Elite%20Setup.exe"
             FileName = "CDR Elite Setup.exe"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
         CDRPatch      = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/CDRElite5_16/CDRElite/Patch/CDRPatch-2808.msi"
             FileName = "CDRPatch-2808.msi"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
         AEUSBDriver   = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/AEUSBInterfaceSetup.exe"
             FileName = "AEUSBInterfaceSetup.exe"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
         AEUSBFirmware = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/AE_USB_Firmware_Upgrade%5B1%5D.exe"
             FileName = "AE_USB_Firmware_Upgrade.exe"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
         IOSS          = @{
             Url      = "https://s3.us-west-002.backblazeb2.com/public-dtc/repo/vendors/Patterson-Eaglesoft/IOSS_v3.2/IOSS_v3.2/Autorun.exe"
             FileName = "IOSS_Autorun.exe"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
         MSXML4        = @{
             Url      = "https://download.microsoft.com/download/1/E/E/1EE06E22-A56F-4E76-B6F6-E7670B4F8163/msxml4-KB2758694-enu.exe"
             FileName = "msxml4-KB2758694-enu.exe"
+            SHA256   = $null  # TODO: Populate after first verified download
         }
     }
 
@@ -196,14 +202,24 @@ function Get-EaglesoftVersion {
 
         if ($eaglesoft -and $eaglesoft.DisplayVersion) {
             Write-Log "Found Eaglesoft via uninstall registry: $($eaglesoft.DisplayVersion)" -Level Info
-            try {
-                return [Version]$eaglesoft.DisplayVersion
+
+            # Safe version parsing with TryParse pattern
+            $parsedVersion = $null
+            $versionString = $eaglesoft.DisplayVersion
+
+            # Try direct parse first
+            if ([Version]::TryParse($versionString, [ref]$parsedVersion)) {
+                return $parsedVersion
             }
-            catch {
-                # Version string might have extra characters
-                $cleanVersion = $eaglesoft.DisplayVersion -replace '[^0-9.]', ''
-                return [Version]$cleanVersion
+
+            # Try cleaning the version string
+            $cleanVersion = $versionString -replace '[^0-9.]', '' -replace '\.+', '.' -replace '^\.|\.§', ''
+            if ([Version]::TryParse($cleanVersion, [ref]$parsedVersion)) {
+                Write-Log "  Parsed cleaned version: $cleanVersion" -Level Info
+                return $parsedVersion
             }
+
+            Write-Log "  Could not parse version string: $versionString" -Level Warning
         }
     }
 
@@ -244,8 +260,8 @@ function Get-CurrentInstallState {
         $state.IOSSServiceRunning = $iossService.Status -eq 'Running'
     }
 
-    # Check AE USB Driver
-    $aeDriver = Get-WmiObject Win32_PnPSignedDriver -ErrorAction SilentlyContinue |
+    # Check AE USB Driver (using Get-CimInstance for PS7+ compatibility)
+    $aeDriver = Get-CimInstance Win32_PnPSignedDriver -ErrorAction SilentlyContinue |
         Where-Object { $_.DeviceName -like "*AE*USB*" -or $_.Description -like "*Schick*" }
     $state.AEUSBDriverInstalled = $null -ne $aeDriver
 
@@ -334,14 +350,21 @@ function Test-Prerequisites {
         $passed = $false
     }
 
-    # Check Internet connectivity
+    # Check Internet connectivity (test against actual download endpoint)
     try {
-        $null = Invoke-WebRequest -Uri "https://www.google.com" -UseBasicParsing -TimeoutSec 10
-        $checks += @{ Name = "Internet"; Status = "PASS"; Message = "Connected" }
+        $null = Invoke-WebRequest -Uri "https://s3.us-west-002.backblazeb2.com" -UseBasicParsing -TimeoutSec 10 -Method Head
+        $checks += @{ Name = "Internet/B2"; Status = "PASS"; Message = "Backblaze B2 reachable" }
     }
     catch {
-        $checks += @{ Name = "Internet"; Status = "FAIL"; Message = "No internet connectivity" }
-        $passed = $false
+        # Fallback to Microsoft endpoint
+        try {
+            $null = Invoke-WebRequest -Uri "https://download.microsoft.com" -UseBasicParsing -TimeoutSec 10 -Method Head
+            $checks += @{ Name = "Internet/B2"; Status = "WARN"; Message = "B2 unreachable, Microsoft OK" }
+        }
+        catch {
+            $checks += @{ Name = "Internet/B2"; Status = "FAIL"; Message = "No connectivity to download sources" }
+            $passed = $false
+        }
     }
 
     # Check Core Isolation
@@ -389,6 +412,35 @@ function Initialize-DownloadDirectory {
     }
 }
 
+function Test-InstallerHash {
+    <#
+    .SYNOPSIS
+        Verifies SHA256 hash of downloaded installer
+    #>
+    param(
+        [string]$FilePath,
+        [string]$ExpectedHash,
+        [string]$Name
+    )
+
+    if ([string]::IsNullOrEmpty($ExpectedHash)) {
+        Write-Log "  SHA256 hash not configured for $Name - skipping verification" -Level Warning
+        return $true
+    }
+
+    $actualHash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash
+    if ($actualHash -eq $ExpectedHash) {
+        Write-Log "  SHA256 verified: $($actualHash.Substring(0,16))..." -Level Success
+        return $true
+    }
+    else {
+        Write-Log "  SHA256 MISMATCH for $Name!" -Level Error
+        Write-Log "    Expected: $ExpectedHash" -Level Error
+        Write-Log "    Actual:   $actualHash" -Level Error
+        return $false
+    }
+}
+
 function Get-Installer {
     param(
         [string]$Name
@@ -402,14 +454,23 @@ function Get-Installer {
 
     $url = $installerConfig.Url
     $fileName = $installerConfig.FileName
+    $expectedHash = $installerConfig.SHA256
     $destination = Join-Path $Script:Config.Paths.TempDownload $fileName
 
-    # Skip if already downloaded
+    # Check if already downloaded and verify hash
     if (Test-Path $destination) {
         $fileSize = (Get-Item $destination).Length
         if ($fileSize -gt 0) {
             Write-Log "$Name already downloaded ($([math]::Round($fileSize/1MB, 2)) MB)" -Level Info
-            return $destination
+
+            # Verify hash of existing file
+            if (-not (Test-InstallerHash -FilePath $destination -ExpectedHash $expectedHash -Name $Name)) {
+                Write-Log "Removing corrupted/mismatched file and re-downloading..." -Level Warning
+                Remove-Item -Path $destination -Force
+            }
+            else {
+                return $destination
+            }
         }
     }
 
@@ -421,6 +482,14 @@ function Get-Installer {
 
         $fileSize = (Get-Item $destination).Length
         Write-Log "Downloaded $Name successfully ($([math]::Round($fileSize/1MB, 2)) MB)" -Level Success
+
+        # Verify hash of newly downloaded file
+        if (-not (Test-InstallerHash -FilePath $destination -ExpectedHash $expectedHash -Name $Name)) {
+            Write-Log "Downloaded file failed integrity check - removing" -Level Error
+            Remove-Item -Path $destination -Force
+            return $null
+        }
+
         return $destination
     }
     catch {
@@ -568,13 +637,22 @@ function Uninstall-LegacyComponents {
 
     Write-Log "Checking for legacy components to uninstall..." -Level Info
 
+    # Specific product name patterns (tightened to avoid false positives like CD-R burners)
     $legacyProducts = @(
-        "*CDR Patch*",
-        "*CDR Intra-Oral*",
-        "*CDR Elite*",
-        "*CDR USB*",
-        "*Schick AE USB*",
-        "*CDR TWAIN*"
+        "CDR Patch-2808*",
+        "CDR Intra-Oral*",
+        "CDR Elite USB*",
+        "CDR USB Remote*",
+        "Schick AE USB*",
+        "CDR TWAIN*",
+        "Schick CDR*"
+    )
+
+    # Valid publishers for Patterson/Schick products
+    $validPublishers = @(
+        "*Patterson*",
+        "*Schick*",
+        "*Sirona*"
     )
 
     $uninstallPaths = @(
@@ -587,12 +665,28 @@ function Uninstall-LegacyComponents {
     foreach ($path in $uninstallPaths) {
         foreach ($pattern in $legacyProducts) {
             $products = Get-ItemProperty $path -ErrorAction SilentlyContinue |
-                Where-Object { $_.DisplayName -like $pattern }
+                Where-Object {
+                    $_.DisplayName -like $pattern -and
+                    ($validPublishers | ForEach-Object { $_.Publisher -like $_ }) -contains $true
+                }
             if ($products) {
                 $foundProducts += $products
             }
         }
+
+        # Also catch any product from Patterson/Schick with CDR in the name
+        $publisherProducts = Get-ItemProperty $path -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.DisplayName -like "*CDR*" -and
+                (($_.Publisher -like "*Patterson*") -or ($_.Publisher -like "*Schick*") -or ($_.Publisher -like "*Sirona*"))
+            }
+        if ($publisherProducts) {
+            $foundProducts += $publisherProducts
+        }
     }
+
+    # Remove duplicates
+    $foundProducts = $foundProducts | Sort-Object -Property PSChildName -Unique
 
     if ($foundProducts.Count -eq 0) {
         Write-Log "  No legacy components found" -Level Info
@@ -741,14 +835,21 @@ function Install-AEUSBDriver {
 
     $process = Start-Process -FilePath $InstallerPath -ArgumentList $arguments -Wait -PassThru -NoNewWindow
 
-    if ($process.ExitCode -eq 0) {
-        Write-Log "AE USB driver installed successfully" -Level Success
+    # Known acceptable exit codes for driver installers
+    $acceptableExitCodes = @(0, 3010, 1641)  # 0=Success, 3010=Reboot required, 1641=Reboot initiated
+
+    if ($process.ExitCode -in $acceptableExitCodes) {
+        if ($process.ExitCode -eq 0) {
+            Write-Log "AE USB driver installed successfully" -Level Success
+        }
+        else {
+            Write-Log "AE USB driver installed (exit code $($process.ExitCode) - reboot may be required)" -Level Success
+        }
         return $true
     }
     else {
-        Write-Log "AE USB driver installation returned exit code: $($process.ExitCode)" -Level Warning
-        # Some driver installers return non-zero even on success
-        return $true
+        Write-Log "AE USB driver installation failed with exit code: $($process.ExitCode)" -Level Error
+        return $false
     }
 }
 
@@ -792,16 +893,31 @@ function Set-IOSSServiceConfiguration {
 
     try {
         # Set delayed auto-start
-        & sc.exe config $serviceName start= delayed-auto | Out-Null
-        Write-Log "  Set startup type: Delayed Auto-Start" -Level Info
+        $null = & sc.exe config $serviceName start= delayed-auto 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "  Set startup type: Delayed Auto-Start" -Level Info
+        }
+        else {
+            Write-Log "  Failed to set startup type (exit code: $LASTEXITCODE)" -Level Warning
+        }
 
         # Set recovery options: restart on first, second, and subsequent failures
-        & sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 | Out-Null
-        Write-Log "  Set recovery options: Restart on failure (60s delay)" -Level Info
+        $null = & sc.exe failure $serviceName reset= 86400 actions= restart/60000/restart/60000/restart/60000 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "  Set recovery options: Restart on failure (60s delay)" -Level Info
+        }
+        else {
+            Write-Log "  Failed to set recovery options (exit code: $LASTEXITCODE)" -Level Warning
+        }
 
         # Ensure running as Local System
-        & sc.exe config $serviceName obj= "LocalSystem" | Out-Null
-        Write-Log "  Set logon account: Local System" -Level Info
+        $null = & sc.exe config $serviceName obj= "LocalSystem" 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Log "  Set logon account: Local System" -Level Info
+        }
+        else {
+            Write-Log "  Failed to set logon account (exit code: $LASTEXITCODE)" -Level Warning
+        }
 
         # Start the service
         if ($iossService.Status -ne 'Running') {
@@ -828,6 +944,60 @@ function Set-IOSSServiceConfiguration {
     }
 }
 
+function Find-SchickUSBDevices {
+    <#
+    .SYNOPSIS
+        Shared helper to discover Schick/AE USB sensor devices
+        Used by Reset-USBSensor and Disable/Enable functions
+    #>
+    param(
+        [switch]$ActiveOnly  # Only return devices with Status 'OK'
+    )
+
+    # Search patterns for Schick/AE USB devices
+    $devicePatterns = @(
+        "*Schick*",
+        "*AE*USB*",
+        "*Dental*Sensor*",
+        "*FTDI*"  # Common USB-serial chip used in dental sensors
+    )
+
+    $foundDevices = @()
+
+    # Find matching USB devices by friendly name
+    foreach ($pattern in $devicePatterns) {
+        $filter = { $_.Class -in @('USB', 'Image', 'Ports', 'HIDClass') }
+        if ($ActiveOnly) {
+            $filter = { $_.Class -in @('USB', 'Image', 'Ports', 'HIDClass') -and $_.Status -eq 'OK' }
+        }
+
+        $devices = Get-PnpDevice -FriendlyName $pattern -ErrorAction SilentlyContinue | Where-Object $filter
+        if ($devices) {
+            $foundDevices += $devices
+        }
+    }
+
+    # Also search by hardware ID patterns (VID_0403=FTDI, VID_20D6=Schick)
+    $classFilter = if ($ActiveOnly) {
+        Get-PnpDevice -Class 'USB', 'Image', 'Ports' -Status 'OK' -ErrorAction SilentlyContinue
+    }
+    else {
+        Get-PnpDevice -Class 'USB', 'Image', 'Ports' -ErrorAction SilentlyContinue
+    }
+
+    foreach ($device in $classFilter) {
+        $hwIds = (Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
+        if ($hwIds -match 'VID_0403|VID_20D6|Schick') {
+            if ($device.InstanceId -notin $foundDevices.InstanceId) {
+                $foundDevices += $device
+            }
+        }
+    }
+
+    # Remove duplicates and return
+    return ($foundDevices | Select-Object -Unique)
+}
+
 function Reset-USBSensor {
     <#
     .SYNOPSIS
@@ -837,46 +1007,13 @@ function Reset-USBSensor {
 
     Write-Log "Resetting USB sensor (simulating unplug/replug)..." -Level Info
 
-    # Search patterns for Schick/AE USB devices
-    $devicePatterns = @(
-        "*Schick*",
-        "*CDR*",
-        "*AE*USB*",
-        "*Dental*Sensor*",
-        "*FTDI*"  # Common USB-serial chip used in dental sensors
-    )
-
-    $foundDevices = @()
-
-    # Find matching USB devices
-    foreach ($pattern in $devicePatterns) {
-        $devices = Get-PnpDevice -FriendlyName $pattern -ErrorAction SilentlyContinue |
-            Where-Object { $_.Class -in @('USB', 'Image', 'Ports', 'HIDClass') }
-
-        if ($devices) {
-            $foundDevices += $devices
-        }
-    }
-
-    # Also search by hardware ID patterns
-    $usbDevices = Get-PnpDevice -Class 'USB', 'Image', 'Ports' -ErrorAction SilentlyContinue
-    foreach ($device in $usbDevices) {
-        $hwIds = (Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
-        if ($hwIds -match 'VID_0403|VID_20D6|Schick|CDR') {
-            if ($device -notin $foundDevices) {
-                $foundDevices += $device
-            }
-        }
-    }
+    $foundDevices = Find-SchickUSBDevices
 
     if ($foundDevices.Count -eq 0) {
         Write-Log "No Schick/AE USB devices found to reset" -Level Warning
         Write-Log "  Note: Device may need physical replug, or sensor not connected" -Level Warning
         return $false
     }
-
-    # Remove duplicates
-    $foundDevices = $foundDevices | Select-Object -Unique
 
     Write-Log "Found $($foundDevices.Count) USB device(s) to reset:" -Level Info
 
@@ -961,45 +1098,12 @@ function Disable-USBSensorForInstall {
 
     Write-Log "Checking for connected USB sensors to disable during installation..." -Level Info
 
-    # Search patterns for Schick/AE USB devices
-    $devicePatterns = @(
-        "*Schick*",
-        "*CDR*",
-        "*AE*USB*",
-        "*Dental*Sensor*",
-        "*FTDI*"
-    )
-
-    $Script:DisabledDevices = @()
-
-    # Find matching USB devices
-    foreach ($pattern in $devicePatterns) {
-        $devices = Get-PnpDevice -FriendlyName $pattern -ErrorAction SilentlyContinue |
-            Where-Object { $_.Class -in @('USB', 'Image', 'Ports', 'HIDClass') -and $_.Status -eq 'OK' }
-
-        if ($devices) {
-            $Script:DisabledDevices += $devices
-        }
-    }
-
-    # Also search by hardware ID patterns
-    $usbDevices = Get-PnpDevice -Class 'USB', 'Image', 'Ports' -Status 'OK' -ErrorAction SilentlyContinue
-    foreach ($device in $usbDevices) {
-        $hwIds = (Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_HardwareIds' -ErrorAction SilentlyContinue).Data
-        if ($hwIds -match 'VID_0403|VID_20D6|Schick|CDR') {
-            if ($device.InstanceId -notin $Script:DisabledDevices.InstanceId) {
-                $Script:DisabledDevices += $device
-            }
-        }
-    }
+    $Script:DisabledDevices = Find-SchickUSBDevices -ActiveOnly
 
     if ($Script:DisabledDevices.Count -eq 0) {
         Write-Log "  No active USB sensors detected - proceeding with installation" -Level Info
         return $true
     }
-
-    # Remove duplicates
-    $Script:DisabledDevices = $Script:DisabledDevices | Select-Object -Unique
 
     Write-Log "  Found $($Script:DisabledDevices.Count) USB sensor(s) to disable:" -Level Info
 
@@ -1163,38 +1267,48 @@ function Invoke-LegacyInstallation {
     Write-Host "`n=== Pre-Installation: Disconnecting Sensor ===" -ForegroundColor Cyan
     Disable-USBSensorForInstall
 
-    # Step 1: MSXML 4.0 (if needed)
-    if ($Installers.ContainsKey('MSXML4')) {
-        if (-not (Install-MSXML4 -InstallerPath $Installers.MSXML4)) {
+    $installSuccess = $false
+
+    try {
+        # Step 1: MSXML 4.0 (if needed)
+        if ($Installers.ContainsKey('MSXML4')) {
+            if (-not (Install-MSXML4 -InstallerPath $Installers.MSXML4)) {
+                return $false
+            }
+        }
+
+        # Step 2: CDR Elite
+        if (-not (Install-CDRElite -InstallerPath $Installers.CDRElite)) {
             return $false
         }
-    }
 
-    # Step 2: CDR Elite
-    if (-not (Install-CDRElite -InstallerPath $Installers.CDRElite)) {
-        return $false
-    }
+        # Step 3: Rename CDRImageProcess.dll to .dllOLD (per Patterson docs)
+        Rename-CDRImageProcessDLL
 
-    # Step 3: Rename CDRImageProcess.dll to .dllOLD (per Patterson docs)
-    Rename-CDRImageProcessDLL
+        # Step 4: CDR Patch (creates correct CDRImageProcess.dll v5.15.1877)
+        if ($Installers.ContainsKey('CDRPatch')) {
+            if (-not (Install-CDRPatch -InstallerPath $Installers.CDRPatch)) {
+                return $false
+            }
+        }
 
-    # Step 4: CDR Patch (creates correct CDRImageProcess.dll v5.15.1877)
-    if ($Installers.ContainsKey('CDRPatch')) {
-        if (-not (Install-CDRPatch -InstallerPath $Installers.CDRPatch)) {
+        # Step 5: AE USB Driver
+        if (-not (Install-AEUSBDriver -InstallerPath $Installers.AEUSBDriver)) {
             return $false
         }
+
+        $installSuccess = $true
+        return $true
     }
+    finally {
+        # ALWAYS re-enable USB sensor, even if installation failed
+        Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
+        Enable-USBSensorAfterInstall
 
-    # Step 5: AE USB Driver
-    if (-not (Install-AEUSBDriver -InstallerPath $Installers.AEUSBDriver)) {
-        return $false
+        if (-not $installSuccess) {
+            Write-Log "Installation failed but USB sensor has been re-enabled" -Level Warning
+        }
     }
-
-    # Step 6: Re-enable USB sensor (per Patterson: reconnect after driver install)
-    Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
-    Enable-USBSensorAfterInstall
-
-    return $true
 }
 
 function Invoke-IOSSInstallation {
@@ -1213,43 +1327,53 @@ function Invoke-IOSSInstallation {
     Write-Host "`n=== Removing Legacy Components ===" -ForegroundColor Cyan
     Uninstall-LegacyComponents
 
-    # Step 1: MSXML 4.0 (if needed)
-    if ($Installers.ContainsKey('MSXML4')) {
-        if (-not (Install-MSXML4 -InstallerPath $Installers.MSXML4)) {
+    $installSuccess = $false
+
+    try {
+        # Step 1: MSXML 4.0 (if needed)
+        if ($Installers.ContainsKey('MSXML4')) {
+            if (-not (Install-MSXML4 -InstallerPath $Installers.MSXML4)) {
+                return $false
+            }
+        }
+
+        # Step 2: CDR Elite (installs base DLLs: CDRData.dll, OMEGADLL.dll)
+        if (-not (Install-CDRElite -InstallerPath $Installers.CDRElite)) {
             return $false
         }
+
+        # Step 3: Clean Shared Files (preserve CDRData.dll and OMEGADLL.dll only)
+        if (-not (Clear-SharedFilesForIOSS)) {
+            return $false
+        }
+
+        # Step 4: CDR Patch (creates correct CDRImageProcess.dll v5.15.1877)
+        if (-not (Install-CDRPatch -InstallerPath $Installers.CDRPatch)) {
+            return $false
+        }
+
+        # Step 5: IOSS Autorun
+        if (-not (Install-IOSS -InstallerPath $Installers.IOSS)) {
+            return $false
+        }
+
+        # Step 6: Configure IOSS Service (delayed start, recovery options, Local System)
+        if (-not (Set-IOSSServiceConfiguration)) {
+            Write-Log "Service configuration had issues - manual review recommended" -Level Warning
+        }
+
+        $installSuccess = $true
+        return $true
     }
+    finally {
+        # ALWAYS re-enable USB sensor, even if installation failed
+        Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
+        Enable-USBSensorAfterInstall
 
-    # Step 2: CDR Elite (installs base DLLs: CDRData.dll, OMEGADLL.dll)
-    if (-not (Install-CDRElite -InstallerPath $Installers.CDRElite)) {
-        return $false
+        if (-not $installSuccess) {
+            Write-Log "Installation failed but USB sensor has been re-enabled" -Level Warning
+        }
     }
-
-    # Step 3: Clean Shared Files (preserve CDRData.dll and OMEGADLL.dll only)
-    if (-not (Clear-SharedFilesForIOSS)) {
-        return $false
-    }
-
-    # Step 4: CDR Patch (creates correct CDRImageProcess.dll v5.15.1877)
-    if (-not (Install-CDRPatch -InstallerPath $Installers.CDRPatch)) {
-        return $false
-    }
-
-    # Step 5: IOSS Autorun
-    if (-not (Install-IOSS -InstallerPath $Installers.IOSS)) {
-        return $false
-    }
-
-    # Step 6: Configure IOSS Service (delayed start, recovery options, Local System)
-    if (-not (Set-IOSSServiceConfiguration)) {
-        Write-Log "Service configuration had issues - manual review recommended" -Level Warning
-    }
-
-    # Step 7: Re-enable USB sensor (per Patterson: reconnect after IOSS install)
-    Write-Host "`n=== Post-Installation: Reconnecting Sensor ===" -ForegroundColor Cyan
-    Enable-USBSensorAfterInstall
-
-    return $true
 }
 
 function Export-Results {
@@ -1280,11 +1404,11 @@ $Script:Results = @{
 
 Write-Host @"
 
-╔═══════════════════════════════════════════════════════════════════╗
-║           Schick Sensor Deployment Script v1.0.0                  ║
-║                                                                   ║
-║  CDR Elite 5.16 + IOSS/Legacy Auto-Detection                      ║
-╚═══════════════════════════════════════════════════════════════════╝
+╔═════════════════════════════════════════════════════════════════════╗
+║              Schick Sensor Deployment Script v1.0.0                 ║
+║                                                                     ║
+║        CDR Elite 5.16 + IOSS/Legacy Auto-Detection                  ║
+╚═════════════════════════════════════════════════════════════════════╝
 
 "@ -ForegroundColor Cyan
 
@@ -1355,14 +1479,14 @@ try {
     # Step 9: Final summary
     Write-Host ""
     if ($validationPassed) {
-        Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Green
-        Write-Host "  INSTALLATION COMPLETED SUCCESSFULLY" -ForegroundColor Green
-        Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Green
+        Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Green
+        Write-Host "               INSTALLATION COMPLETED SUCCESSFULLY                   " -ForegroundColor Green
+        Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Green
     }
     else {
-        Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Yellow
-        Write-Host "  INSTALLATION COMPLETED WITH WARNINGS - Review validation above" -ForegroundColor Yellow
-        Write-Host "═══════════════════════════════════════════════════════════════════" -ForegroundColor Yellow
+        Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Yellow
+        Write-Host "     INSTALLATION COMPLETED WITH WARNINGS - Review validation above  " -ForegroundColor Yellow
+        Write-Host "═════════════════════════════════════════════════════════════════════" -ForegroundColor Yellow
     }
 
     $Script:Results.EndTime = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
