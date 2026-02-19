@@ -64,8 +64,9 @@ function Get-OrphanedInstallerFiles {
         Uses registry queries only.
     .OUTPUTS
         PSCustomObject with properties:
-        - TotalFiles (int)
-        - TotalSizeBytes (long)
+        - InstallerFolderTotalBytes (long) — unfiltered folder total (all file types)
+        - TotalFiles (int) — MSI/MSP files only
+        - TotalSizeBytes (long) — MSI/MSP files only
         - ReferencedFiles (array of PSCustomObject: FullPath, SizeBytes)
         - ReferencedCount (int)
         - ReferencedSizeBytes (long)
@@ -80,7 +81,7 @@ function Get-OrphanedInstallerFiles {
     param()
 
     $startTime = Get-Date
-    $errors = @()
+    $registryErrors = @()
 
     # --- STEP 1: Build the "referenced files" set ---
     # The Windows Installer stores product/patch cache file references in the registry.
@@ -110,7 +111,7 @@ function Get-OrphanedInstallerFiles {
                         }
                     }
                 } catch {
-                    $errors += "Product $($product.PSChildName): $($_.Exception.Message)"
+                    $registryErrors += "Product $($product.PSChildName): $($_.Exception.Message)"
                 }
             }
         }
@@ -131,7 +132,7 @@ function Get-OrphanedInstallerFiles {
                         [void]$referencedFiles.Add($localPackage)
                     }
                 } catch {
-                    $errors += "Patch $($patch.PSChildName): $($_.Exception.Message)"
+                    $registryErrors += "Patch $($patch.PSChildName): $($_.Exception.Message)"
                 }
             }
         }
@@ -142,25 +143,28 @@ function Get-OrphanedInstallerFiles {
     # --- STEP 2: Enumerate actual files in C:\Windows\Installer ---
     # Top-level only — do NOT include $PatchCache$ subfolder contents
     $installerPath = "C:\Windows\Installer"
-    $allFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in '.msi', '.msp' }
+    # Enumerate all files first (unfiltered) for accurate folder-total metric, then filter for orphan detection.
+    # This avoids misleading operators when comparing script output against Explorer-reported folder sizes.
+    $allInstallerFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue
+    $allFiles = $allInstallerFiles | Where-Object { $_.Extension -in '.msi', '.msp' }
 
     # --- STEP 3: Compare and classify ---
-    $referenced = @()
-    $orphaned = @()
+    # Use List<T> instead of @() += to avoid O(n^2) array reallocation on machines with thousands of files
+    $referenced = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $orphaned   = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($file in $allFiles) {
         if ($referencedFiles.Contains($file.FullName)) {
-            $referenced += [PSCustomObject]@{
+            $referenced.Add([PSCustomObject]@{
                 FullPath  = $file.FullName
                 SizeBytes = $file.Length
-            }
+            })
         } else {
-            $orphaned += [PSCustomObject]@{
+            $orphaned.Add([PSCustomObject]@{
                 FullPath      = $file.FullName
                 SizeBytes     = $file.Length
                 LastWriteTime = $file.LastWriteTime
-            }
+            })
         }
     }
 
@@ -174,19 +178,22 @@ function Get-OrphanedInstallerFiles {
     }
 
     # --- STEP 5: Return results ---
-    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections
+    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections.
+    # InstallerFolderTotalBytes = unfiltered folder total (matches Explorer-reported size).
+    # TotalFiles/TotalSizeBytes = MSI/MSP-only subset used for orphan detection.
     [PSCustomObject]@{
-        TotalFiles          = ($allFiles | Measure-Object).Count -as [int]
-        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
-        ReferencedFiles     = $referenced
-        ReferencedCount     = $referenced.Count
-        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
-        OrphanedFiles       = $orphaned
-        OrphanedCount       = $orphaned.Count
-        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
-        PatchCacheSizeBytes = $patchCacheSize
-        ScanDuration        = (Get-Date) - $startTime
-        Errors              = $errors
+        InstallerFolderTotalBytes = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
+        TotalFiles                = ($allFiles | Measure-Object).Count -as [int]
+        TotalSizeBytes            = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
+        ReferencedFiles           = $referenced
+        ReferencedCount           = $referenced.Count
+        ReferencedSizeBytes       = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
+        OrphanedFiles             = $orphaned
+        OrphanedCount             = $orphaned.Count
+        OrphanedSizeBytes         = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
+        PatchCacheSizeBytes       = $patchCacheSize
+        ScanDuration              = (Get-Date) - $startTime
+        Errors                    = $registryErrors
     }
 }
 
@@ -195,7 +202,6 @@ function Get-OrphanedInstallerFiles {
 # ============================================================================
 Write-Output "DTC Installer Patch Cleanup — Starting..."
 Write-Output "Timestamp: $(Get-Date -Format 'o')"
-Write-Output "Mode: $(if ($WhatIf) {'WhatIf (dry run)'} elseif ($Force) {'Force (direct delete)'} else {'Quarantine'})"
 Write-Output ""
 
 # ============================================================================
@@ -220,6 +226,9 @@ if ($freePercent -lt $AutoForceThresholdPct -and -not $Force) {
     Write-Warning "Disk is $freePercent% free — auto-enabling direct deletion mode (quarantine would consume additional space)"
     $Force = $true
 }
+
+# Print mode AFTER auto-Force decision so the log reflects the actual execution mode
+Write-Output "Mode: $(if ($WhatIf) {'WhatIf (dry run)'} elseif ($Force) {'Force (direct delete)'} else {'Quarantine'})"
 
 # Record baseline
 $baselineSize = (Get-ChildItem "C:\Windows\Installer" -Recurse -Force -ErrorAction SilentlyContinue |
@@ -265,9 +274,9 @@ try {
 }
 
 Write-Output "  Scan complete in $($results.ScanDuration.TotalSeconds) seconds"
-Write-Output "  Total files: $($results.TotalFiles) ($([math]::Round($results.TotalSizeBytes / 1GB, 2)) GB)"
-Write-Output "  Referenced:  $($results.ReferencedCount) ($([math]::Round($results.ReferencedSizeBytes / 1GB, 2)) GB)"
-Write-Output "  Orphaned:    $($results.OrphanedCount) ($([math]::Round($results.OrphanedSizeBytes / 1GB, 2)) GB)"
+Write-Output "  MSI/MSP files: $($results.TotalFiles) ($([math]::Round($results.TotalSizeBytes / 1GB, 2)) GB)"
+Write-Output "  Referenced:    $($results.ReferencedCount) ($([math]::Round($results.ReferencedSizeBytes / 1GB, 2)) GB)"
+Write-Output "  Orphaned:      $($results.OrphanedCount) ($([math]::Round($results.OrphanedSizeBytes / 1GB, 2)) GB)"
 Write-Output ""
 
 # Include time in quarantine folder name to prevent same-day collision (Move-Item -Force
@@ -284,7 +293,11 @@ if (-not $WhatIf) {
     }
 }
 
-$totalRecoveredBytes = 0
+# Track two separate metrics:
+# - $installerFolderFreedBytes: bytes removed from C:\Windows\Installer (Move or Delete — what shrinks the folder)
+# - $diskSpaceRecoveredBytes: bytes actually freed from disk (Delete only — quarantine stays on same volume)
+$installerFolderFreedBytes = [long]0
+$diskSpaceRecoveredBytes   = [long]0
 
 foreach ($file in $results.OrphanedFiles) {
     $logEntry = "[$(Get-Date -Format 'o')] [PHASE2]"
@@ -296,7 +309,8 @@ foreach ($file in $results.OrphanedFiles) {
     elseif ($Force) {
         try {
             Remove-Item $file.FullPath -Force -ErrorAction Stop
-            $totalRecoveredBytes += $file.SizeBytes
+            $installerFolderFreedBytes += $file.SizeBytes
+            $diskSpaceRecoveredBytes   += $file.SizeBytes
             $logEntry += " [DELETED] $($file.FullPath) ($($file.SizeBytes) bytes) [OK]"
         } catch {
             $logEntry += " [DELETE-FAILED] $($file.FullPath) ($($file.SizeBytes) bytes) [$($_.Exception.Message)]"
@@ -306,7 +320,8 @@ foreach ($file in $results.OrphanedFiles) {
     else {
         try {
             Move-Item $file.FullPath $quarantinePath -Force -ErrorAction Stop
-            $totalRecoveredBytes += $file.SizeBytes
+            $installerFolderFreedBytes += $file.SizeBytes
+            # NOTE: quarantine moves files on the same volume — no disk space is freed until quarantine expires
             $logEntry += " [QUARANTINED] $($file.FullPath) ($($file.SizeBytes) bytes) [OK]"
         } catch {
             $logEntry += " [QUARANTINE-FAILED] $($file.FullPath) ($($file.SizeBytes) bytes) [$($_.Exception.Message)]"
@@ -332,16 +347,22 @@ if (Test-Path $patchCachePath) {
     if (-not $patchCacheSize) { $patchCacheSize = [long]0 }
     $patchCacheSizeGB = [math]::Round($patchCacheSize / 1GB, 2)
 
-    if ($patchCacheSizeGB -gt $PatchCacheThresholdGB) {
+    if ($patchCacheSizeGB -ge $PatchCacheThresholdGB) {
         if ($WhatIf) {
             Write-Output "[WHATIF] [PHASE3] Would delete $patchCacheSizeGB GB from `$PatchCache`$"
         } else {
             Write-Output "[PHASE 3] Cleaning `$PatchCache`$ ($patchCacheSizeGB GB)..."
-            # Delete contents, not the folder itself
+            # Delete contents, not the folder itself. Some files may be locked by msiexec.
             Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
                 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            $totalRecoveredBytes += $patchCacheSize
-            "[$(Get-Date -Format 'o')] [PHASE3] [DELETED] `$PatchCache`$ contents ($patchCacheSize bytes)" |
+            # Re-measure after deletion to compute actual recovery (locked files may remain)
+            $postCacheSize = (Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
+                Measure-Object Length -Sum).Sum -as [long]
+            if (-not $postCacheSize) { $postCacheSize = [long]0 }
+            $actualCacheRecovered = $patchCacheSize - $postCacheSize
+            $installerFolderFreedBytes += $actualCacheRecovered
+            $diskSpaceRecoveredBytes   += $actualCacheRecovered
+            "[$(Get-Date -Format 'o')] [PHASE3] [DELETED] `$PatchCache`$ contents ($actualCacheRecovered of $patchCacheSize bytes)" |
                 Out-File -FilePath $logFile -Append -Encoding UTF8
         }
     } else {
@@ -371,6 +392,14 @@ if (Test-Path $quarantineRoot) {
                 $folderSize = (Get-ChildItem $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -as [long]
                 if (-not $folderSize) { $folderSize = [long]0 }
                 Remove-Item $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                # Verify deletion before counting recovery — partial failures are possible
+                if (-not (Test-Path $folder.FullName)) {
+                    $diskSpaceRecoveredBytes += $folderSize
+                } else {
+                    $remainingSize = (Get-ChildItem $folder.FullName -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum -as [long]
+                    if (-not $remainingSize) { $remainingSize = [long]0 }
+                    $diskSpaceRecoveredBytes += ($folderSize - $remainingSize)
+                }
                 Write-Output "[PHASE 4] Purged expired quarantine: $($folder.Name) ($([math]::Round($folderSize/1MB,1)) MB)"
                 "[$(Get-Date -Format 'o')] [PHASE4] [PURGED] $($folder.FullName) ($folderSize bytes)" |
                     Out-File -FilePath $logFile -Append -Encoding UTF8
@@ -388,28 +417,31 @@ Write-Output ""
 # ============================================================================
 # PHASE 5: Report
 # ============================================================================
-$totalRecoveredGB = [math]::Round($totalRecoveredBytes / 1GB, 2)
+$installerFolderFreedGB  = [math]::Round($installerFolderFreedBytes / 1GB, 2)
+$diskSpaceRecoveredGB   = [math]::Round($diskSpaceRecoveredBytes / 1GB, 2)
 
 if (-not $WhatIf) {
     # Update NinjaRMM custom fields — cleanup-specific
+    # Report actual disk space recovered (only actual deletions, not quarantine moves)
     try {
         Ninja-Property-Set installerLastCleanup (Get-Date -Format "o")
-        Ninja-Property-Set installerCleanupRecoveredGB $totalRecoveredGB
+        Ninja-Property-Set installerCleanupRecoveredGB $diskSpaceRecoveredGB
     } catch {
         Write-Warning "NinjaRMM cleanup field write failed: $($_.Exception.Message)"
     }
 
     # Re-run monitor logic to update current state
+    # Use InstallerFolderTotalBytes (unfiltered) for threshold so status matches Explorer
     try {
         $postResults = Get-OrphanedInstallerFiles
-        $postTotalGB = [math]::Round($postResults.TotalSizeBytes / 1GB, 2)
+        $postFolderGB = [math]::Round($postResults.InstallerFolderTotalBytes / 1GB, 2)
         $postOrphanedGB = [math]::Round($postResults.OrphanedSizeBytes / 1GB, 2)
-        $postStatus = if ($postTotalGB -ge $CriticalThresholdGB) { "Critical" }
-                      elseif ($postTotalGB -ge $WarningThresholdGB) { "Warning" }
+        $postStatus = if ($postFolderGB -ge $CriticalThresholdGB) { "Critical" }
+                      elseif ($postFolderGB -ge $WarningThresholdGB) { "Warning" }
                       else { "Healthy" }
 
         try {
-            Ninja-Property-Set installerFolderSizeGB $postTotalGB
+            Ninja-Property-Set installerFolderSizeGB $postFolderGB
             Ninja-Property-Set installerOrphanedSizeGB $postOrphanedGB
             Ninja-Property-Set installerOrphanedCount $postResults.OrphanedCount
             Ninja-Property-Set installerStatus $postStatus
@@ -437,7 +469,8 @@ if (-not $WhatIf) {
     $eventMessage = @"
 DTC Installer Patch Cleanup — Complete
 Mode: $(if ($Force) {"Direct Delete"} else {"Quarantine"})
-Total Recovered: $totalRecoveredGB GB
+Installer Folder Freed: $installerFolderFreedGB GB
+Disk Space Recovered: $diskSpaceRecoveredGB GB
 Orphaned Files Processed: $($results.OrphanedCount)
 "@
     try {
@@ -451,7 +484,11 @@ Orphaned Files Processed: $($results.OrphanedCount)
 Write-Output "=== CLEANUP SUMMARY ==="
 Write-Output "Mode: $(if ($WhatIf) {'WhatIf (no changes made)'} elseif ($Force) {'Direct Delete'} else {'Quarantine'})"
 Write-Output "Orphaned files found: $($results.OrphanedCount)"
-Write-Output "Space recovered: $totalRecoveredGB GB"
+Write-Output "Installer folder freed: $installerFolderFreedGB GB"
+if (-not $Force -and -not $WhatIf) {
+    Write-Output "  (files quarantined to C:\DTC — disk space freed when quarantine expires in $QuarantineDays days)"
+}
+Write-Output "Disk space recovered: $diskSpaceRecoveredGB GB"
 if (-not $WhatIf) {
     Write-Output "Log file: $logFile"
 }
