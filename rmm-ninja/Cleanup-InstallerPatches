@@ -45,6 +45,7 @@ $WarningThresholdGB     = 20    # Total Installer folder size >= this = "Warning
 $CriticalThresholdGB    = 50    # Total Installer folder size >= this = "Critical"
 $AutoForceThresholdPct  = 10    # Free disk % below which Force mode auto-enables
 $PatchCacheThresholdGB  = 1     # $PatchCache$ size above which cleanup is triggered
+$DismTimeoutMinutes     = 60    # Max minutes to wait for DISM before continuing
 
 # ============================================================================
 # SHARED FUNCTION: Get-OrphanedInstallerFiles
@@ -64,7 +65,7 @@ function Get-OrphanedInstallerFiles {
         Uses registry queries only.
     .OUTPUTS
         PSCustomObject with properties:
-        - InstallerFolderTotalBytes (long) — unfiltered folder total (all file types)
+        - InstallerFolderTotalBytes (long) — folder total incl. $PatchCache$ (matches Explorer)
         - TotalFiles (int) — MSI/MSP files only
         - TotalSizeBytes (long) — MSI/MSP files only
         - ReferencedFiles (array of PSCustomObject: FullPath, SizeBytes)
@@ -142,7 +143,7 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 2: Enumerate actual files in C:\Windows\Installer ---
     # Top-level only — do NOT include $PatchCache$ subfolder contents
-    $installerPath = "C:\Windows\Installer"
+    $installerPath = Join-Path $env:SystemRoot "Installer"
     # Enumerate all files first (unfiltered) for accurate folder-total metric, then filter for orphan detection.
     # This avoids misleading operators when comparing script output against Explorer-reported folder sizes.
     $allInstallerFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue
@@ -179,10 +180,11 @@ function Get-OrphanedInstallerFiles {
 
     # --- STEP 5: Return results ---
     # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections.
-    # InstallerFolderTotalBytes = unfiltered folder total (matches Explorer-reported size).
+    # InstallerFolderTotalBytes = top-level files + $PatchCache$ (matches Explorer-reported size).
     # TotalFiles/TotalSizeBytes = MSI/MSP-only subset used for orphan detection.
+    $topLevelTotal = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
     [PSCustomObject]@{
-        InstallerFolderTotalBytes = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
+        InstallerFolderTotalBytes = $topLevelTotal + $patchCacheSize
         TotalFiles                = ($allFiles | Measure-Object).Count -as [int]
         TotalSizeBytes            = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
         ReferencedFiles           = $referenced
@@ -231,7 +233,8 @@ if ($freePercent -lt $AutoForceThresholdPct -and -not $Force) {
 Write-Output "Mode: $(if ($WhatIf) {'WhatIf (dry run)'} elseif ($Force) {'Force (direct delete)'} else {'Quarantine'})"
 
 # Record baseline
-$baselineSize = (Get-ChildItem "C:\Windows\Installer" -Recurse -Force -ErrorAction SilentlyContinue |
+$installerBasePath = Join-Path $env:SystemRoot "Installer"
+$baselineSize = (Get-ChildItem $installerBasePath -Recurse -Force -ErrorAction SilentlyContinue |
     Measure-Object Length -Sum).Sum -as [long]
 if (-not $baselineSize) { $baselineSize = [long]0 }
 $baselineSizeGB = [math]::Round($baselineSize / 1GB, 2)
@@ -246,13 +249,26 @@ if (-not $SkipDISM) {
         Write-Output "[WHATIF] Would run: DISM /Online /Cleanup-Image /StartComponentCleanup"
         Write-Output ""
     } else {
-        Write-Output "[PHASE 1] Running DISM Component Cleanup..."
-        # Do NOT use /ResetBase — prevents future update uninstalls, too destructive for automation
-        $dismResult = & DISM /Online /Cleanup-Image /StartComponentCleanup 2>&1
-        $dismResult | ForEach-Object { Write-Output "[DISM] $_" }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "[PHASE 1] DISM exited with code $LASTEXITCODE — component cleanup may be incomplete."
+        Write-Output "[PHASE 1] Running DISM Component Cleanup (timeout: $DismTimeoutMinutes min)..."
+        # Do NOT use /ResetBase — prevents future update uninstalls, too destructive for automation.
+        # Run as background job with timeout — synchronous DISM can take 30-90+ minutes on
+        # heavily-loaded systems, which may exceed the NinjaRMM execution window.
+        $dismJob = Start-Job -ScriptBlock {
+            $output = & DISM /Online /Cleanup-Image /StartComponentCleanup 2>&1
+            [PSCustomObject]@{ Output = $output; ExitCode = $LASTEXITCODE }
         }
+        $completed = $dismJob | Wait-Job -Timeout ($DismTimeoutMinutes * 60)
+        if ($completed) {
+            $dismData = $dismJob | Receive-Job
+            $dismData.Output | ForEach-Object { Write-Output "[DISM] $_" }
+            if ($dismData.ExitCode -ne 0) {
+                Write-Warning "[PHASE 1] DISM exited with code $($dismData.ExitCode) — component cleanup may be incomplete."
+            }
+        } else {
+            $dismJob | Stop-Job
+            Write-Warning "[PHASE 1] DISM timed out after $DismTimeoutMinutes minutes — component cleanup may be incomplete. Continuing with remaining phases."
+        }
+        $dismJob | Remove-Job -Force
         Write-Output ""
     }
 } else {
@@ -340,7 +356,7 @@ Write-Output ""
 # ============================================================================
 # PHASE 3: $PatchCache$ Cleanup
 # ============================================================================
-$patchCachePath = "C:\Windows\Installer\`$PatchCache`$"
+$patchCachePath = Join-Path $installerBasePath "`$PatchCache`$"
 if (Test-Path $patchCachePath) {
     $patchCacheSize = (Get-ChildItem $patchCachePath -Recurse -Force -ErrorAction SilentlyContinue |
         Measure-Object Length -Sum).Sum -as [long]
@@ -380,8 +396,19 @@ Write-Output ""
 $quarantineRoot = "C:\DTC\InstallerCleanup\Quarantine"
 if (Test-Path $quarantineRoot) {
     $cutoffDate = (Get-Date).AddDays(-$QuarantineDays)
-    $expiredFolders = Get-ChildItem $quarantineRoot -Directory |
-        Where-Object { $_.CreationTime -lt $cutoffDate }
+    # Parse creation timestamp from folder name (yyyy-MM-dd_HHmmss) instead of relying on
+    # filesystem CreationTime, which resets on copy/restore and is unreliable for expiration.
+    # Unknown-format folders are skipped — never deleted without a parseable timestamp.
+    $expiredFolders = Get-ChildItem $quarantineRoot -Directory | Where-Object {
+        $parsed = [datetime]::MinValue
+        if ([datetime]::TryParseExact($_.Name, 'yyyy-MM-dd_HHmmss',
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::None, [ref]$parsed)) {
+            $parsed -lt $cutoffDate
+        } else {
+            $false
+        }
+    }
 
     if ($expiredFolders) {
         Write-Output "[PHASE 4] Purging expired quarantine folders (older than $QuarantineDays days)..."
