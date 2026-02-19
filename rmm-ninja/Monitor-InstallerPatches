@@ -60,63 +60,69 @@ function Get-OrphanedInstallerFiles {
     param()
 
     $startTime = Get-Date
-    $registryErrors = @()
+    $registryErrors = [System.Collections.Generic.List[string]]::new()
 
     # --- STEP 1: Build the "referenced files" set ---
-    # The Windows Installer stores product/patch cache file references in the registry.
-    # Products: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products\{GUID}\InstallProperties
-    #   → "LocalPackage" value = path to cached .msi file
-    # Patches: HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Patches\{GUID}
-    #   → "LocalPackage" value = path to cached .msp file
+    # The Windows Installer stores product/patch cache file references in the registry under
+    # HKLM:\...\Installer\UserData\<SID>\Products and \Patches for each SID.
+    # Enumerate ALL SIDs (not just S-1-5-18) to capture per-user installations that also
+    # reference files in C:\Windows\Installer. Missing per-user SIDs inflates orphan counts.
     #
-    # NOTE: Registry GUIDs are in "compressed" format (no dashes, no braces, character reordering).
-    # However, the LocalPackage values contain standard file paths — we do NOT need to decompress
-    # GUIDs. We just collect the LocalPackage values directly.
+    # LocalPackage values contain standard file paths — no GUID decompression needed.
 
     $referencedFiles = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 
-    # Collect referenced MSI files from Products
-    $productsPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products"
+    $userDataPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData"
     try {
-        if (Test-Path $productsPath) {
-            $productGuids = Get-ChildItem $productsPath -ErrorAction Stop
-            foreach ($product in $productGuids) {
-                try {
-                    $installProps = Join-Path $product.PSPath "InstallProperties"
-                    if (Test-Path $installProps) {
-                        $localPackage = (Get-ItemProperty $installProps -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
+        if (-not (Test-Path $userDataPath)) {
+            throw "Installer UserData registry path not found"
+        }
+        $sidKeys = Get-ChildItem $userDataPath -ErrorAction Stop
+    } catch {
+        throw "Failed to read Installer UserData registry path: $($_.Exception.Message)"
+    }
+
+    foreach ($sidKey in $sidKeys) {
+        # Collect referenced MSI files from Products
+        $productsPath = Join-Path $sidKey.PSPath "Products"
+        try {
+            if (Test-Path $productsPath) {
+                foreach ($product in (Get-ChildItem $productsPath -ErrorAction Stop)) {
+                    try {
+                        $installProps = Join-Path $product.PSPath "InstallProperties"
+                        if (Test-Path $installProps) {
+                            $localPackage = (Get-ItemProperty $installProps -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
+                            if ($localPackage -and (Test-Path $localPackage)) {
+                                [void]$referencedFiles.Add($localPackage)
+                            }
+                        }
+                    } catch {
+                        $registryErrors.Add("Product $($product.PSChildName) (SID $($sidKey.PSChildName)): $($_.Exception.Message)")
+                    }
+                }
+            }
+        } catch {
+            $registryErrors.Add("Products key for SID $($sidKey.PSChildName): $($_.Exception.Message)")
+        }
+
+        # Collect referenced MSP files from Patches
+        $patchesPath = Join-Path $sidKey.PSPath "Patches"
+        try {
+            if (Test-Path $patchesPath) {
+                foreach ($patch in (Get-ChildItem $patchesPath -ErrorAction Stop)) {
+                    try {
+                        $localPackage = (Get-ItemProperty $patch.PSPath -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
                         if ($localPackage -and (Test-Path $localPackage)) {
                             [void]$referencedFiles.Add($localPackage)
                         }
+                    } catch {
+                        $registryErrors.Add("Patch $($patch.PSChildName) (SID $($sidKey.PSChildName)): $($_.Exception.Message)")
                     }
-                } catch {
-                    $registryErrors += "Product $($product.PSChildName): $($_.Exception.Message)"
                 }
             }
+        } catch {
+            $registryErrors.Add("Patches key for SID $($sidKey.PSChildName): $($_.Exception.Message)")
         }
-    } catch {
-        # If we can't read the Products key at all, this is a critical failure
-        throw "Failed to read Products registry path: $($_.Exception.Message)"
-    }
-
-    # Collect referenced MSP files from Patches
-    $patchesPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Patches"
-    try {
-        if (Test-Path $patchesPath) {
-            $patchGuids = Get-ChildItem $patchesPath -ErrorAction Stop
-            foreach ($patch in $patchGuids) {
-                try {
-                    $localPackage = (Get-ItemProperty $patch.PSPath -Name "LocalPackage" -ErrorAction SilentlyContinue).LocalPackage
-                    if ($localPackage -and (Test-Path $localPackage)) {
-                        [void]$referencedFiles.Add($localPackage)
-                    }
-                } catch {
-                    $registryErrors += "Patch $($patch.PSChildName): $($_.Exception.Message)"
-                }
-            }
-        }
-    } catch {
-        throw "Failed to read Patches registry path: $($_.Exception.Message)"
     }
 
     # --- STEP 2: Enumerate actual files in C:\Windows\Installer ---
@@ -195,7 +201,7 @@ $patchCacheSizeGB = 0
 $winsxsSizeGB = 0
 $totalFiles = 0
 $scanDurationSec = 0
-$scanErrors = @()
+$scanErrors = [System.Collections.Generic.List[string]]::new()
 
 try {
     # --- Run orphan detection ---
@@ -242,7 +248,7 @@ try {
     }
 } catch {
     $status = "Error"
-    $scanErrors += "Critical scan failure: $($_.Exception.Message)"
+    $scanErrors.Add("Critical scan failure: $($_.Exception.Message)")
     Write-Error "Scan failed: $($_.Exception.Message)"
 }
 
