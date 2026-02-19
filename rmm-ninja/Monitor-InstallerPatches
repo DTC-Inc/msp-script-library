@@ -43,8 +43,9 @@ function Get-OrphanedInstallerFiles {
         Uses registry queries only.
     .OUTPUTS
         PSCustomObject with properties:
-        - TotalFiles (int)
-        - TotalSizeBytes (long)
+        - InstallerFolderTotalBytes (long) — unfiltered folder total (all file types)
+        - TotalFiles (int) — MSI/MSP files only
+        - TotalSizeBytes (long) — MSI/MSP files only
         - ReferencedFiles (array of PSCustomObject: FullPath, SizeBytes)
         - ReferencedCount (int)
         - ReferencedSizeBytes (long)
@@ -59,7 +60,7 @@ function Get-OrphanedInstallerFiles {
     param()
 
     $startTime = Get-Date
-    $errors = @()
+    $registryErrors = @()
 
     # --- STEP 1: Build the "referenced files" set ---
     # The Windows Installer stores product/patch cache file references in the registry.
@@ -89,7 +90,7 @@ function Get-OrphanedInstallerFiles {
                         }
                     }
                 } catch {
-                    $errors += "Product $($product.PSChildName): $($_.Exception.Message)"
+                    $registryErrors += "Product $($product.PSChildName): $($_.Exception.Message)"
                 }
             }
         }
@@ -110,7 +111,7 @@ function Get-OrphanedInstallerFiles {
                         [void]$referencedFiles.Add($localPackage)
                     }
                 } catch {
-                    $errors += "Patch $($patch.PSChildName): $($_.Exception.Message)"
+                    $registryErrors += "Patch $($patch.PSChildName): $($_.Exception.Message)"
                 }
             }
         }
@@ -121,25 +122,28 @@ function Get-OrphanedInstallerFiles {
     # --- STEP 2: Enumerate actual files in C:\Windows\Installer ---
     # Top-level only — do NOT include $PatchCache$ subfolder contents
     $installerPath = "C:\Windows\Installer"
-    $allFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue |
-        Where-Object { $_.Extension -in '.msi', '.msp' }
+    # Enumerate all files first (unfiltered) for accurate folder-total metric, then filter for orphan detection.
+    # This avoids misleading operators when comparing script output against Explorer-reported folder sizes.
+    $allInstallerFiles = Get-ChildItem $installerPath -File -Force -ErrorAction SilentlyContinue
+    $allFiles = $allInstallerFiles | Where-Object { $_.Extension -in '.msi', '.msp' }
 
     # --- STEP 3: Compare and classify ---
-    $referenced = @()
-    $orphaned = @()
+    # Use List<T> instead of @() += to avoid O(n^2) array reallocation on machines with thousands of files
+    $referenced = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $orphaned   = [System.Collections.Generic.List[PSCustomObject]]::new()
 
     foreach ($file in $allFiles) {
         if ($referencedFiles.Contains($file.FullName)) {
-            $referenced += [PSCustomObject]@{
+            $referenced.Add([PSCustomObject]@{
                 FullPath  = $file.FullName
                 SizeBytes = $file.Length
-            }
+            })
         } else {
-            $orphaned += [PSCustomObject]@{
+            $orphaned.Add([PSCustomObject]@{
                 FullPath      = $file.FullName
                 SizeBytes     = $file.Length
                 LastWriteTime = $file.LastWriteTime
-            }
+            })
         }
     }
 
@@ -153,19 +157,22 @@ function Get-OrphanedInstallerFiles {
     }
 
     # --- STEP 5: Return results ---
-    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections
+    # Null-coerce all Measure-Object .Sum results — .Sum returns $null on empty collections.
+    # InstallerFolderTotalBytes = unfiltered folder total (matches Explorer-reported size).
+    # TotalFiles/TotalSizeBytes = MSI/MSP-only subset used for orphan detection.
     [PSCustomObject]@{
-        TotalFiles          = ($allFiles | Measure-Object).Count -as [int]
-        TotalSizeBytes      = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
-        ReferencedFiles     = $referenced
-        ReferencedCount     = $referenced.Count
-        ReferencedSizeBytes = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
-        OrphanedFiles       = $orphaned
-        OrphanedCount       = $orphaned.Count
-        OrphanedSizeBytes   = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
-        PatchCacheSizeBytes = $patchCacheSize
-        ScanDuration        = (Get-Date) - $startTime
-        Errors              = $errors
+        InstallerFolderTotalBytes = ($allInstallerFiles | Measure-Object Length -Sum).Sum -as [long]
+        TotalFiles                = ($allFiles | Measure-Object).Count -as [int]
+        TotalSizeBytes            = ($allFiles | Measure-Object Length -Sum).Sum -as [long]
+        ReferencedFiles           = $referenced
+        ReferencedCount           = $referenced.Count
+        ReferencedSizeBytes       = ($referenced | Measure-Object SizeBytes -Sum).Sum -as [long]
+        OrphanedFiles             = $orphaned
+        OrphanedCount             = $orphaned.Count
+        OrphanedSizeBytes         = ($orphaned | Measure-Object SizeBytes -Sum).Sum -as [long]
+        PatchCacheSizeBytes       = $patchCacheSize
+        ScanDuration              = (Get-Date) - $startTime
+        Errors                    = $registryErrors
     }
 }
 
@@ -177,6 +184,7 @@ Write-Output "Timestamp: $(Get-Date -Format 'o')"
 Write-Output ""
 
 $status = "Healthy"
+$installerFolderSizeGB = 0
 $totalSizeGB = 0
 $orphanedSizeGB = 0
 $orphanedCount = 0
@@ -192,6 +200,9 @@ try {
     # --- Run orphan detection ---
     $results = Get-OrphanedInstallerFiles
 
+    # InstallerFolderTotalBytes = unfiltered folder total (all file types, matches Explorer)
+    # TotalSizeBytes = MSI/MSP-only subset (what orphan detection covers)
+    $installerFolderSizeGB = [math]::Round($results.InstallerFolderTotalBytes / 1GB, 2)
     $totalSizeGB      = [math]::Round($results.TotalSizeBytes / 1GB, 2)
     $orphanedSizeGB   = [math]::Round($results.OrphanedSizeBytes / 1GB, 2)
     $orphanedCount    = $results.OrphanedCount
@@ -203,19 +214,26 @@ try {
     $scanErrors       = $results.Errors
 
     # --- Measure WinSxS size (secondary indicator) ---
-    # NOTE: WinSxS uses hardlinks extensively. Recursive enumeration overcounts actual disk
-    # footprint by 2-3x because the same physical data is counted per hardlink. This value
-    # is a rough indicator, not an exact measurement. Use DISM /AnalyzeComponentStore for
-    # precise sizing if needed.
-    $winsxsSize = (Get-ChildItem "C:\Windows\WinSxS" -Recurse -Force -ErrorAction SilentlyContinue |
-        Measure-Object Length -Sum).Sum -as [long]
-    if (-not $winsxsSize) { $winsxsSize = [long]0 }
+    # NOTE: WinSxS uses hardlinks extensively — enumeration overcounts actual disk footprint
+    # by 2-3x. This is a rough indicator only. Use DISM /AnalyzeComponentStore for precise sizing.
+    # Uses .NET EnumerateFiles (lazy iterator) instead of Get-ChildItem -Recurse to avoid
+    # blocking the script for 2-10+ minutes on HDD-backed or heavily-loaded servers.
+    try {
+        $winsxsSize = [long]0
+        foreach ($f in [System.IO.Directory]::EnumerateFiles("C:\Windows\WinSxS", "*", [System.IO.SearchOption]::AllDirectories)) {
+            try { $winsxsSize += ([System.IO.FileInfo]::new($f)).Length } catch { }
+        }
+    } catch {
+        $winsxsSize = [long]0
+    }
     $winsxsSizeGB = [math]::Round($winsxsSize / 1GB, 2)
 
     # --- Determine status based on total Installer folder size ---
-    if ($totalSizeGB -ge $CriticalThresholdGB) {
+    # Uses the unfiltered folder total (InstallerFolderTotalBytes) for threshold comparison
+    # so status matches what operators see in Explorer
+    if ($installerFolderSizeGB -ge $CriticalThresholdGB) {
         $status = "Critical"
-    } elseif ($totalSizeGB -ge $WarningThresholdGB) {
+    } elseif ($installerFolderSizeGB -ge $WarningThresholdGB) {
         $status = "Warning"
     } else {
         $status = "Healthy"
@@ -230,10 +248,10 @@ try {
 # WRITE NINJARMM CUSTOM FIELDS
 # ============================================================================
 try {
-    Ninja-Property-Set installerFolderSizeGB ([math]::Round($totalSizeGB, 2))
-    Ninja-Property-Set installerOrphanedSizeGB ([math]::Round($orphanedSizeGB, 2))
+    Ninja-Property-Set installerFolderSizeGB $installerFolderSizeGB
+    Ninja-Property-Set installerOrphanedSizeGB $orphanedSizeGB
     Ninja-Property-Set installerOrphanedCount $orphanedCount
-    Ninja-Property-Set installerWinSxSSizeGB ([math]::Round($winsxsSizeGB, 2))
+    Ninja-Property-Set installerWinSxSSizeGB $winsxsSizeGB
     Ninja-Property-Set installerStatus $status
     Ninja-Property-Set installerLastScan (Get-Date -Format "o")
 } catch {
@@ -263,6 +281,7 @@ $eventId = switch ($status) {
     "Warning"  { 2000 }
     "Critical" { 2500 }
     "Error"    { 3000 }
+    default    { 3000 }
 }
 # Map EntryType to actual severity so SIEM/monitoring tools can filter
 $entryType = switch ($status) {
@@ -270,11 +289,13 @@ $entryType = switch ($status) {
     "Warning"  { "Warning" }
     "Critical" { "Error" }
     "Error"    { "Error" }
+    default    { "Error" }
 }
 $message = @"
 DTC Installer Patch Monitor — Scan Complete
 Status: $status
-Total Installer Folder: $totalSizeGB GB
+Installer Folder Total: $installerFolderSizeGB GB
+MSI/MSP Files: $totalFiles ($totalSizeGB GB)
 Orphaned Files: $orphanedCount ($orphanedSizeGB GB)
 Referenced Files: $referencedCount ($referencedSizeGB GB)
 PatchCache: $patchCacheSizeGB GB
@@ -295,9 +316,10 @@ try {
 # ============================================================================
 Write-Output "=== SCAN RESULTS ==="
 Write-Output "Status:             $status"
-Write-Output "Installer Folder:   $totalSizeGB GB ($totalFiles files)"
-Write-Output "  Referenced:       $referencedSizeGB GB ($referencedCount files)"
-Write-Output "  Orphaned:         $orphanedSizeGB GB ($orphanedCount files)"
+Write-Output "Installer Folder:   $installerFolderSizeGB GB"
+Write-Output "  MSI/MSP Files:    $totalSizeGB GB ($totalFiles files)"
+Write-Output "    Referenced:     $referencedSizeGB GB ($referencedCount files)"
+Write-Output "    Orphaned:       $orphanedSizeGB GB ($orphanedCount files)"
 Write-Output "  PatchCache:       $patchCacheSizeGB GB"
 Write-Output "WinSxS:             $winsxsSizeGB GB (approximate — hardlink overcount)"
 Write-Output "Scan Duration:      $scanDurationSec seconds"
