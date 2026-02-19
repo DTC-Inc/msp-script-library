@@ -283,7 +283,12 @@ try {
     Write-Warning "Event source registration skipped: $($_.Exception.Message)"
 }
 
-# Distinct Event IDs per severity for monitoring tool granularity
+# Distinct Event IDs per severity — intentionally separated so SIEM rules can
+# target each level independently:
+#   Healthy  = 1000 (Information)
+#   Warning  = 2000 (Warning)
+#   Critical = 2500 (Error)
+#   Error    = 3000 (Error)
 $eventId = switch ($status) {
     "Healthy"  { 1000 }
     "Warning"  { 2000 }
