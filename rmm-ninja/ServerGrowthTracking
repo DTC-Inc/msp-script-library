@@ -20,6 +20,11 @@
     - Create ONE WYSIWYG custom field named "storageReport"
     - The script populates it with an HTML dashboard including SVG line chart
 
+    Limitation: device_id is derived from $env:COMPUTERNAME. A hostname rename
+    will create a new device row and orphan historical data under the old name.
+    If stable identity across renames is required, consider switching to a
+    hardware identifier (e.g. Win32_ComputerSystemProduct.UUID).
+
 .PARAMETER Verbose
     Enable detailed diagnostic output for troubleshooting.
 
@@ -47,6 +52,7 @@ $Script:EVENT_SOURCE = "StorageGrowthMonitor"
 # Retention & thresholds
 $Script:RETENTION_DAYS = 65
 $Script:LOG_RETENTION_DAYS = 90
+$Script:LOG_PRUNE_THRESHOLD_KB = 256
 $Script:OFFLINE_REMOVAL_DAYS = 30
 $Script:MIN_DATA_POINTS = 7
 $Script:FULL_CONFIDENCE_POINTS = 30
@@ -64,7 +70,7 @@ $Script:EXCLUDED_FILESYSTEMS = @("FAT", "FAT32", "RAW")
 $Script:FIELD_STORAGE_REPORT = "storageReport"
 
 # Legacy JSON paths (for migration)
-$Script:LEGACY_JSON_PATH = "C:\ProgramData\NinjaRMM\StorageMetrics\storage_history.json"
+$Script:LEGACY_JSON_PATH = Join-Path $env:ProgramData "NinjaRMM\StorageMetrics\storage_history.json"
 
 # Chart color palette (colorblind-friendly)
 $Script:CHART_COLORS = @('#2563eb', '#16a34a', '#ea580c', '#9333ea', '#0d9488', '#dc2626', '#ca8a04', '#be185d')
@@ -118,8 +124,6 @@ function Write-VerboseLog {
 # LOG FILE MANAGEMENT
 # ============================================================================
 function Save-LogFile {
-    $Script:LOG_PRUNE_THRESHOLD_KB = 256
-
     try {
         if ($Script:LogBuffer.Count -gt 0) {
             $Script:LogBuffer | Add-Content -Path $Script:LOG_FILE -Encoding UTF8 -ErrorAction Stop
@@ -198,7 +202,8 @@ function Initialize-SQLiteModule {
     # Install from PSGallery
     Write-Log "PSSQLite module not found - installing from PSGallery..."
     try {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        # Add TLS 1.2 without removing existing protocols (preserves TLS 1.3 on .NET 5+)
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
         # Ensure NuGet provider is available
         $nuget = Get-PackageProvider -Name NuGet -ErrorAction SilentlyContinue
@@ -241,7 +246,7 @@ function Initialize-Database {
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')),
                 updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime'))
             )
-"@ -ErrorAction Stop
+"@ -ErrorAction Stop | Out-Null
 
         # Drive table - one row per drive per device
         Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
@@ -258,7 +263,7 @@ function Initialize-Database {
                 created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%S', 'now', 'localtime')),
                 UNIQUE(device_id, drive_letter)
             )
-"@ -ErrorAction Stop
+"@ -ErrorAction Stop | Out-Null
 
         # Metric table - time-series storage data points
         Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
@@ -270,9 +275,11 @@ function Initialize-Database {
                 free_gb         REAL NOT NULL,
                 usage_percent   REAL NOT NULL
             )
-"@ -ErrorAction Stop
+"@ -ErrorAction Stop | Out-Null
 
-        # Alert state table - fire-once tracking per device
+        # Alert state table - scaffolding for future centralized alerting service.
+        # Not consumed by this script; fire-once logic uses drive.alert_sent instead.
+        # TODO: Wire up when centralized API is available (see Ticket 1123004 roadmap).
         Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
             CREATE TABLE IF NOT EXISTS alert_state (
                 device_id       TEXT NOT NULL REFERENCES device(device_id),
@@ -281,11 +288,11 @@ function Initialize-Database {
                 last_triggered  TEXT,
                 PRIMARY KEY (device_id, alert_type)
             )
-"@ -ErrorAction Stop
+"@ -ErrorAction Stop | Out-Null
 
         # Indexes for efficient queries
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "CREATE INDEX IF NOT EXISTS idx_metric_drive_ts ON metric(drive_id, timestamp)" -ErrorAction Stop
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "CREATE INDEX IF NOT EXISTS idx_drive_device ON drive(device_id)" -ErrorAction Stop
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "CREATE INDEX IF NOT EXISTS idx_metric_drive_ts ON metric(drive_id, timestamp)" -ErrorAction Stop | Out-Null
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "CREATE INDEX IF NOT EXISTS idx_drive_device ON drive(device_id)" -ErrorAction Stop | Out-Null
 
         Write-VerboseLog "Database initialized: $($Script:DB_PATH)"
         return $true
@@ -322,7 +329,7 @@ function Get-DeviceRecord {
             hostname = $Hostname
             os       = $osVersion
             now      = $now
-        }
+        } | Out-Null
     }
     else {
         Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "INSERT INTO device (device_id, hostname, os_version, created_at, updated_at) VALUES (@id, @hostname, @os, @now, @now)" -SqlParameters @{
@@ -330,7 +337,7 @@ function Get-DeviceRecord {
             hostname = $Hostname
             os       = $osVersion
             now      = $now
-        }
+        } | Out-Null
     }
 }
 
@@ -382,7 +389,7 @@ function Save-DriveRecord {
             type   = $DriveType
             status = $Status
             now    = $now
-        }
+        } | Out-Null
         return $existing.id
     }
     else {
@@ -397,7 +404,7 @@ function Save-DriveRecord {
             type   = $DriveType
             status = $Status
             now    = $now
-        }
+        } | Out-Null
 
         $newDrive = Get-DriveRecord -DeviceId $DeviceId -DriveLetter $DriveLetter
         return $newDrive.id
@@ -426,6 +433,57 @@ function Add-MetricRecord {
         used    = $UsedGB
         free    = $FreeGB
         pct     = $UsagePercent
+    } | Out-Null
+}
+
+function Set-DailyMetric {
+    <#
+    .SYNOPSIS
+        Inserts or updates the metric for a drive for the current calendar day.
+        Prevents duplicate rows when the script runs more than once per day.
+    #>
+    param(
+        [int]$DriveId,
+        [string]$Timestamp,
+        [double]$UsedGB,
+        [double]$FreeGB,
+        [double]$UsagePercent
+    )
+
+    $parsed = ConvertTo-SafeDateTime $Timestamp
+    if ($null -eq $parsed) {
+        Add-MetricRecord -DriveId $DriveId -Timestamp $Timestamp -UsedGB $UsedGB -FreeGB $FreeGB -UsagePercent $UsagePercent
+        return
+    }
+
+    $dayStart = $parsed.ToString("yyyy-MM-dd") + "T00:00:00"
+    $dayEnd = $parsed.AddDays(1).ToString("yyyy-MM-dd") + "T00:00:00"
+
+    $existing = Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
+        SELECT id FROM metric
+        WHERE drive_id = @driveId AND timestamp >= @dayStart AND timestamp < @dayEnd
+        ORDER BY timestamp DESC LIMIT 1
+"@ -SqlParameters @{
+        driveId  = $DriveId
+        dayStart = $dayStart
+        dayEnd   = $dayEnd
+    }
+
+    if ($existing) {
+        $updateId = if ($existing -is [array]) { $existing[0].id } else { $existing.id }
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
+            UPDATE metric SET timestamp = @ts, used_gb = @used, free_gb = @free, usage_percent = @pct
+            WHERE id = @id
+"@ -SqlParameters @{
+            id   = $updateId
+            ts   = $Timestamp
+            used = $UsedGB
+            free = $FreeGB
+            pct  = $UsagePercent
+        } | Out-Null
+    }
+    else {
+        Add-MetricRecord -DriveId $DriveId -Timestamp $Timestamp -UsedGB $UsedGB -FreeGB $FreeGB -UsagePercent $UsagePercent
     }
 }
 
@@ -473,7 +531,7 @@ function Set-DriveAlertSent {
     Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "UPDATE drive SET alert_sent = @val WHERE id = @id" -SqlParameters @{
         id  = $DriveId
         val = $val
-    }
+    } | Out-Null
 }
 
 function Set-DriveOffline {
@@ -481,7 +539,7 @@ function Set-DriveOffline {
 
     Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "UPDATE drive SET status = 'Offline' WHERE id = @id" -SqlParameters @{
         id = $DriveId
-    }
+    } | Out-Null
 }
 
 function Remove-StaleDrives {
@@ -508,8 +566,8 @@ function Remove-StaleDrives {
         $daysOffline = [math]::Round(((Get-Date) - $parsedLastSeen).TotalDays, 0)
         Write-Log "Drive $($drive.drive_letter): Offline for $daysOffline days - removing from database"
 
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM metric WHERE drive_id = @id" -SqlParameters @{ id = $drive.id }
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM drive WHERE id = @id" -SqlParameters @{ id = $drive.id }
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM metric WHERE drive_id = @id" -SqlParameters @{ id = $drive.id } | Out-Null
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM drive WHERE id = @id" -SqlParameters @{ id = $drive.id } | Out-Null
     }
 
     return $staleDrives.Count
@@ -527,7 +585,7 @@ function Remove-OldMetrics {
     $count = if ($result) { $result.cnt } else { 0 }
 
     if ($count -gt 0) {
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM metric WHERE timestamp < @cutoff" -SqlParameters @{ cutoff = $cutoff }
+        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query "DELETE FROM metric WHERE timestamp < @cutoff" -SqlParameters @{ cutoff = $cutoff } | Out-Null
         Write-VerboseLog "Pruned $count metric records older than $($Script:RETENTION_DAYS) days"
     }
 }
@@ -558,6 +616,7 @@ function Import-LegacyJsonHistory {
 
         $migratedDrives = 0
         $migratedPoints = 0
+        $skippedPoints = 0
 
         foreach ($prop in $data.drives.PSObject.Properties) {
             $letter = $prop.Name
@@ -582,6 +641,12 @@ function Import-LegacyJsonHistory {
             if ($driveData.history) {
                 foreach ($entry in $driveData.history) {
                     if (-not $entry.timestamp) { continue }
+                    # Guard against null/missing metric fields that would cast to 0.0 and corrupt regression
+                    if ($null -eq $entry.usedGB -or $null -eq $entry.freeGB -or $null -eq $entry.usagePercent) {
+                        Write-VerboseLog "Migration: Skipping entry with missing fields (ts=$($entry.timestamp))"
+                        $skippedPoints++
+                        continue
+                    }
                     $ts = $entry.timestamp
                     Add-MetricRecord -DriveId $driveId -Timestamp $ts `
                         -UsedGB ([double]$entry.usedGB) -FreeGB ([double]$entry.freeGB) `
@@ -595,7 +660,7 @@ function Import-LegacyJsonHistory {
 
         # Rename the old JSON file
         $migratedPath = $Script:LEGACY_JSON_PATH + ".migrated"
-        Move-Item -Path $Script:LEGACY_JSON_PATH -Destination $migratedPath -Force -ErrorAction SilentlyContinue
+        Move-Item -Path $Script:LEGACY_JSON_PATH -Destination $migratedPath -Force -ErrorAction Stop
 
         # Also rename backup if it exists
         $backupPath = $Script:LEGACY_JSON_PATH + ".bak"
@@ -603,7 +668,8 @@ function Import-LegacyJsonHistory {
             Move-Item -Path $backupPath -Destination ($backupPath + ".migrated") -Force -ErrorAction SilentlyContinue
         }
 
-        Write-Log ([char]0x2713 + " Migration complete: $migratedDrives drives, $migratedPoints data points")
+        $skipMsg = if ($skippedPoints -gt 0) { " ($skippedPoints incomplete entries skipped)" } else { "" }
+        Write-Log ([char]0x2713 + " Migration complete: $migratedDrives drives, $migratedPoints data points$skipMsg")
         return $true
     }
     catch {
@@ -945,17 +1011,43 @@ function Build-SvgChart {
     <#
     .SYNOPSIS
         Generates an inline SVG line chart of storage usage trends for all drives.
+        Dynamically sizes the viewBox to accommodate the legend without clipping.
     #>
     param([array]$DriveAnalyses)
 
     $chartWidth = 680
-    $chartHeight = 240
     $mLeft = 52
     $mRight = 12
     $mTop = 8
-    $mBottom = 40
+    $plotH = 192
     $plotW = $chartWidth - $mLeft - $mRight
-    $plotH = $chartHeight - $mTop - $mBottom
+
+    # Pre-build legend items to calculate required SVG height
+    $legendItems = [System.Collections.ArrayList]::new()
+    foreach ($analysis in $DriveAnalyses) {
+        $color = $Script:CHART_COLORS[$legendItems.Count % $Script:CHART_COLORS.Count]
+        $label = ($analysis.Letter -replace ':$', '')
+        if ($analysis.DriveType -eq 'OS') { $label += " (OS)" }
+        [void]$legendItems.Add(@{ Label = $label; Color = $color })
+    }
+
+    # Calculate legend row count to size the SVG dynamically
+    if ($legendItems.Count -gt 0) {
+        $legendRows = 1
+        $testX = $mLeft
+        foreach ($item in $legendItems) {
+            $testX += 65 + ($item.Label.Length * 2)
+            if ($testX -gt ($chartWidth - 80)) {
+                $testX = $mLeft
+                $legendRows++
+            }
+        }
+        $mBottom = 30 + ($legendRows * 16) + 6
+    }
+    else {
+        $mBottom = 40
+    }
+    $chartHeight = $mTop + $plotH + $mBottom
 
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.Append("<svg width=`"100%`" viewBox=`"0 0 $chartWidth $chartHeight`" xmlns=`"http://www.w3.org/2000/svg`" style=`"font-family:'Segoe UI',system-ui,sans-serif`">")
@@ -1002,18 +1094,13 @@ function Build-SvgChart {
         [void]$sb.Append("<text x=`"$x`" y=`"$($mTop + $plotH + 14)`" text-anchor=`"middle`" fill=`"#94a3b8`" font-size=`"9`">$dateLabel</text>")
     }
 
-    # Plot lines for each drive
+    # Plot lines for each drive (using pre-built legend items for consistent colors)
     $colorIdx = 0
-    $legendItems = [System.Collections.ArrayList]::new()
-
     foreach ($analysis in $DriveAnalyses) {
-        $color = $Script:CHART_COLORS[$colorIdx % $Script:CHART_COLORS.Count]
+        $color = $legendItems[$colorIdx].Color
         $colorIdx++
 
-        if (-not $analysis.Metrics -or $analysis.Metrics.Count -eq 0) {
-            [void]$legendItems.Add(@{ Label = $analysis.Letter; Color = $color; Type = $analysis.DriveType })
-            continue
-        }
+        if (-not $analysis.Metrics -or $analysis.Metrics.Count -eq 0) { continue }
 
         $points = [System.Collections.ArrayList]::new()
         foreach ($m in ($analysis.Metrics | Sort-Object timestamp)) {
@@ -1032,21 +1119,16 @@ function Build-SvgChart {
             $coords = $points[0] -split ','
             [void]$sb.Append("<circle cx=`"$($coords[0])`" cy=`"$($coords[1])`" r=`"3`" fill=`"$color`"/>")
         }
-
-        [void]$legendItems.Add(@{ Label = $analysis.Letter; Color = $color; Type = $analysis.DriveType })
     }
 
     # Legend row at bottom
     $legendY = $mTop + $plotH + 30
     $legendX = $mLeft
     foreach ($item in $legendItems) {
-        $label = $item.Label -replace ':$', ''
-        if ($item.Type -eq 'OS') { $label += " (OS)" }
-
         [void]$sb.Append("<line x1=`"$legendX`" y1=`"$legendY`" x2=`"$($legendX + 16)`" y2=`"$legendY`" stroke=`"$($item.Color)`" stroke-width=`"2.5`" stroke-linecap=`"round`"/>")
-        [void]$sb.Append("<text x=`"$($legendX + 20)`" y=`"$($legendY + 3)`" fill=`"#475569`" font-size=`"10`">$label</text>")
+        [void]$sb.Append("<text x=`"$($legendX + 20)`" y=`"$($legendY + 3)`" fill=`"#475569`" font-size=`"10`">$($item.Label)</text>")
 
-        $legendX += 65 + ($label.Length * 2)
+        $legendX += 65 + ($item.Label.Length * 2)
         if ($legendX -gt ($chartWidth - 80)) {
             $legendX = $mLeft
             $legendY += 16
@@ -1101,15 +1183,19 @@ function Build-StorageReport {
     # Build SVG chart
     $svgChart = Build-SvgChart -DriveAnalyses $AllAnalyses
 
+    # HTML-encode user-sourced values to prevent injection via volume labels or hostname
+    $safeHostname = [System.Net.WebUtility]::HtmlEncode($Hostname)
+
     # Build summary table rows
     $tableRows = [System.Text.StringBuilder]::new()
     $rowIndex = 0
     foreach ($a in $AllAnalyses) {
         $color = $Script:CHART_COLORS[$rowIndex % $Script:CHART_COLORS.Count]
 
-        $letterDisplay = $a.Letter -replace ':$', ''
+        $letterDisplay = [System.Net.WebUtility]::HtmlEncode(($a.Letter -replace ':$', ''))
         $typeTag = if ($a.DriveType -eq 'OS') { ' <span style="font-size:9px;color:#64748b">(OS)</span>' } else { '' }
-        $labelDisplay = if ($a.VolumeLabel) { " <span style=`"color:#94a3b8`">$($a.VolumeLabel)</span>" } else { '' }
+        $safeLabel = if ($a.VolumeLabel) { [System.Net.WebUtility]::HtmlEncode($a.VolumeLabel) } else { '' }
+        $labelDisplay = if ($safeLabel) { " <span style=`"color:#94a3b8`">$safeLabel</span>" } else { '' }
 
         $baseStatus = $a.Status -replace '\s*\(Limited\)', ''
         $badge = $statusBadgeColors[$baseStatus]
@@ -1121,10 +1207,14 @@ function Build-StorageReport {
         $usedStr = if ($a.CurrentUsedGB -gt 0) { "$([math]::Round($a.CurrentUsedGB, 1)) GB" } else { '-' }
         $freeStr = if ($a.CurrentFreeGB -gt 0) { "$([math]::Round($a.CurrentFreeGB, 1)) GB" } else { '-' }
 
-        $growthStr = if ($a.GBPerMonth -match '^\-?\d') { "$($a.GBPerMonth)" } else { $a.GBPerMonth }
+        $growthStr = $a.GBPerMonth
 
         $daysStr = $a.DaysUntilFull
-        if ($daysStr -eq "1825.00") { $daysStr = "5yr+" }
+        $capStr = ([double]$Script:DAYS_CAP).ToString("F2")
+        if ($daysStr -eq $capStr) {
+            $capYears = [math]::Round($Script:DAYS_CAP / 365, 0)
+            $daysStr = "${capYears}yr+"
+        }
         elseif ($daysStr -match '^\d+\.\d+$') {
             $daysVal = [double]$daysStr
             if ($daysVal -ge 365) { $daysStr = "$([math]::Round($daysVal / 365, 1))yr" }
@@ -1152,7 +1242,7 @@ function Build-StorageReport {
     $html = @"
 <div style="font-family:'Segoe UI',system-ui,-apple-system,sans-serif;max-width:720px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
 <div style="background:$($headerColor.grad);padding:10px 14px;color:#fff">
-<div style="font-size:14px;font-weight:600">$Hostname</div>
+<div style="font-size:14px;font-weight:600">$safeHostname</div>
 <div style="font-size:11px;opacity:.85">Storage: $ServerStatus | $now</div>
 </div>
 <div style="padding:10px 6px 2px">
@@ -1268,7 +1358,7 @@ function Write-Summary {
     )
 
     Write-Log "Storage Growth Analysis - $Hostname"
-    Write-Log ([char]0x2550 * 63)
+    Write-Log ("$([char]0x2550)" * 63)
     Write-Log ""
 
     # OS Drive first
@@ -1296,7 +1386,7 @@ function Write-Summary {
 
     Write-Log ""
     Write-Log "DATA DRIVES"
-    Write-Log ([char]0x2500 * 63)
+    Write-Log ("$([char]0x2500)" * 63)
 
     $dataDrives = @($AllAnalyses | Where-Object { $_.DriveType -ne 'OS' })
     if ($dataDrives.Count -eq 0) {
@@ -1337,7 +1427,7 @@ function Write-Summary {
         }
     }
 
-    Write-Log ([char]0x2550 * 63)
+    Write-Log ("$([char]0x2550)" * 63)
     Write-Log "SERVER STATUS: $($ServerStatus.ToUpper())"
     Write-Log "Database: $($Script:DB_PATH)"
     Write-Log ""
@@ -1351,7 +1441,7 @@ function Main {
     $deviceId = $env:COMPUTERNAME
     $runningInNinja = $null -ne (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue)
 
-    # ── Step 1: Initialize ───────────────────────────────────────────────────
+    # -- Step 1: Initialize ---------------------------------------------------
 
     if (-not $runningInNinja) {
         Write-Log "*** TEST MODE - Not running in Ninja context ***"
@@ -1396,7 +1486,7 @@ function Main {
     # Register device
     Get-DeviceRecord -DeviceId $deviceId -Hostname $hostname
 
-    # ── Step 2: Migrate Legacy Data ──────────────────────────────────────────
+    # -- Step 2: Migrate Legacy Data ------------------------------------------
 
     # Check for existing JSON history and migrate (one-time)
     $existingDrives = @(Get-AllDeviceDrives -DeviceId $deviceId)
@@ -1404,7 +1494,7 @@ function Main {
         Import-LegacyJsonHistory -DeviceId $deviceId
     }
 
-    # ── Step 3: Discover & Collect ───────────────────────────────────────────
+    # -- Step 3: Discover & Collect -------------------------------------------
 
     $currentDrives = $null
     try {
@@ -1420,18 +1510,18 @@ function Main {
         Write-Log "WARNING: No qualifying drives found."
     }
 
-    # ── Step 4: Update Database ──────────────────────────────────────────────
+    # -- Step 4: Update Database ----------------------------------------------
 
     $now = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
     $visibleLetters = @($currentDrives | ForEach-Object { $_.Letter })
 
-    # Upsert drives and insert metrics
+    # Upsert drives and record daily metrics (idempotent per calendar day)
     foreach ($drive in $currentDrives) {
         $driveId = Save-DriveRecord -DeviceId $deviceId -DriveLetter $drive.Letter `
             -VolumeLabel $drive.VolumeLabel -TotalSizeGB $drive.TotalSizeGB `
             -DriveType $drive.DriveType -Status "Online"
 
-        Add-MetricRecord -DriveId $driveId -Timestamp $now `
+        Set-DailyMetric -DriveId $driveId -Timestamp $now `
             -UsedGB $drive.UsedGB -FreeGB $drive.FreeGB -UsagePercent $drive.UsagePercent
 
         Write-VerboseLog "Drive $($drive.Letter): Metric recorded (Used: $($drive.UsedGB) GB, Free: $($drive.FreeGB) GB)"
@@ -1448,11 +1538,14 @@ function Main {
 
     # Remove drives offline > 30 days
     $removedCount = Remove-StaleDrives -DeviceId $deviceId
+    if ($removedCount -gt 0) {
+        Write-Log "Removed $removedCount stale drives (offline > $($Script:OFFLINE_REMOVAL_DAYS) days)"
+    }
 
     # Prune old metrics
     Remove-OldMetrics
 
-    # ── Step 5: Analyze All Drives ───────────────────────────────────────────
+    # -- Step 5: Analyze All Drives -------------------------------------------
 
     $allDrives = @(Get-AllDeviceDrives -DeviceId $deviceId)
     $allAnalyses = [System.Collections.ArrayList]::new()
@@ -1472,7 +1565,7 @@ function Main {
     foreach ($a in $osAnalyses) { [void]$sortedAll.Add($a) }
     foreach ($a in $sortedData) { [void]$sortedAll.Add($a) }
 
-    # ── Step 6: Server Status ────────────────────────────────────────────────
+    # -- Step 6: Server Status ------------------------------------------------
 
     $worstSeverity = 0
     $serverStatus = "Insufficient Data"
@@ -1486,7 +1579,7 @@ function Main {
         }
     }
 
-    # ── Step 7: Critical Drive Alerts (fire-once) ────────────────────────────
+    # -- Step 7: Critical Drive Alerts (fire-once) ----------------------------
 
     $newCriticalDrives = [System.Collections.ArrayList]::new()
 
@@ -1512,7 +1605,7 @@ function Main {
         Write-CriticalAlert -CriticalDrives $newCriticalDrives -Hostname $hostname
     }
 
-    # ── Step 8: Generate Report & Output ─────────────────────────────────────
+    # -- Step 8: Generate Report & Output -------------------------------------
 
     # Console summary
     Write-Summary -Hostname $hostname -ServerStatus $serverStatus -AllAnalyses @($sortedAll) `
@@ -1533,7 +1626,7 @@ function Main {
         Write-VerboseLog "HTML report generated ($($htmlReport.Length) chars)"
     }
 
-    # ── Step 9: Finalize ─────────────────────────────────────────────────────
+    # -- Step 9: Finalize -----------------------------------------------------
 
     # Log database stats
     $totalDrives = $allDrives.Count
