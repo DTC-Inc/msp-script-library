@@ -407,6 +407,9 @@ function Save-DriveRecord {
         } | Out-Null
 
         $newDrive = Get-DriveRecord -DeviceId $DeviceId -DriveLetter $DriveLetter
+        if (-not $newDrive) {
+            throw "Failed to retrieve newly inserted drive record for ${DeviceId}:${DriveLetter}"
+        }
         return $newDrive.id
     }
 }
@@ -441,6 +444,7 @@ function Set-DailyMetric {
     .SYNOPSIS
         Inserts or updates the metric for a drive for the current calendar day.
         Prevents duplicate rows when the script runs more than once per day.
+        Uses atomic DELETE+INSERT in a single batch to avoid TOCTOU races.
     #>
     param(
         [int]$DriveId,
@@ -459,32 +463,22 @@ function Set-DailyMetric {
     $dayStart = $parsed.ToString("yyyy-MM-dd") + "T00:00:00"
     $dayEnd = $parsed.AddDays(1).ToString("yyyy-MM-dd") + "T00:00:00"
 
-    $existing = Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
-        SELECT id FROM metric
-        WHERE drive_id = @driveId AND timestamp >= @dayStart AND timestamp < @dayEnd
-        ORDER BY timestamp DESC LIMIT 1
+    # Atomic: delete any existing same-day row then insert the new one, in a single statement batch.
+    # This runs within a single PSSQLite connection so both statements share one implicit transaction.
+    Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
+        DELETE FROM metric
+        WHERE drive_id = @driveId AND timestamp >= @dayStart AND timestamp < @dayEnd;
+        INSERT INTO metric (drive_id, timestamp, used_gb, free_gb, usage_percent)
+        VALUES (@driveId, @ts, @used, @free, @pct);
 "@ -SqlParameters @{
         driveId  = $DriveId
         dayStart = $dayStart
         dayEnd   = $dayEnd
-    }
-
-    if ($existing) {
-        $updateId = if ($existing -is [array]) { $existing[0].id } else { $existing.id }
-        Invoke-SqliteQuery -DataSource $Script:DB_PATH -Query @"
-            UPDATE metric SET timestamp = @ts, used_gb = @used, free_gb = @free, usage_percent = @pct
-            WHERE id = @id
-"@ -SqlParameters @{
-            id   = $updateId
-            ts   = $Timestamp
-            used = $UsedGB
-            free = $FreeGB
-            pct  = $UsagePercent
-        } | Out-Null
-    }
-    else {
-        Add-MetricRecord -DriveId $DriveId -Timestamp $Timestamp -UsedGB $UsedGB -FreeGB $FreeGB -UsagePercent $UsagePercent
-    }
+        ts       = $Timestamp
+        used     = $UsedGB
+        free     = $FreeGB
+        pct      = $UsagePercent
+    } | Out-Null
 }
 
 function Get-DriveMetrics {
@@ -906,7 +900,7 @@ function Get-DriveAnalysis {
 
     Write-VerboseLog "Drive $($DriveRecord.drive_letter): slope=$([math]::Round($dailyGrowth, 4)) GB/day, R$([char]0x00B2)=$($regression.RSquared)"
 
-    $result.GBPerMonth = $monthlyGrowth.ToString("F3")
+    $result.GBPerMonth = $monthlyGrowth.ToString("F3", [System.Globalization.CultureInfo]::InvariantCulture)
 
     $currentFreeGB = $result.CurrentFreeGB
     $currentUsagePercent = $result.CurrentPercent
@@ -919,7 +913,7 @@ function Get-DriveAnalysis {
         $daysUntilFull = $currentFreeGB / $dailyGrowth
         if ($daysUntilFull -gt $Script:DAYS_CAP) { $daysUntilFull = $Script:DAYS_CAP }
         $daysUntilFull = [math]::Round($daysUntilFull, 2)
-        $result.DaysUntilFull = $daysUntilFull.ToString("F2")
+        $result.DaysUntilFull = $daysUntilFull.ToString("F2", [System.Globalization.CultureInfo]::InvariantCulture)
         $result.NumericDays = $daysUntilFull
     }
 
@@ -1026,8 +1020,9 @@ function Build-SvgChart {
     $legendItems = [System.Collections.ArrayList]::new()
     foreach ($analysis in $DriveAnalyses) {
         $color = $Script:CHART_COLORS[$legendItems.Count % $Script:CHART_COLORS.Count]
-        $label = ($analysis.Letter -replace ':$', '')
-        if ($analysis.DriveType -eq 'OS') { $label += " (OS)" }
+        $rawLabel = ($analysis.Letter -replace ':$', '')
+        if ($analysis.DriveType -eq 'OS') { $rawLabel += " (OS)" }
+        $label = [System.Net.WebUtility]::HtmlEncode($rawLabel)
         [void]$legendItems.Add(@{ Label = $label; Color = $color })
     }
 
@@ -1036,8 +1031,8 @@ function Build-SvgChart {
         $legendRows = 1
         $testX = $mLeft
         foreach ($item in $legendItems) {
-            $testX += 65 + ($item.Label.Length * 2)
-            if ($testX -gt ($chartWidth - 80)) {
+            $testX += 28 + ($item.Label.Length * 6)
+            if ($testX -gt ($chartWidth - 20)) {
                 $testX = $mLeft
                 $legendRows++
             }
@@ -1128,8 +1123,8 @@ function Build-SvgChart {
         [void]$sb.Append("<line x1=`"$legendX`" y1=`"$legendY`" x2=`"$($legendX + 16)`" y2=`"$legendY`" stroke=`"$($item.Color)`" stroke-width=`"2.5`" stroke-linecap=`"round`"/>")
         [void]$sb.Append("<text x=`"$($legendX + 20)`" y=`"$($legendY + 3)`" fill=`"#475569`" font-size=`"10`">$($item.Label)</text>")
 
-        $legendX += 65 + ($item.Label.Length * 2)
-        if ($legendX -gt ($chartWidth - 80)) {
+        $legendX += 28 + ($item.Label.Length * 6)
+        if ($legendX -gt ($chartWidth - 20)) {
             $legendX = $mLeft
             $legendY += 16
         }
@@ -1178,13 +1173,15 @@ function Build-StorageReport {
 
     $now = (Get-Date).ToString("yyyy-MM-dd HH:mm")
     $driveCount = $AllAnalyses.Count
-    $totalPoints = ($AllAnalyses | ForEach-Object { $_.DataPoints } | Measure-Object -Sum).Sum
+    $measureResult = ($AllAnalyses | ForEach-Object { $_.DataPoints } | Measure-Object -Sum)
+    $totalPoints = if ($null -ne $measureResult.Sum) { [int]$measureResult.Sum } else { 0 }
 
     # Build SVG chart
     $svgChart = Build-SvgChart -DriveAnalyses $AllAnalyses
 
-    # HTML-encode user-sourced values to prevent injection via volume labels or hostname
+    # HTML-encode interpolated values to prevent injection via volume labels, hostname, or status
     $safeHostname = [System.Net.WebUtility]::HtmlEncode($Hostname)
+    $safeServerStatus = [System.Net.WebUtility]::HtmlEncode($ServerStatus)
 
     # Build summary table rows
     $tableRows = [System.Text.StringBuilder]::new()
@@ -1200,7 +1197,7 @@ function Build-StorageReport {
         $baseStatus = $a.Status -replace '\s*\(Limited\)', ''
         $badge = $statusBadgeColors[$baseStatus]
         if (-not $badge) { $badge = $statusBadgeColors["Offline"] }
-        $statusDisplay = $a.Status
+        $statusDisplay = [System.Net.WebUtility]::HtmlEncode($a.Status)
         $statusHtml = "<span style=`"display:inline-block;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:500;background:$($badge.bg);color:$($badge.fg);border:1px solid $($badge.border)`">$statusDisplay</span>"
 
         $sizeStr = if ($a.TotalSizeGB -gt 0) { "$([math]::Round($a.TotalSizeGB, 0)) GB" } else { '-' }
@@ -1210,7 +1207,7 @@ function Build-StorageReport {
         $growthStr = $a.GBPerMonth
 
         $daysStr = $a.DaysUntilFull
-        $capStr = ([double]$Script:DAYS_CAP).ToString("F2")
+        $capStr = ([double]$Script:DAYS_CAP).ToString("F2", [System.Globalization.CultureInfo]::InvariantCulture)
         if ($daysStr -eq $capStr) {
             $capYears = [math]::Round($Script:DAYS_CAP / 365, 0)
             $daysStr = "${capYears}yr+"
@@ -1243,7 +1240,7 @@ function Build-StorageReport {
 <div style="font-family:'Segoe UI',system-ui,-apple-system,sans-serif;max-width:720px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
 <div style="background:$($headerColor.grad);padding:10px 14px;color:#fff">
 <div style="font-size:14px;font-weight:600">$safeHostname</div>
-<div style="font-size:11px;opacity:.85">Storage: $ServerStatus | $now</div>
+<div style="font-size:11px;opacity:.85">Storage: $safeServerStatus | $now</div>
 </div>
 <div style="padding:10px 6px 2px">
 $svgChart
@@ -1279,7 +1276,7 @@ v$($Script:VERSION) | $driveCount drives | $totalPoints pts | OLS regression | S
 function Initialize-EventSource {
     try {
         if (-not [System.Diagnostics.EventLog]::SourceExists($Script:EVENT_SOURCE)) {
-            New-EventLog -LogName Application -Source $Script:EVENT_SOURCE -ErrorAction Stop
+            New-EventLog -LogName Application -Source $Script:EVENT_SOURCE -ErrorAction Stop | Out-Null
             Write-VerboseLog "Event log source '$($Script:EVENT_SOURCE)' registered"
         }
     }
