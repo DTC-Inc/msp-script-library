@@ -36,8 +36,12 @@
     .\Reinstall-Chrome.ps1 -SkipUninstall
     Install Chrome without uninstalling first (repair/overlay install).
 
+.EXAMPLE
+    .\Reinstall-Chrome.ps1 -DownloadOnly
+    Download the latest Chrome Enterprise MSI without installing it.
+
 .NOTES
-    Version:        1.0.0
+    Version:        1.1.0
     Requirements:   PowerShell 5.1+, Administrator rights, Internet connectivity
     Installer:      Google Chrome Enterprise 64-bit MSI (always latest from Google)
 #>
@@ -260,6 +264,7 @@ function Get-ChromeInstaller {
     Write-Log "Downloading latest Chrome Enterprise MSI..." -Level Info
     Write-Log "URL: $url" -Level Info
 
+    $originalProgressPref = $ProgressPreference
     try {
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -Uri $url -OutFile $outFile -UseBasicParsing -TimeoutSec 300
@@ -271,11 +276,31 @@ function Get-ChromeInstaller {
         }
 
         Write-Log "Download complete ($([math]::Round($fileSize/1MB, 1)) MB)" -Level Success
+
+        # Validate Authenticode signature
+        $signature = Get-AuthenticodeSignature -FilePath $outFile
+        if ($signature.Status -ne 'Valid') {
+            Write-Log "Authenticode signature validation FAILED (status: $($signature.Status)) — aborting" -Level Error
+            Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+
+        $signerName = $signature.SignerCertificate.Subject
+        if ($signerName -notmatch "Google") {
+            Write-Log "Unexpected signer: $signerName — expected Google. Aborting" -Level Error
+            Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue
+            return $null
+        }
+
+        Write-Log "Authenticode signature valid (signer: $signerName)" -Level Success
         return $outFile
     }
     catch {
         Write-Log "Download failed: $_" -Level Error
         return $null
+    }
+    finally {
+        $ProgressPreference = $originalProgressPref
     }
 }
 
@@ -351,11 +376,13 @@ $ErrorActionPreference = 'Stop'
 Write-Host @"
 
 =====================================================
-       Chrome Reinstall Script v1.0.0
+       Chrome Reinstall Script v1.1.0
        Detect / Uninstall / Install Latest
 =====================================================
 
 "@ -ForegroundColor Cyan
+
+$msiPath = $null
 
 try {
     # Enable TLS 1.2
@@ -377,8 +404,27 @@ try {
         Write-Log "Chrome is NOT currently installed" -Level Info
     }
 
+    # --- Step 1b: Check if reinstall is needed ---
+    # If Chrome is installed and ForceReinstall is not set, download the MSI
+    # to compare versions before proceeding with uninstall/reinstall.
+    if ($existingChrome -and -not $ForceReinstall -and -not $DownloadOnly) {
+        Write-Log "Checking if installed Chrome is already up to date..." -Level Info
+        $tempMsiPath = Get-ChromeInstaller
+        if ($tempMsiPath) {
+            $msiVersion = (Get-Item $tempMsiPath).VersionInfo.FileVersion
+            if ($msiVersion -and $existingChrome.DisplayVersion -eq $msiVersion) {
+                Write-Log "Chrome $($existingChrome.DisplayVersion) is already the latest version — no action needed" -Level Success
+                Write-Log "Use -ForceReinstall to reinstall anyway" -Level Info
+                exit 0
+            }
+            Write-Log "Installed: v$($existingChrome.DisplayVersion), Latest: v$msiVersion — proceeding with reinstall" -Level Info
+            # Keep the downloaded MSI for installation later
+            $msiPath = $tempMsiPath
+        }
+    }
+
     # --- Step 2: Uninstall (if present and not skipped) ---
-    if ($existingChrome -and -not $SkipUninstall) {
+    if ($existingChrome -and -not $SkipUninstall -and -not $DownloadOnly) {
         Write-Host "`n=== Uninstalling Chrome ===" -ForegroundColor Cyan
 
         Stop-ChromeProcesses
@@ -396,13 +442,15 @@ try {
         Write-Log "Skipping uninstall (SkipUninstall flag set)" -Level Info
     }
 
-    # --- Step 3: Download latest Chrome ---
-    Write-Host "`n=== Downloading Chrome ===" -ForegroundColor Cyan
-
-    $msiPath = Get-ChromeInstaller
+    # --- Step 3: Download latest Chrome (skip if already downloaded during version check) ---
     if (-not $msiPath) {
-        Write-Log "Failed to download Chrome installer — aborting" -Level Error
-        exit 1
+        Write-Host "`n=== Downloading Chrome ===" -ForegroundColor Cyan
+
+        $msiPath = Get-ChromeInstaller
+        if (-not $msiPath) {
+            Write-Log "Failed to download Chrome installer — aborting" -Level Error
+            exit 1
+        }
     }
 
     if ($DownloadOnly) {
@@ -434,12 +482,6 @@ try {
         Write-Host "=====================================================" -ForegroundColor Yellow
     }
 
-    # Cleanup installer
-    if (Test-Path $msiPath) {
-        Remove-Item -Path $msiPath -Force -ErrorAction SilentlyContinue
-        Write-Log "Cleaned up installer" -Level Info
-    }
-
     Write-Host "`n  Log file: $LogPath" -ForegroundColor Gray
     Write-Host ""
 
@@ -449,5 +491,15 @@ catch {
     Write-Log "Unhandled exception: $_" -Level Error
     Write-Log $_.ScriptStackTrace -Level Error
     exit 1
+}
+finally {
+    # Clean up temp installer directory (unless user requested DownloadOnly)
+    if (-not $DownloadOnly) {
+        $installerDir = $Script:Config.InstallerDir
+        if ($installerDir -and (Test-Path $installerDir)) {
+            Remove-Item -Path $installerDir -Recurse -Force -ErrorAction SilentlyContinue
+            Write-Log "Cleaned up temp directory: $installerDir" -Level Info
+        }
+    }
 }
 #endregion
