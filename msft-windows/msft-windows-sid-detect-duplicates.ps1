@@ -78,6 +78,13 @@ if (-not $partOfDomain) {
     exit 2
 }
 
+# DomainRole: 4 = Backup DC, 5 = Primary DC
+if ($computerSystem.DomainRole -lt 4) {
+    Write-Host "[ERROR] This script must be run on a Domain Controller. Current role: $($computerSystem.DomainRole) (expected 4 or 5)."
+    Stop-Transcript
+    exit 2
+}
+
 # Step 2: Query all computers with info (Notes) attribute containing MACHINESID: prefix
 try {
     $searcher = [ADSISearcher]"(&(objectCategory=computer)(info=MACHINESID:*))"
