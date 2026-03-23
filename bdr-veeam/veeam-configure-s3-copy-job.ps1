@@ -321,8 +321,7 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  Job name:    $COPY_JOB_NAME"
     Write-Host "  Target repo: $($S3_REPO.Name)"
     Write-Host "  Source jobs:  $($SOURCE_JOBS.Count)"
-    Write-Host "  Mode:        Periodic (daily at 10 PM)"
-    Write-Host "  Window:      Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
+    Write-Host "  Mode:        Periodic (24/7)"
     Write-Host "  Retention:   $RETENTION_DAYS days"
     Write-Host ""
 
@@ -344,19 +343,45 @@ if ($EXISTING_COPY_JOB) {
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
 
-        # Step 2: Set schedule to daily at 10 PM using backup window
+        # Step 2: Enable encryption using the same key as source backup jobs
         try {
-            Write-Host "  Step 2: Setting schedule..."
-            $PERIOD_OPTS = New-VBRPeriodicallyOptions -PeriodicallyKind Hours -FullPeriod 1
-            $SCHEDULE = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $PERIOD_OPTS
-            Set-VBRBackupCopyJob -Job $COPY_JOB -ScheduleOptions $SCHEDULE
-            Write-Host "  [OK] Schedule set (hourly check)."
+            Write-Host "  Step 2: Configuring encryption..."
+            # Find encryption key from the first source backup job that has one
+            $ENCRYPTION_KEY = $null
+            foreach ($SJ in $SOURCE_JOBS) {
+                try {
+                    $OPTS = $SJ.GetOptions()
+                    if ($OPTS.BackupStorageOptions.StorageEncryptionEnabled) {
+                        $KEY_ID = $OPTS.BackupStorageOptions.StorageEncryptionKey
+                        if ($KEY_ID) {
+                            $ENCRYPTION_KEY = Get-VBREncryptionKey | Where-Object { $_.Id -eq $KEY_ID } | Select-Object -First 1
+                            if ($ENCRYPTION_KEY) {
+                                Write-Host "    Found encryption key from job: $($SJ.Name)"
+                                break
+                            }
+                        }
+                    }
+                } catch { }
+            }
+            # Fallback: just use the first available encryption key
+            if (-not $ENCRYPTION_KEY) {
+                $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
+                if ($ENCRYPTION_KEY) { Write-Host "    Using first available encryption key." }
+            }
+
+            if ($ENCRYPTION_KEY) {
+                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $ENCRYPTION_KEY
+                Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
+                Write-Host "  [OK] Encryption enabled."
+            } else {
+                Write-Warning "  No encryption key found. Configure encryption manually."
+            }
         } catch {
-            Write-Warning "  Failed to set schedule: $_"
-            Write-Host "  Configure the schedule manually in the Veeam console."
+            Write-Warning "  Failed to set encryption: $_"
+            Write-Host "  Configure encryption manually in the Veeam console."
         }
 
-        # Step 3: Enable the job (created disabled by default)
+        # Step 4: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
