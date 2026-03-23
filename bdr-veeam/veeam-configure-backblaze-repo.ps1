@@ -44,15 +44,26 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 }
 
 # Fix PS7.4+ / Veeam SQLite conflict.
-# PS7.4+ ships a newer Microsoft.Data.Sqlite that breaks Veeam's type initializer.
-# Register an assembly resolve handler that redirects to Veeam's version.
+# The type initializer for Microsoft.Data.Sqlite.SqliteConnection fails because
+# it can't find the native e_sqlite3 library. Add Veeam's directory to the
+# native DLL search path so the managed assembly can find its native dependency.
 if ($PSVersionTable.PSVersion.Major -ge 7) {
     $VEEAM_BACKUP_DIR = "C:\Program Files\Veeam\Backup and Replication\Backup"
+    $VEEAM_RUNTIMES = "C:\Program Files\Veeam\Backup and Replication\Backup\runtimes\win-x64\native"
+
+    # Add Veeam paths to PATH so native DLLs (e_sqlite3.dll) are found
+    foreach ($DIR in @($VEEAM_RUNTIMES, $VEEAM_BACKUP_DIR)) {
+        if ((Test-Path $DIR) -and $env:PATH -notlike "*$DIR*") {
+            $env:PATH = "$DIR;$env:PATH"
+        }
+    }
+
+    # Also register assembly resolve for managed DLLs
     if (Test-Path $VEEAM_BACKUP_DIR) {
         $null = [System.AppDomain]::CurrentDomain.add_AssemblyResolve({
             param($sender, $args)
             $ASSEMBLY_NAME = [System.Reflection.AssemblyName]::new($args.Name)
-            $VEEAM_DLL = Join-Path $VEEAM_BACKUP_DIR "$($ASSEMBLY_NAME.Name).dll"
+            $VEEAM_DLL = Join-Path "C:\Program Files\Veeam\Backup and Replication\Backup" "$($ASSEMBLY_NAME.Name).dll"
             if (Test-Path $VEEAM_DLL) {
                 return [System.Reflection.Assembly]::LoadFrom($VEEAM_DLL)
             }
