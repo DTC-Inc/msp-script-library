@@ -425,6 +425,9 @@ Write-Host ""
 Write-Host "Creating Veeam S3 repository: $BUCKET_NAME"
 
 try {
+    # Suppress all confirmation prompts (Veeam cmdlets prompt for cert trust etc.)
+    $ConfirmPreference = 'None'
+
     # Add the SCOPED B2 credentials to Veeam (not the admin key)
     $VEEAM_ACCOUNT = Add-VBRAmazonAccount `
         -AccessKey $SCOPED_KEY_ID_OUT `
@@ -434,10 +437,17 @@ try {
     Write-Host "  [OK] Veeam account added."
 
     # Connect to the S3-compatible service
-    $VEEAM_CONNECTION = Connect-VBRAmazonS3CompatibleService `
-        -Account $VEEAM_ACCOUNT `
-        -CustomRegionId $env:B2_REGION `
-        -ServicePoint $env:B2_ENDPOINT
+    # -Force bypasses certificate trust prompts in non-interactive mode
+    $CONNECT_PARAMS = @{
+        Account        = $VEEAM_ACCOUNT
+        CustomRegionId = $env:B2_REGION
+        ServicePoint   = $env:B2_ENDPOINT
+    }
+    # Add -Force if the cmdlet supports it (Veeam 12.1+)
+    if ((Get-Command Connect-VBRAmazonS3CompatibleService).Parameters.ContainsKey('Force')) {
+        $CONNECT_PARAMS['Force'] = $true
+    }
+    $VEEAM_CONNECTION = Connect-VBRAmazonS3CompatibleService @CONNECT_PARAMS
 
     Write-Host "  [OK] Connected to S3 endpoint."
 
