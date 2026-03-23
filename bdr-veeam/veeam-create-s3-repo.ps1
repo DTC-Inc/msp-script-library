@@ -164,7 +164,13 @@ Write-Host ""
 # Org UUID: inherited from org-level field in NinjaRMM, arrives as env var
 $ORG_UUID = $env:CUSTOM_FIELD_ORG_UUID
 if (-not $ORG_UUID) {
-    Write-Error "ORG_UUID is required. Set the dtcOrgGuid field at the organization level in NinjaRMM."
+    Write-Error "CUSTOM_FIELD_ORG_UUID is empty. Set the org UUID field in NinjaRMM."
+    Stop-Transcript
+    exit 1
+}
+# Validate it's actually a UUID, not a field name or garbage
+if ($ORG_UUID -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
+    Write-Error "CUSTOM_FIELD_ORG_UUID value '$ORG_UUID' is not a valid UUID. Expected format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
     Stop-Transcript
     exit 1
 }
