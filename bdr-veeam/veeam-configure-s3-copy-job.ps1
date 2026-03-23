@@ -332,9 +332,6 @@ if ($EXISTING_COPY_JOB) {
         # Step 1: Create the job WITHOUT backup window (window must be applied after)
         Write-Host "  Step 1: Creating copy job (Periodic mode)..."
 
-        # Schedule: daily at 10 PM
-        $SCHEDULE = New-VBRServerScheduleOptions -Type Daily -DailyOptions (New-VBRDailyOptions -Type Everyday) -Period "22:00"
-
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
@@ -342,7 +339,6 @@ if ($EXISTING_COPY_JOB) {
             -TargetRepository $S3_REPO `
             -DirectOperation `
             -Mode Periodic `
-            -ScheduleOptions $SCHEDULE `
             -RetentionType RestoreDays `
             -RetentionNumber $RETENTION_DAYS
 
