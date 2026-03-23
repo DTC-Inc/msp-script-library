@@ -343,9 +343,20 @@ if ($EXISTING_COPY_JOB) {
             -RetentionNumber $RETENTION_DAYS
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
-        Write-Host "  Schedule: Daily at 10 PM"
 
-        # Step 2: Enable the job (created disabled by default)
+        # Step 2: Set schedule to daily at 10 PM using backup window
+        try {
+            Write-Host "  Step 2: Setting schedule..."
+            $PERIOD_OPTS = New-VBRPeriodicallyOptions -PeriodicallyKind Hours -FullPeriod 1
+            $SCHEDULE = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $PERIOD_OPTS
+            Set-VBRBackupCopyJob -Job $COPY_JOB -ScheduleOptions $SCHEDULE
+            Write-Host "  [OK] Schedule set (hourly check)."
+        } catch {
+            Write-Warning "  Failed to set schedule: $_"
+            Write-Host "  Configure the schedule manually in the Veeam console."
+        }
+
+        # Step 3: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
