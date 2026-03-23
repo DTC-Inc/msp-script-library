@@ -18,10 +18,11 @@
 # If running under PS5, re-launch this script in pwsh.exe.
 # ============================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    $PWSH_CANDIDATE = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    $PWSH_PATH = if ($PWSH_CANDIDATE) { $PWSH_CANDIDATE.Source } else { $null }
-    if (-not $PWSH_PATH) {
-        $PWSH_PATH = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+    # Always prefer 64-bit PS7. Veeam's native SQLite DLL is x64 only.
+    $PWSH_PATH = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+    if (-not (Test-Path $PWSH_PATH)) {
+        $PWSH_CANDIDATE = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        $PWSH_PATH = if ($PWSH_CANDIDATE) { $PWSH_CANDIDATE.Source } else { $null }
     }
     if (Test-Path $PWSH_PATH) {
         Write-Host "PowerShell $($PSVersionTable.PSVersion) detected. Re-launching in PowerShell 7 at: $PWSH_PATH"

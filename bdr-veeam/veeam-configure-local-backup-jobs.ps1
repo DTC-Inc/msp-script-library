@@ -14,9 +14,12 @@
 # PS7 BOOTSTRAP
 # ============================================================
 if ($PSVersionTable.PSVersion.Major -lt 7) {
-    $PWSH_CANDIDATE = Get-Command pwsh.exe -ErrorAction SilentlyContinue
-    $PWSH_PATH = if ($PWSH_CANDIDATE) { $PWSH_CANDIDATE.Source } else { $null }
-    if (-not $PWSH_PATH) { $PWSH_PATH = "$env:ProgramFiles\PowerShell\7\pwsh.exe" }
+    # Always prefer 64-bit PS7. Veeam's native SQLite DLL is x64 only.
+    $PWSH_PATH = "$env:ProgramFiles\PowerShell\7\pwsh.exe"
+    if (-not (Test-Path $PWSH_PATH)) {
+        $PWSH_CANDIDATE = Get-Command pwsh.exe -ErrorAction SilentlyContinue
+        $PWSH_PATH = if ($PWSH_CANDIDATE) { $PWSH_CANDIDATE.Source } else { $null }
+    }
     if (Test-Path $PWSH_PATH) {
         Write-Host "Re-launching in PowerShell 7..."
         & $PWSH_PATH -NoProfile -ExecutionPolicy Bypass -File $MyInvocation.MyCommand.Path
