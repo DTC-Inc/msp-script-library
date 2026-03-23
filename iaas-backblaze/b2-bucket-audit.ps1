@@ -104,9 +104,9 @@ Write-Host ""
 # Authorize
 Write-Host "Authenticating to Backblaze B2..."
 try {
-    $B2_CREDS = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes("$($env:B2_KEY_ID):$($env:B2_APP_KEY)"))
+    $B2_CREDS = [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($env:B2_KEY_ID):$($env:B2_APP_KEY)"))
 
-    $AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/v3/b2_authorize_account" `
+    $AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/v4/b2_authorize_account" `
         -Method GET `
         -Headers @{ Authorization = "Basic $B2_CREDS" } `
         -ErrorAction Stop
@@ -124,7 +124,7 @@ try {
 # List buckets
 Write-Host "Listing buckets..."
 try {
-    $BUCKET_RESPONSE = Invoke-RestMethod -Uri "$API_URL/b2api/v3/b2_list_buckets" `
+    $BUCKET_RESPONSE = Invoke-RestMethod -Uri "$API_URL/b2api/v4/b2_list_buckets" `
         -Method POST `
         -Headers @{ Authorization = $AUTH_TOKEN } `
         -ContentType "application/json" `
