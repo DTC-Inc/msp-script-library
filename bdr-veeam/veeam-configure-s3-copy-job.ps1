@@ -356,7 +356,7 @@ if ($EXISTING_COPY_JOB) {
             -BackupJob $SOURCE_JOBS `
             -TargetRepository $S3_REPO `
             -DirectOperation `
-            -RetentionType Days `
+            -RetentionType RestoreDays `
             -RetentionNumber $RETENTION_DAYS `
             -BackupWindowEnabled `
             -BackupWindowOptions $WINDOW
