@@ -366,44 +366,16 @@ if ($EXISTING_COPY_JOB) {
             Write-Host "  Configure the schedule manually in the Veeam console."
         }
 
-        # Step 3: Enable encryption using the same key as source backup jobs
+        # Step 3: Enable encryption using the first available encryption key
         try {
             Write-Host "  Step 3: Configuring encryption..."
-
-            # Find encryption key from source backup jobs
-            $ENCRYPTION_KEY = $null
-            foreach ($SJ in $SOURCE_JOBS) {
-                try {
-                    $OPTS = $SJ.GetOptions()
-                    if ($OPTS.BackupStorageOptions.StorageEncryptionEnabled) {
-                        $KEY_ID = $OPTS.BackupStorageOptions.StorageEncryptionKey
-                        if ($KEY_ID) {
-                            $ENCRYPTION_KEY = Get-VBREncryptionKey | Where-Object { $_.Id -eq $KEY_ID } | Select-Object -First 1
-                            if ($ENCRYPTION_KEY) {
-                                Write-Host "    Found encryption key from job: $($SJ.Name)"
-                                break
-                            }
-                        }
-                    }
-                } catch { }
-            }
-            if (-not $ENCRYPTION_KEY) {
-                $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
-                if ($ENCRYPTION_KEY) { Write-Host "    Using first available encryption key." }
-            }
+            $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
 
             if ($ENCRYPTION_KEY) {
-                # Set encryption directly on the underlying job object
-                $VBR_JOB = Get-VBRJob | Where-Object { $_.Id -eq $COPY_JOB.Id }
-                if ($VBR_JOB) {
-                    $JOB_OPTS = $VBR_JOB.GetOptions()
-                    $JOB_OPTS.BackupStorageOptions.StorageEncryptionEnabled = $true
-                    $JOB_OPTS.BackupStorageOptions.StorageEncryptionKey = $ENCRYPTION_KEY.Id
-                    Set-VBRJobOptions -Job $VBR_JOB -Options $JOB_OPTS
-                    Write-Host "  [OK] Encryption enabled."
-                } else {
-                    Write-Warning "  Could not find job object. Configure encryption manually."
-                }
+                Write-Host "    Using key: $($ENCRYPTION_KEY.Id)"
+                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $ENCRYPTION_KEY
+                Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
+                Write-Host "  [OK] Encryption enabled."
             } else {
                 Write-Warning "  No encryption key found. Configure encryption manually."
             }
