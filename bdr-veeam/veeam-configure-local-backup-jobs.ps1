@@ -27,10 +27,26 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     }
 }
 
-# Preload Veeam's SQLite assembly before PS7's version gets loaded
-$VEEAM_SQLITE = "C:\Program Files\Veeam\Backup and Replication\Backup\Microsoft.Data.Sqlite.dll"
-if (Test-Path $VEEAM_SQLITE) {
-    try { [System.Reflection.Assembly]::LoadFrom($VEEAM_SQLITE) | Out-Null } catch { }
+# Fix PS7.4+ / Veeam SQLite conflict.
+if ($PSVersionTable.PSVersion.Major -ge 7) {
+    $VEEAM_BACKUP_DIR = "C:\Program Files\Veeam\Backup and Replication\Backup"
+    $VEEAM_RUNTIMES = "C:\Program Files\Veeam\Backup and Replication\Backup\runtimes\win-x64\native"
+    foreach ($DIR in @($VEEAM_RUNTIMES, $VEEAM_BACKUP_DIR)) {
+        if ((Test-Path $DIR) -and $env:PATH -notlike "*$DIR*") {
+            $env:PATH = "$DIR;$env:PATH"
+        }
+    }
+    if (Test-Path $VEEAM_BACKUP_DIR) {
+        $null = [System.AppDomain]::CurrentDomain.add_AssemblyResolve({
+            param($sender, $args)
+            $ASSEMBLY_NAME = [System.Reflection.AssemblyName]::new($args.Name)
+            $VEEAM_DLL = Join-Path "C:\Program Files\Veeam\Backup and Replication\Backup" "$($ASSEMBLY_NAME.Name).dll"
+            if (Test-Path $VEEAM_DLL) {
+                return [System.Reflection.Assembly]::LoadFrom($VEEAM_DLL)
+            }
+            return $null
+        })
+    }
 }
 
 # ============================================================
