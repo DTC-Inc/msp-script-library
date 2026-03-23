@@ -356,6 +356,7 @@ if (-not $SKIP_B2_CREATION) {
             accountId    = $B2_ACCOUNT_ID
             capabilities = @(
                 "listBuckets"
+                "listAllBucketNames"
                 "readBuckets"
                 "listFiles"
                 "readFiles"
