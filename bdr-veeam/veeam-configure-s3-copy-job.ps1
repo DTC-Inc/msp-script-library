@@ -373,7 +373,12 @@ if ($EXISTING_COPY_JOB) {
 
             if ($ENCRYPTION_KEY) {
                 Write-Host "    Using key: $($ENCRYPTION_KEY.Id)"
-                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $ENCRYPTION_KEY
+                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions `
+                    -CompressionLevel Auto `
+                    -StorageOptimizationType Local `
+                    -EnableDataDeduplication `
+                    -EnableEncryption `
+                    -EncryptionKey $ENCRYPTION_KEY
                 Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
                 Write-Host "  [OK] Encryption enabled."
             } else {
