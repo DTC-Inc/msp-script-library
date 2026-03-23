@@ -333,9 +333,13 @@ if (-not $SKIP_B2_CREATION) {
 
     try {
         $UPDATE_BODY = @{
-            accountId      = $B2_ACCOUNT_ID
-            bucketId       = $B2_BUCKET.bucketId
-            lifecycleRules = @(
+            accountId             = $B2_ACCOUNT_ID
+            bucketId              = $B2_BUCKET.bucketId
+            defaultServerSideEncryption = @{
+                mode      = "SSE-B2"
+                algorithm = "AES256"
+            }
+            lifecycleRules        = @(
                 @{
                     daysFromHidingToDeleting  = $LIFECYCLE_PURGE_DAYS
                     daysFromUploadingToHiding = $null
@@ -347,9 +351,10 @@ if (-not $SKIP_B2_CREATION) {
         Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
             -AuthToken $B2_AUTH_TOKEN -Body $UPDATE_BODY | Out-Null
 
+        Write-Host "  [OK] Server-side encryption: SSE-B2 (AES256)"
         Write-Host "  [OK] Lifecycle rule: delete hidden versions after $LIFECYCLE_PURGE_DAYS days"
     } catch {
-        Write-Warning "  Failed to set lifecycle rule: $_"
+        Write-Warning "  Failed to set encryption/lifecycle: $_"
     }
 
     # ============================================================

@@ -76,9 +76,13 @@ foreach ($BUCKET in $TARGET_BUCKETS) {
     # Apply the fix
     try {
         $UPDATE_BODY = @{
-            accountId      = $B2_ACCOUNT_ID
-            bucketId       = $BUCKET.bucketId
-            lifecycleRules = @(
+            accountId                   = $B2_ACCOUNT_ID
+            bucketId                    = $BUCKET.bucketId
+            defaultServerSideEncryption = @{
+                mode      = "SSE-B2"
+                algorithm = "AES256"
+            }
+            lifecycleRules              = @(
                 @{
                     daysFromHidingToDeleting  = $PURGE_DAYS
                     daysFromUploadingToHiding = $null
@@ -90,6 +94,7 @@ foreach ($BUCKET in $TARGET_BUCKETS) {
         Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
             -AuthToken $B2_AUTH_TOKEN -Body $UPDATE_BODY | Out-Null
 
+        Write-Host "  [OK] Server-side encryption: SSE-B2 (AES256)"
         Write-Host "  [OK] Lifecycle rule applied: delete hidden versions after $PURGE_DAYS days"
     } catch {
         Write-Warning "  FAILED: $_"
