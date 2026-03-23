@@ -435,8 +435,35 @@ Write-Host ""
 Write-Host "Creating Veeam S3 repository: $BUCKET_NAME"
 
 try {
-    # Suppress all confirmation prompts (Veeam cmdlets prompt for cert trust etc.)
+    # Suppress all confirmation prompts
     $ConfirmPreference = 'None'
+
+    # Pre-trust the B2 endpoint SSL certificate so Veeam doesn't prompt
+    Write-Host "  Pre-trusting SSL certificate for $env:B2_ENDPOINT..."
+    try {
+        $ENDPOINT_URI = [System.Uri]$env:B2_ENDPOINT
+        $TCP = [System.Net.Sockets.TcpClient]::new($ENDPOINT_URI.Host, 443)
+        $SSL = [System.Net.Security.SslStream]::new($TCP.GetStream(), $false, { $true })
+        $SSL.AuthenticateAsClient($ENDPOINT_URI.Host)
+        $CERT = $SSL.RemoteCertificate
+        $SSL.Dispose()
+        $TCP.Dispose()
+
+        if ($CERT) {
+            # Import the cert to Trusted Root if not already there
+            $X509 = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CERT)
+            $STORE = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+                [System.Security.Cryptography.X509Certificates.StoreName]::Root,
+                [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine
+            )
+            $STORE.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+            $STORE.Add($X509)
+            $STORE.Close()
+            Write-Host "  [OK] Certificate trusted: $($X509.Subject)"
+        }
+    } catch {
+        Write-Warning "  Could not pre-trust certificate: $_"
+    }
 
     # Add the SCOPED B2 credentials to Veeam (not the admin key)
     $VEEAM_ACCOUNT = Add-VBRAmazonAccount `
@@ -447,17 +474,10 @@ try {
     Write-Host "  [OK] Veeam account added."
 
     # Connect to the S3-compatible service
-    # -Force bypasses certificate trust prompts in non-interactive mode
-    $CONNECT_PARAMS = @{
-        Account        = $VEEAM_ACCOUNT
-        CustomRegionId = $env:B2_REGION
-        ServicePoint   = $env:B2_ENDPOINT
-    }
-    # Add -Force if the cmdlet supports it (Veeam 12.1+)
-    if ((Get-Command Connect-VBRAmazonS3CompatibleService).Parameters.ContainsKey('Force')) {
-        $CONNECT_PARAMS['Force'] = $true
-    }
-    $VEEAM_CONNECTION = Connect-VBRAmazonS3CompatibleService @CONNECT_PARAMS
+    $VEEAM_CONNECTION = Connect-VBRAmazonS3CompatibleService `
+        -Account $VEEAM_ACCOUNT `
+        -CustomRegionId $env:B2_REGION `
+        -ServicePoint $env:B2_ENDPOINT
 
     Write-Host "  [OK] Connected to S3 endpoint."
 
