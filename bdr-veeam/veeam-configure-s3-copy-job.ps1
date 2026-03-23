@@ -30,8 +30,8 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 # Fix PS7.4+ / Veeam SQLite conflict.
 if ($PSVersionTable.PSVersion.Major -ge 7) {
-    $VEEAM_BACKUP_DIR = "C:\Program Files\Veeam\Backup and Replication\Backup"
-    $VEEAM_RUNTIMES = "C:\Program Files\Veeam\Backup and Replication\Backup\runtimes\win-x64\native"
+    $VEEAM_BACKUP_DIR = "$env:ProgramFiles\Veeam\Backup and Replication\Backup"
+    $VEEAM_RUNTIMES = "$env:ProgramFiles\Veeam\Backup and Replication\Backup\runtimes\win-x64\native"
     foreach ($DIR in @($VEEAM_RUNTIMES, $VEEAM_BACKUP_DIR)) {
         if ((Test-Path $DIR) -and $env:PATH -notlike "*$DIR*") {
             $env:PATH = "$DIR;$env:PATH"
@@ -42,7 +42,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
             param($sender, $args)
             if (-not $args.Name) { return $null }
             $ASSEMBLY_NAME = [System.Reflection.AssemblyName]::new($args.Name)
-            $VEEAM_DLL = Join-Path "C:\Program Files\Veeam\Backup and Replication\Backup" "$($ASSEMBLY_NAME.Name).dll"
+            $VEEAM_DLL = Join-Path $VEEAM_BACKUP_DIR "$($ASSEMBLY_NAME.Name).dll"
             if (Test-Path $VEEAM_DLL) {
                 return [System.Reflection.Assembly]::LoadFrom($VEEAM_DLL)
             }
@@ -93,7 +93,7 @@ Write-Host ""
 # ============================================================
 
 Write-Host "Loading Veeam PowerShell module..."
-$MY_MODULE_PATH = "C:\Program Files\Veeam\Backup and Replication\Console\"
+$MY_MODULE_PATH = "$env:ProgramFiles\Veeam\Backup and Replication\Console\"
 $env:PSModulePath = $env:PSModulePath + "$([System.IO.Path]::PathSeparator)$MY_MODULE_PATH"
 
 if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
