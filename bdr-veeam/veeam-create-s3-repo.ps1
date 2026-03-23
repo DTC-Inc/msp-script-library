@@ -10,7 +10,7 @@
 ## $env:B2_ADMIN_APP_KEY              - Master/admin B2 application key
 ##
 ## CONFIGURATION:
-## $env:ORG_UUID                      - Organization UUID from NinjaRMM (REQUIRED, fails if empty)
+## $env:CUSTOM_FIELD_ORG_UUID          - NinjaOne text field containing the organization UUID (REQUIRED)
 ## $env:B2_ENDPOINT                   - S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)
 ## $env:B2_REGION                     - S3 region ID (e.g. us-west-002)
 ## $env:IMMUTABILITY_DAYS             - Object lock immutability period in days (default: 14)
@@ -91,7 +91,7 @@ if ($env:RMM -ne "1") {
         $env:DESCRIPTION = Read-Host "Ticket # or initials for audit trail"
         if ($env:DESCRIPTION) { $VALID_INPUT = 1 } else { Write-Host "Required." }
     }
-    if (-not $env:ORG_UUID) { $env:ORG_UUID = Read-Host "Organization UUID (REQUIRED)" }
+    if (-not $env:CUSTOM_FIELD_ORG_UUID) { $env:CUSTOM_FIELD_ORG_UUID = Read-Host "Organization UUID (REQUIRED)" }
     if (-not $env:B2_ADMIN_KEY_ID) { $env:B2_ADMIN_KEY_ID = Read-Host "B2 admin key ID (master key)" }
     if (-not $env:B2_ADMIN_APP_KEY) { $env:B2_ADMIN_APP_KEY = Read-Host "B2 admin app key (master key)" }
     if (-not $env:B2_ENDPOINT) { $env:B2_ENDPOINT = Read-Host "B2 S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)" }
@@ -141,12 +141,12 @@ Write-Host "Description: $env:DESCRIPTION"
 Write-Host ""
 
 # Org UUID is required. Every bucket must be traceable to an org.
-if (-not $env:ORG_UUID) {
+if (-not $env:CUSTOM_FIELD_ORG_UUID) {
     Write-Error "ORG_UUID is required. Set the organization UUID in NinjaRMM before running."
     Stop-Transcript
     exit 1
 }
-$ORG_PREFIX = $env:ORG_UUID.Replace("-", "").ToLower()
+$ORG_PREFIX = $env:CUSTOM_FIELD_ORG_UUID.Replace("-", "").ToLower()
 
 # Generate time-based short ID for this bucket
 $BUCKET_SHORT_ID = New-TimeBasedShortId
@@ -162,7 +162,7 @@ if ($BUCKET_NAME.Length -gt 50) {
 }
 
 Write-Host "Bucket name:       $BUCKET_NAME"
-Write-Host "Org UUID:          $($env:ORG_UUID)"
+Write-Host "Org UUID:          $($env:CUSTOM_FIELD_ORG_UUID)"
 Write-Host "Org prefix:        $ORG_PREFIX"
 Write-Host "Bucket short ID:   $BUCKET_SHORT_ID"
 Write-Host "Endpoint:          $env:B2_ENDPOINT"
