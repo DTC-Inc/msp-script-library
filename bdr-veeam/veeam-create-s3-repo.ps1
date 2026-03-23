@@ -62,6 +62,27 @@ function New-TimeBasedShortId {
     return $RESULT.PadLeft(8, '0').Substring(0, 8)
 }
 
+function Invoke-B2Api {
+    # Wrapper for B2 API calls that handles PowerShell's strict header validation.
+    # The B2 auth token contains = characters which Invoke-RestMethod rejects.
+    param(
+        [string]$Uri,
+        [string]$Method = "POST",
+        [string]$AuthToken,
+        [string]$Body
+    )
+    $PARAMS = @{
+        Uri                  = $Uri
+        Method               = $Method
+        ContentType          = "application/json"
+        SkipHeaderValidation = $true
+        Headers              = @{ Authorization = $AuthToken }
+        ErrorAction          = "Stop"
+    }
+    if ($Body) { $PARAMS['Body'] = $Body }
+    return Invoke-RestMethod @PARAMS
+}
+
 function Set-NinjaField {
     param([string]$FieldName, [string]$Value)
     if (-not $FieldName) { return }
@@ -140,14 +161,8 @@ Write-Host "=== Veeam S3 Repository Creation ==="
 Write-Host "Description: $env:DESCRIPTION"
 Write-Host ""
 
-# Org UUID: read from org-level NinjaOne field (device-level env vars don't
-# carry org-level fields, so we must query it explicitly)
+# Org UUID: inherited from org-level field in NinjaRMM, arrives as env var
 $ORG_UUID = $env:CUSTOM_FIELD_ORG_UUID
-if (-not $ORG_UUID) {
-    try {
-        $ORG_UUID = Ninja-Property-Get -Organization dtcOrgGuid 2>$null
-    } catch { }
-}
 if (-not $ORG_UUID) {
     Write-Error "ORG_UUID is required. Set the dtcOrgGuid field at the organization level in NinjaRMM."
     Stop-Transcript
@@ -250,12 +265,8 @@ try {
         fileLockEnabled = $true
     } | ConvertTo-Json
 
-    $B2_BUCKET = Invoke-RestMethod -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_bucket" `
-        -Method POST `
-        -Headers @{ Authorization = $B2_AUTH_TOKEN } `
-        -ContentType "application/json" `
-        -Body $CREATE_BODY `
-        -ErrorAction Stop
+    $B2_BUCKET = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_bucket" `
+        -AuthToken $B2_AUTH_TOKEN -Body $CREATE_BODY
 
     Write-Host "  [OK] Bucket created: $($B2_BUCKET.bucketName) (ID: $($B2_BUCKET.bucketId))"
 } catch {
@@ -277,12 +288,8 @@ try {
         }
     } | ConvertTo-Json -Depth 5
 
-    Invoke-RestMethod -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
-        -Method POST `
-        -Headers @{ Authorization = $B2_AUTH_TOKEN } `
-        -ContentType "application/json" `
-        -Body $RETENTION_BODY `
-        -ErrorAction Stop | Out-Null
+    Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
+        -AuthToken $B2_AUTH_TOKEN -Body $RETENTION_BODY | Out-Null
 
     Write-Host "  [OK] Default retention: $IMMUTABILITY_DAYS days (governance mode)"
 } catch {
@@ -323,12 +330,8 @@ try {
         bucketId     = $B2_BUCKET.bucketId
     } | ConvertTo-Json
 
-    $KEY_RESPONSE = Invoke-RestMethod -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_key" `
-        -Method POST `
-        -Headers @{ Authorization = $B2_AUTH_TOKEN } `
-        -ContentType "application/json" `
-        -Body $KEY_BODY `
-        -ErrorAction Stop
+    $KEY_RESPONSE = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_key" `
+        -AuthToken $B2_AUTH_TOKEN -Body $KEY_BODY
 
     $SCOPED_KEY_ID = $KEY_RESPONSE.applicationKeyId
     $SCOPED_APP_KEY = $KEY_RESPONSE.applicationKey
