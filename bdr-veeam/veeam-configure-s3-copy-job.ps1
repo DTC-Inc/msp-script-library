@@ -6,7 +6,7 @@
 ## finishes, not full history). This is the "pruning" mode.
 ##
 ## $env:CUSTOM_FIELD_S3_BUCKET_NAME  - NinjaOne field name for the S3 bucket/repo name
-## $env:CUSTOM_FIELD_CLOUD_RPO      - NinjaOne org-level field name for cloud RPO retention days (default: 30)
+## $env:CUSTOM_FIELD_CLOUD_RETENTION      - NinjaOne org-level field name for cloud backup retention days (versions to keep) (default: 30)
 ## $env:DESCRIPTION                  - Ticket # or initials for audit trail
 ## $env:RMM                          - Set to 1 when running from RMM platform
 ## $env:RMM_SCRIPT_PATH              - Script path provided by RMM (used for log location)
@@ -46,11 +46,11 @@ if ($env:RMM -ne "1") {
     }
 }
 
-# Cloud RPO: read from org-level NinjaOne field, default 30
+# Cloud Retention: read from org-level NinjaOne field, default 30
 $RETENTION_DAYS = 30
-if ($env:CUSTOM_FIELD_CLOUD_RPO) {
+if ($env:CUSTOM_FIELD_CLOUD_RETENTION) {
     try {
-        $RPO_VALUE = Ninja-Property-Get $env:CUSTOM_FIELD_CLOUD_RPO 2>$null
+        $RPO_VALUE = Ninja-Property-Get $env:CUSTOM_FIELD_CLOUD_RETENTION 2>$null
         if ($RPO_VALUE) { $RETENTION_DAYS = [int]$RPO_VALUE }
     } catch { }
 }
