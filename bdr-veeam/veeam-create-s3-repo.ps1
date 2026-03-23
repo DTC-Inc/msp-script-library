@@ -489,34 +489,19 @@ try {
     $VEEAM_FOLDER = New-VBRAmazonS3Folder -Name $BUCKET_SHORT_ID -Connection $VEEAM_CONNECTION -Bucket $VEEAM_BUCKET
     Write-Host "  [OK] Folder created: $BUCKET_SHORT_ID"
 
-    # Detect Veeam version for the EnableBucketAutoProvision parameter
-    $NEEDS_AUTOPROVISION = $false
-    $DLL_PATHS = @(
-        'C:\Program Files\Veeam\Backup and Replication\Backup\Packages\VeeamDeploymentDll.dll',
-        'C:\Program Files\Veeam\Backup and Replication\Backup\VeeamDeploymentDll.dll',
-        'C:\Program Files\Veeam\Backup and Replication\Console\VeeamDeploymentDll.dll'
-    )
-    foreach ($DLL in $DLL_PATHS) {
-        if (Test-Path $DLL) {
-            $VEEAM_VERSION = [version](Get-Item $DLL).VersionInfo.ProductVersion
-            $NEEDS_AUTOPROVISION = $VEEAM_VERSION -ge [version]"12.3.1.1139"
-            Write-Host "  Veeam version: $VEEAM_VERSION (AutoProvision param: $NEEDS_AUTOPROVISION)"
-            break
-        }
-    }
-
     # Create the repository (name = bucket name)
-    # Veeam manages immutability per-object, not bucket-level retention
+    # -Confirm:$false suppresses ShouldProcess prompts
+    # -EnableBucketAutoProvision:$false prevents hang on S3-compatible endpoints
+    #   (default changed to $true in Veeam 12.3.1, causes hang on non-AWS S3)
     $REPO_PARAMS = @{
-        AmazonS3Folder          = $VEEAM_FOLDER
-        Connection              = $VEEAM_CONNECTION
-        Name                    = $BUCKET_NAME
-        EnableBackupImmutability = $true
-        ImmutabilityPeriod      = $IMMUTABILITY_DAYS
-        Description             = "$env:DESCRIPTION $BUCKET_NAME"
-    }
-    if ($NEEDS_AUTOPROVISION) {
-        $REPO_PARAMS['EnableBucketAutoProvision'] = $false
+        AmazonS3Folder              = $VEEAM_FOLDER
+        Connection                  = $VEEAM_CONNECTION
+        Name                        = $BUCKET_NAME
+        EnableBackupImmutability     = $true
+        ImmutabilityPeriod          = $IMMUTABILITY_DAYS
+        EnableBucketAutoProvision   = $false
+        Description                 = "$env:DESCRIPTION $BUCKET_NAME"
+        Confirm                     = $false
     }
 
     $VEEAM_REPO = Add-VBRAmazonS3CompatibleRepository @REPO_PARAMS
