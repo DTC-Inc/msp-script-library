@@ -284,6 +284,22 @@ if ($EXISTING_COPY_JOB) {
 
     $COPY_JOB = $EXISTING_COPY_JOB
 
+    # Rename to match our naming pattern if needed
+    $REPO_SHORT = $S3_REPO.Name
+    if ("S3 Copy - $REPO_SHORT".Length -gt 50) {
+        $REPO_SHORT = $REPO_SHORT.Substring(0, 50 - 10)
+    }
+    $EXPECTED_NAME = "S3 Copy - $REPO_SHORT"
+    if ($COPY_JOB.Name -ne $EXPECTED_NAME) {
+        try {
+            Write-Host "  Renaming '$($COPY_JOB.Name)' -> '$EXPECTED_NAME'..."
+            Set-VBRBackupCopyJob -Job $COPY_JOB -Name $EXPECTED_NAME
+            Write-Host "  [OK] Renamed."
+        } catch {
+            Write-Warning "  Failed to rename: $_"
+        }
+    }
+
 } else {
     # ============================================================
     # CREATE NEW COPY JOB
