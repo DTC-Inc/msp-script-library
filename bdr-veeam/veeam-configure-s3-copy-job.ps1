@@ -343,9 +343,32 @@ if ($EXISTING_COPY_JOB) {
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
 
-        # Step 2: Enable encryption using the same key as source backup jobs
+        # Step 2: Set schedule with backup window
+        # Mon-Fri: 10 PM - 5 AM, Sat-Sun: all day
         try {
-            Write-Host "  Step 2: Configuring encryption..."
+            Write-Host "  Step 2: Setting schedule with backup window..."
+
+            # Build window: VBRBackupWindowOptions for the periodically schedule
+            # This restricts WHEN the periodic job is allowed to run
+            $WEEKNIGHT_WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
+            $WEEKEND_WINDOW = New-VBRBackupWindowOptions -FromDay Saturday -FromHour 0 -ToDay Sunday -ToHour 23
+
+            # Create periodically options: check every hour, restricted by window
+            $PERIOD_OPTS = New-VBRPeriodicallyOptions -PeriodicallyKind Hours -FullPeriod 1 -PeriodicallySchedule $WEEKNIGHT_WINDOW
+
+            # Create schedule options with termination window
+            $SCHEDULE = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $PERIOD_OPTS
+
+            Set-VBRBackupCopyJob -Job $COPY_JOB -ScheduleOptions $SCHEDULE
+            Write-Host "  [OK] Schedule: Mon-Fri 10 PM - 5 AM, Sat-Sun all day."
+        } catch {
+            Write-Warning "  Failed to set schedule: $_"
+            Write-Host "  Configure the schedule manually in the Veeam console."
+        }
+
+        # Step 3: Enable encryption using the same key as source backup jobs
+        try {
+            Write-Host "  Step 3: Configuring encryption..."
             # Find encryption key from the first source backup job that has one
             $ENCRYPTION_KEY = $null
             foreach ($SJ in $SOURCE_JOBS) {
