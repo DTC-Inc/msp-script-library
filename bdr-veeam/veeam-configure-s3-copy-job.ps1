@@ -321,7 +321,7 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  Job name:    $COPY_JOB_NAME"
     Write-Host "  Target repo: $($S3_REPO.Name)"
     Write-Host "  Source jobs:  $($SOURCE_JOBS.Count)"
-    Write-Host "  Mode:        Immediate (copies latest restore point)"
+    Write-Host "  Mode:        Immediate"
     Write-Host "  Window:      Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
     Write-Host "  Retention:   $RETENTION_DAYS days"
     Write-Host ""
@@ -330,14 +330,14 @@ if ($EXISTING_COPY_JOB) {
         $ConfirmPreference = 'None'
 
         # Step 1: Create the job WITHOUT backup window (window must be applied after)
-        Write-Host "  Step 1: Creating copy job..."
+        Write-Host "  Step 1: Creating copy job (Immediate mode)..."
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
             -BackupJob $SOURCE_JOBS `
             -TargetRepository $S3_REPO `
             -DirectOperation `
-            -Mode Periodic `
+            -Mode Immediate `
             -RetentionType RestoreDays `
             -RetentionNumber $RETENTION_DAYS
 
@@ -345,8 +345,11 @@ if ($EXISTING_COPY_JOB) {
 
         # Step 2: Apply backup window (Mon-Fri 10 PM - 5 AM, Sat-Sun all day)
         try {
-            Write-Host "  Step 2: Applying backup window..."
-            Set-VBRBackupCopyJob -Job $COPY_JOB -Anytime:$false
+            Write-Host "  Step 2: Disabling anytime mode..."
+            Set-VBRBackupCopyJob -Job $COPY_JOB -AnyTime:$false
+            Write-Host "  [OK] Anytime disabled."
+
+            Write-Host "  Step 3: Applying backup window..."
             $WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
             Set-VBRBackupCopyJob -Job $COPY_JOB -BackupWindowOptions $WINDOW
             Write-Host "  [OK] Backup window applied."
@@ -355,7 +358,7 @@ if ($EXISTING_COPY_JOB) {
             Write-Host "  Set the backup window manually in the Veeam console."
         }
 
-        # Step 3: Enable the job (created disabled by default)
+        # Step 4: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
