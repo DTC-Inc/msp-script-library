@@ -4,6 +4,7 @@
 ## $env:CUSTOM_FIELD_S3_ORPHANS_FOUND - Integer field: 1 if orphaned backups found, 0 if not
 ## $env:CUSTOM_FIELD_S3_INVENTORY    - WYSIWYG field: HTML table of all S3 repos
 ## $env:CUSTOM_FIELD_S3_ORPHANS      - WYSIWYG field: HTML table of orphaned backup data
+## $env:ORPHAN_DAYS_THRESHOLD        - Days since last backup to consider orphaned (default: 30)
 ## $env:DESCRIPTION                  - Ticket # or initials for audit trail
 ## $env:RMM                          - Set to 1 when running from RMM platform
 ## $env:RMM_SCRIPT_PATH              - Script path provided by RMM (used for log location)
@@ -247,61 +248,29 @@ Write-Host "  Enumerating backups and child backups..."
 $ALL_BACKUPS = @()
 try { $ALL_BACKUPS = @(Get-VBRBackup) } catch { Write-Warning "  Get-VBRBackup failed: $_" }
 
-# Build: size per repo, child backup details per repo, set of active linked job source names
+# Orphan threshold: child backups with no new data in this many days are stale
+$ORPHAN_DAYS = 30
+if ($env:ORPHAN_DAYS_THRESHOLD) {
+    try { $ORPHAN_DAYS = [int]$env:ORPHAN_DAYS_THRESHOLD } catch {}
+}
+$ORPHAN_CUTOFF = (Get-Date).AddDays(-$ORPHAN_DAYS)
+Write-Host "  Orphan threshold: $ORPHAN_DAYS days (before $($ORPHAN_CUTOFF.ToString('yyyy-MM-dd')))"
+
+# Build a set of active copy job IDs targeting S3 repos
 $SIZE_BY_REPO_ID = @{}
 $CHILDREN_BY_REPO_ID = @{}
 $S3_REPO_IDS = @{}
 foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     $S3_REPO_IDS[$REPO.Id.ToString()] = $true
 }
-
-# Get linked source job IDs from copy jobs targeting S3 repos
-$ACTIVE_SOURCE_JOB_IDS = @{}
+$ACTIVE_COPY_JOB_IDS = @{}
 foreach ($CJ in $COPY_JOBS) {
     if ($null -ne $CJ.TargetRepository -and $S3_REPO_IDS.ContainsKey($CJ.TargetRepository.Id.ToString())) {
-        # LinkedJobIds contains the source backup job IDs
-        try {
-            if ($CJ.BackupJob) {
-                foreach ($LJ in $CJ.BackupJob) {
-                    $ACTIVE_SOURCE_JOB_IDS[$LJ.Id.ToString()] = $LJ.Name
-                }
-            }
-        } catch { }
+        $ACTIVE_COPY_JOB_IDS[$CJ.Id.ToString()] = $true
     }
 }
-Write-Host "  Active source jobs linked to S3 copy jobs: $($ACTIVE_SOURCE_JOB_IDS.Count)"
 
-# Get source machine names from active backup jobs (servers01, workstations01 etc.)
-$ACTIVE_MACHINE_NAMES = @{}
-foreach ($BACKUP in $ALL_BACKUPS) {
-    $JID = $BACKUP.JobId.ToString()
-    if ($ACTIVE_SOURCE_JOB_IDS.ContainsKey($JID)) {
-        # This backup belongs to an active source job, get its objects (machine names)
-        try {
-            $OBJECTS = $BACKUP.GetObjects()
-            foreach ($OBJ in $OBJECTS) {
-                $MACHINE = $OBJ.Name
-                if ($MACHINE) { $ACTIVE_MACHINE_NAMES[$MACHINE.ToUpper()] = $true }
-            }
-        } catch { }
-        # Also try child backups for machine names
-        try {
-            if ($BACKUP.IsTruePerVmContainer) {
-                $CHILDREN = $BACKUP.FindChildBackups()
-                foreach ($CHILD in $CHILDREN) {
-                    # Child names are like "workstations01 - BUS2", extract machine name
-                    $PARTS = $CHILD.Name -split ' - ', 2
-                    if ($PARTS.Count -ge 2) {
-                        $ACTIVE_MACHINE_NAMES[$PARTS[1].Trim().ToUpper()] = $true
-                    }
-                }
-            }
-        } catch { }
-    }
-}
-Write-Host "  Active machine names from source jobs: $($ACTIVE_MACHINE_NAMES.Count)"
-
-# Now enumerate S3-targeted backups for size + orphan detection
+# Enumerate S3-targeted backups for size + child details
 foreach ($BACKUP in $ALL_BACKUPS) {
     $RID = $BACKUP.RepositoryId.ToString()
     if (-not $S3_REPO_IDS.ContainsKey($RID)) { continue }
@@ -344,6 +313,10 @@ foreach ($BACKUP in $ALL_BACKUPS) {
             $MACHINE_NAME = $Matches[1].Trim()
         }
 
+        # Check if this backup's parent job is an active copy job
+        $PARENT_JOB_ID = $BACKUP.JobId.ToString()
+        $IS_JOB_LINKED = $ACTIVE_COPY_JOB_IDS.ContainsKey($PARENT_JOB_ID)
+
         $CHILDREN_BY_REPO_ID[$RID].Add(@{
             Name         = $BACKUP_DISPLAY_NAME
             MachineName  = $MACHINE_NAME
@@ -351,6 +324,7 @@ foreach ($BACKUP in $ALL_BACKUPS) {
             SizeDisplay  = if ($CHILD_SIZE -gt 0) { Format-SizeBytes -Bytes $CHILD_SIZE } else { "N/A" }
             LastPoint    = $LAST_POINT_TIME
             LastPointStr = if ($LAST_POINT_TIME) { $LAST_POINT_TIME.ToString("yyyy-MM-dd") } else { "N/A" }
+            IsJobLinked  = $IS_JOB_LINKED
         })
     }
 }
@@ -432,16 +406,22 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     }
 
     # --- ORPHAN DETECTION ---
-    # A child backup is orphaned if its machine name is not in any active
-    # source backup job linked to an S3-targeting copy job
+    # Two cases:
+    # 1. Unlinked: backup data in S3 not associated with any active copy job
+    # 2. Stale: last backup older than threshold (machine removed from job)
     if ($CHILDREN_BY_REPO_ID.ContainsKey($REPO_ID)) {
         foreach ($CHILD in $CHILDREN_BY_REPO_ID[$REPO_ID]) {
-            $IS_ORPHAN = $false
-            if ($ACTIVE_MACHINE_NAMES.Count -gt 0) {
-                $IS_ORPHAN = -not $ACTIVE_MACHINE_NAMES.ContainsKey($CHILD.MachineName.ToUpper())
+            $REASON = $null
+
+            if (-not $CHILD.IsJobLinked) {
+                $REASON = "No active job"
+            } elseif ($null -ne $CHILD.LastPoint -and $CHILD.LastPoint -lt $ORPHAN_CUTOFF) {
+                $DAYS_AGO = [int]((Get-Date) - $CHILD.LastPoint).TotalDays
+                $REASON = "Stale ($DAYS_AGO days)"
             }
-            if ($IS_ORPHAN) {
-                $ORPHAN_ROWS.Add(@($CHILD.MachineName, $CHILD.Name, $CHILD.SizeDisplay, $CHILD.LastPointStr, $BUCKET_NAME))
+
+            if ($REASON) {
+                $ORPHAN_ROWS.Add(@($CHILD.MachineName, $CHILD.SizeDisplay, $CHILD.LastPointStr, $REASON, $BUCKET_NAME))
                 $ORPHAN_COUNT++
             }
         }
@@ -476,7 +456,7 @@ if ($REPO_ROWS.Count -gt 0) {
 if ($ORPHAN_COUNT -gt 0) {
     Write-Host "=== Orphaned Backups ==="
     foreach ($ROW in $ORPHAN_ROWS) {
-        Write-Host "  Machine: $($ROW[0]) | Backup: $($ROW[1]) | Size: $($ROW[2]) | Last: $($ROW[3]) | Bucket: $($ROW[4])"
+        Write-Host "  Machine: $($ROW[0]) | Size: $($ROW[1]) | Last: $($ROW[2]) | Reason: $($ROW[3]) | Bucket: $($ROW[4])"
     }
     Write-Host ""
 }
@@ -491,7 +471,7 @@ $HTML_INVENTORY = Build-HtmlTable `
     -EmptyMessage "No S3-compatible object storage repositories found."
 
 $HTML_ORPHANS = Build-HtmlTable `
-    -Headers @("Machine", "Backup Name", "Size", "Last Backup", "Bucket") `
+    -Headers @("Machine", "Size", "Last Backup", "Reason", "Bucket") `
     -Rows $ORPHAN_ROWS `
     -ScanTimestamp $SCAN_TIMESTAMP `
     -EmptyMessage "No orphaned backups detected."

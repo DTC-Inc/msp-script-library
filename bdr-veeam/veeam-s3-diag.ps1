@@ -15,6 +15,9 @@ $MY_MODULE_PATH = "C:\Program Files\Veeam\Backup and Replication\Console\"
 $env:PSModulePath = $env:PSModulePath + "$([System.IO.Path]::PathSeparator)$MY_MODULE_PATH"
 Get-Module -ListAvailable -Name Veeam.Backup.PowerShell | Import-Module -WarningAction SilentlyContinue
 
+$ORPHAN_DAYS = 30
+$ORPHAN_CUTOFF = (Get-Date).AddDays(-$ORPHAN_DAYS)
+
 Write-Host "=========================================="
 Write-Host "1: BUCKET NAME"
 Write-Host "=========================================="
@@ -32,7 +35,7 @@ try {
 } catch { Write-Host "FAILED: $_" }
 
 Write-Host "=========================================="
-Write-Host "2: SIZE (child backup storages)"
+Write-Host "2: SIZE + LAST BACKUP DATE (per child)"
 Write-Host "=========================================="
 try {
     $ALL_BACKUPS = Get-VBRBackup
@@ -68,75 +71,56 @@ try {
 } catch { Write-Host "FAILED: $_" }
 
 Write-Host "=========================================="
-Write-Host "3: ORPHAN DETECTION"
+Write-Host "3: ORPHAN DETECTION (time-based + unlinked)"
+Write-Host "  Threshold: $ORPHAN_DAYS days (before $($ORPHAN_CUTOFF.ToString('yyyy-MM-dd')))"
 Write-Host "=========================================="
 try {
     $COPY_JOBS = Get-VBRBackupCopyJob -ErrorAction Stop
     $ALL_BACKUPS = Get-VBRBackup
-
-    # Get S3 repo IDs
     $S3_REPOS = Get-VBRObjectStorageRepository -ErrorAction Stop
     $S3_IDS = @{}
     foreach ($R in $S3_REPOS) { $S3_IDS[$R.Id.ToString()] = $true }
 
-    # Get active source job IDs from copy jobs
-    $ACTIVE_JOB_IDS = @{}
+    # Active copy job IDs targeting S3
+    $ACTIVE_CJ_IDS = @{}
     foreach ($CJ in $COPY_JOBS) {
         if ($null -ne $CJ.TargetRepository -and $S3_IDS.ContainsKey($CJ.TargetRepository.Id.ToString())) {
-            if ($CJ.BackupJob) {
-                foreach ($LJ in $CJ.BackupJob) {
-                    $ACTIVE_JOB_IDS[$LJ.Id.ToString()] = $LJ.Name
-                    Write-Host "  Active source job: $($LJ.Name) ($($LJ.Id))"
-                }
-            }
+            $ACTIVE_CJ_IDS[$CJ.Id.ToString()] = $CJ.Name
+            Write-Host "  Active copy job: $($CJ.Name) ($($CJ.Id))"
         }
     }
 
-    # Get machine names from active source backups
-    $ACTIVE_MACHINES = @{}
-    foreach ($B in $ALL_BACKUPS) {
-        if ($ACTIVE_JOB_IDS.ContainsKey($B.JobId.ToString())) {
-            Write-Host "  Source backup: $($B.Name)"
-            try {
-                $OBJECTS = $B.GetObjects()
-                Write-Host "    GetObjects count: $($OBJECTS.Count)"
-                foreach ($OBJ in $OBJECTS) {
-                    Write-Host "    Object: $($OBJ.Name)"
-                    if ($OBJ.Name) { $ACTIVE_MACHINES[$OBJ.Name.ToUpper()] = $true }
-                }
-            } catch { Write-Host "    GetObjects failed: $_" }
+    Write-Host ""
 
-            if ($B.IsTruePerVmContainer) {
-                try {
-                    $CHILDREN = $B.FindChildBackups()
-                    foreach ($CHILD in $CHILDREN) {
-                        $PARTS = $CHILD.Name -split ' - ', 2
-                        if ($PARTS.Count -ge 2) {
-                            $MACHINE = $PARTS[1].Trim()
-                            Write-Host "    Child machine: $MACHINE"
-                            $ACTIVE_MACHINES[$MACHINE.ToUpper()] = $true
-                        }
-                    }
-                } catch { }
-            }
-        }
-    }
-
-    Write-Host "`n  Active machines: $($ACTIVE_MACHINES.Keys -join ', ')`n"
-
-    # Check S3 copy children against active machines
     foreach ($B in $ALL_BACKUPS) {
         $RID = $B.RepositoryId.ToString()
         if (-not $S3_IDS.ContainsKey($RID)) { continue }
         if (-not $B.IsTruePerVmContainer) { continue }
 
+        $IS_JOB_LINKED = $ACTIVE_CJ_IDS.ContainsKey($B.JobId.ToString())
+        Write-Host "  Backup: $($B.Name) | JobId: $($B.JobId) | Linked: $IS_JOB_LINKED"
+
         $CHILDREN = $B.FindChildBackups()
         foreach ($CHILD in $CHILDREN) {
+            $STORAGES = $CHILD.GetAllStorages()
+            $LATEST = $STORAGES | Sort-Object CreationTime -Descending | Select-Object -First 1
+            $LATEST_DATE = if ($LATEST) { $LATEST.CreationTime } else { $null }
+            $LATEST_STR = if ($LATEST_DATE) { $LATEST_DATE.ToString("yyyy-MM-dd") } else { "N/A" }
+
             $PARTS = $CHILD.Name -split ' - ', 2
             $MACHINE = if ($PARTS.Count -ge 2) { $PARTS[1].Trim() } else { $CHILD.Name }
-            $IS_ORPHAN = -not $ACTIVE_MACHINES.ContainsKey($MACHINE.ToUpper())
-            $STATUS = if ($IS_ORPHAN) { "ORPHANED" } else { "ACTIVE" }
-            Write-Host "  [$STATUS] $MACHINE ($($CHILD.Name))"
+
+            $REASON = $null
+            if (-not $IS_JOB_LINKED) {
+                $REASON = "No active job"
+            } elseif ($null -ne $LATEST_DATE -and $LATEST_DATE -lt $ORPHAN_CUTOFF) {
+                $DAYS = [int]((Get-Date) - $LATEST_DATE).TotalDays
+                $REASON = "Stale ($DAYS days)"
+            }
+
+            $STATUS = if ($REASON) { "ORPHANED - $REASON" } else { "ACTIVE" }
+            Write-Host "    [$STATUS] $MACHINE | Last: $LATEST_STR"
         }
+        Write-Host ""
     }
 } catch { Write-Host "FAILED: $_" }
