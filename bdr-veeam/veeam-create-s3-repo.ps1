@@ -390,12 +390,19 @@ if (-not $SKIP_B2_CREATION) {
         exit 1
     }
 
+    $SCOPED_KEY_ID_OUT = $SCOPED_KEY_ID
+    $SCOPED_APP_KEY_OUT = $SCOPED_APP_KEY
+
+    # Save to NinjaOne immediately so credentials aren't lost if Veeam fails
+    Write-Host ""
+    Write-Host "Saving B2 credentials to NinjaOne..."
+    Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $BUCKET_NAME
+    Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID_OUT
+    Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY_OUT
+
     # Let the scoped key propagate before Veeam tries to use it
     Write-Host "  Waiting 5 seconds for key propagation..."
     Start-Sleep -Seconds 5
-
-    $SCOPED_KEY_ID_OUT = $SCOPED_KEY_ID
-    $SCOPED_APP_KEY_OUT = $SCOPED_APP_KEY
 } else {
     $SCOPED_KEY_ID_OUT = $SCOPED_KEY_ID
     $SCOPED_APP_KEY_OUT = $SCOPED_APP_KEY
@@ -474,12 +481,6 @@ Write-Host "  Scoped key:   $SCOPED_KEY_ID_OUT"
 Write-Host "  Immutability: $IMMUTABILITY_DAYS days"
 Write-Host ""
 
-# Only write to NinjaOne if we created new B2 resources
-if (-not $SKIP_B2_CREATION) {
-    Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $BUCKET_NAME
-    Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID_OUT
-    Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY_OUT
-}
 
 Write-Host ""
 Write-Host "=== Script complete ==="
