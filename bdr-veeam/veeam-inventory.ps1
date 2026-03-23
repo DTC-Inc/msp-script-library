@@ -4,9 +4,8 @@
 ## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
 ## $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
 ## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
-## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup jobs failed recently
-## $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of failed/warning backup sessions
-## $env:FAILED_BACKUP_HOURS            - Hours to look back for failed sessions (default: 24)
+## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup job's last run failed
+## $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of jobs whose last run failed/warned
 ## $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
 ## $env:DESCRIPTION                    - Ticket # or initials for audit trail
 ## $env:RMM                            - Set to 1 when running from RMM platform
@@ -456,23 +455,27 @@ foreach ($ENTRY in $ALL_ORPHAN_ENTRIES) {
 # ------------------------------------------------------------
 # Failed backup detection
 # ------------------------------------------------------------
-$FAILED_HOURS = 24
-if ($env:FAILED_BACKUP_HOURS) {
-    try { $FAILED_HOURS = [int]$env:FAILED_BACKUP_HOURS } catch {}
-}
-$FAILED_CUTOFF = (Get-Date).AddHours(-$FAILED_HOURS)
-Write-Host "  Checking for failed backup sessions in the last $FAILED_HOURS hours..."
+Write-Host "  Checking for jobs whose last run failed..."
 
 $FAILED_ROWS = [System.Collections.Generic.List[string[]]]::new()
 $FAILED_COUNT = 0
 
 try {
-    $RECENT_SESSIONS = Get-VBRBackupSession -ErrorAction Stop | Where-Object {
-        $_.EndTime -gt $FAILED_CUTOFF -and $_.IsCompleted -and ($_.Result -eq "Failed" -or $_.Result -eq "Warning")
+    # Group all completed sessions by JobId, keep only the most recent per job
+    $ALL_SESSIONS = Get-VBRBackupSession -ErrorAction Stop | Where-Object { $_.IsCompleted }
+    $LATEST_BY_JOB = @{}
+    foreach ($SESS in $ALL_SESSIONS) {
+        $JID = $SESS.JobId.ToString()
+        if (-not $LATEST_BY_JOB.ContainsKey($JID) -or $SESS.EndTime -gt $LATEST_BY_JOB[$JID].EndTime) {
+            $LATEST_BY_JOB[$JID] = $SESS
+        }
     }
 
-    foreach ($SESS in $RECENT_SESSIONS) {
-        # Extract job name (strip child worker suffixes for cleaner display)
+    # Only flag jobs whose MOST RECENT session is failed/warning
+    # (if the job re-ran and succeeded, the failure is resolved)
+    foreach ($SESS in $LATEST_BY_JOB.Values) {
+        if ($SESS.Result -ne "Failed" -and $SESS.Result -ne "Warning") { continue }
+
         $JOB_NAME = $SESS.OrigJobName
         if (-not $JOB_NAME) { $JOB_NAME = $SESS.JobName }
 
@@ -483,7 +486,7 @@ try {
         $FAILED_ROWS.Add(@($JOB_NAME, $RESULT_STR, $END_TIME_STR, $DURATION_STR))
         $FAILED_COUNT++
     }
-    Write-Host "  [OK] Found $FAILED_COUNT failed/warning sessions."
+    Write-Host "  [OK] Found $FAILED_COUNT jobs with failed/warning last run."
 } catch {
     Write-Warning "  Get-VBRBackupSession failed: $_"
 }
@@ -503,7 +506,7 @@ Write-Host "  Last used S3 bucket: $LAST_USED_BUCKET"
 Write-Host "  Last used S3 size:   $LAST_USED_SIZE"
 Write-Host "  S3 repos found:      $($REPO_ROWS.Count)"
 Write-Host "  Orphaned backups:    $ORPHAN_COUNT"
-Write-Host "  Failed backups:      $FAILED_COUNT (last $FAILED_HOURS hrs)"
+Write-Host "  Failed backups:      $FAILED_COUNT"
 Write-Host ""
 
 if ($REPO_ROWS.Count -gt 0) {
@@ -549,7 +552,7 @@ $HTML_FAILED = Build-HtmlTable `
     -Headers @("Job Name", "Result", "Ended", "Duration") `
     -Rows $FAILED_ROWS `
     -ScanTimestamp $SCAN_TIMESTAMP `
-    -EmptyMessage "No failed backup sessions in the last $FAILED_HOURS hours."
+    -EmptyMessage "All backup jobs completed successfully on their last run."
 
 # ------------------------------------------------------------
 # Write to NinjaOne custom fields
