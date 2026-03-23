@@ -256,37 +256,61 @@ if ($env:ORPHAN_DAYS_THRESHOLD) {
 $ORPHAN_CUTOFF = (Get-Date).AddDays(-$ORPHAN_DAYS)
 Write-Host "  Orphan threshold: $ORPHAN_DAYS days (before $($ORPHAN_CUTOFF.ToString('yyyy-MM-dd')))"
 
-# Build a set of active copy job IDs targeting S3 repos
+# S3 repo ID lookup for bucket name/size calculations
 $SIZE_BY_REPO_ID = @{}
-$CHILDREN_BY_REPO_ID = @{}
+$S3_CHILDREN_BY_REPO_ID = @{}
 $S3_REPO_IDS = @{}
 foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     $S3_REPO_IDS[$REPO.Id.ToString()] = $true
 }
-$ACTIVE_COPY_JOB_IDS = @{}
-foreach ($CJ in $COPY_JOBS) {
-    if ($null -ne $CJ.TargetRepository -and $S3_REPO_IDS.ContainsKey($CJ.TargetRepository.Id.ToString())) {
-        $ACTIVE_COPY_JOB_IDS[$CJ.Id.ToString()] = $true
-    }
-}
 
-# Enumerate S3-targeted backups for size + child details
+# Build set of all active job IDs (any job that currently exists in Veeam)
+$ACTIVE_JOB_IDS = @{}
+try {
+    $ALL_JOBS = @(Get-VBRJob -WarningAction SilentlyContinue)
+    foreach ($J in $ALL_JOBS) { $ACTIVE_JOB_IDS[$J.Id.ToString()] = $true }
+} catch { }
+foreach ($CJ in $COPY_JOBS) { $ACTIVE_JOB_IDS[$CJ.Id.ToString()] = $true }
+try {
+    $COMPUTER_JOBS = @(Get-VBRComputerBackupJob -ErrorAction SilentlyContinue)
+    foreach ($J in $COMPUTER_JOBS) { $ACTIVE_JOB_IDS[$J.Id.ToString()] = $true }
+} catch { }
+Write-Host "  Active jobs found: $($ACTIVE_JOB_IDS.Count)"
+
+# Get all repo names for display
+$REPO_NAMES = @{}
+try {
+    $ALL_REPOS = @(Get-VBRBackupRepository)
+    foreach ($R in $ALL_REPOS) { $REPO_NAMES[$R.Id.ToString()] = $R.Name }
+} catch { }
+foreach ($REPO in $OBJECT_STORAGE_REPOS) { $REPO_NAMES[$REPO.Id.ToString()] = $REPO.Name }
+
+# Enumerate ALL backups for orphan detection + S3 size calculation
+$ALL_ORPHAN_ENTRIES = [System.Collections.Generic.List[hashtable]]::new()
+
 foreach ($BACKUP in $ALL_BACKUPS) {
     $RID = $BACKUP.RepositoryId.ToString()
-    if (-not $S3_REPO_IDS.ContainsKey($RID)) { continue }
+    $IS_S3 = $S3_REPO_IDS.ContainsKey($RID)
+    $REPO_DISPLAY = if ($REPO_NAMES.ContainsKey($RID)) { $REPO_NAMES[$RID] } else { $RID.Substring(0, 8) }
 
-    if (-not $SIZE_BY_REPO_ID.ContainsKey($RID)) { $SIZE_BY_REPO_ID[$RID] = [long]0 }
-    if (-not $CHILDREN_BY_REPO_ID.ContainsKey($RID)) { $CHILDREN_BY_REPO_ID[$RID] = [System.Collections.Generic.List[hashtable]]::new() }
+    if ($IS_S3) {
+        if (-not $SIZE_BY_REPO_ID.ContainsKey($RID)) { $SIZE_BY_REPO_ID[$RID] = [long]0 }
+        if (-not $S3_CHILDREN_BY_REPO_ID.ContainsKey($RID)) { $S3_CHILDREN_BY_REPO_ID[$RID] = [System.Collections.Generic.List[hashtable]]::new() }
+    }
 
-    $BACKUPS_TO_CHECK = @($BACKUP)
+    # Check if this backup's job still exists
+    $JOB_EXISTS = $ACTIVE_JOB_IDS.ContainsKey($BACKUP.JobId.ToString())
+
+    # Expand per-VM containers into child backups, or use the backup itself
+    $ENTRIES_TO_CHECK = @($BACKUP)
     try {
         if ($BACKUP.IsTruePerVmContainer) {
             $CHILDREN = $BACKUP.FindChildBackups()
-            if ($CHILDREN) { $BACKUPS_TO_CHECK = @($CHILDREN) }
+            if ($CHILDREN) { $ENTRIES_TO_CHECK = @($CHILDREN) }
         }
     } catch { }
 
-    foreach ($B in $BACKUPS_TO_CHECK) {
+    foreach ($B in $ENTRIES_TO_CHECK) {
         $CHILD_SIZE = [long]0
         $LAST_POINT_TIME = $null
         try {
@@ -297,35 +321,49 @@ foreach ($BACKUP in $ALL_BACKUPS) {
                 if ($ST_SIZE -eq 0) { try { if ($ST.BackupSize -gt 0) { $ST_SIZE = [long]$ST.BackupSize } } catch {} }
                 $CHILD_SIZE += $ST_SIZE
             }
-            # Get most recent storage creation time as proxy for last restore point
             $LATEST_STORAGE = $STORAGES | Sort-Object CreationTime -Descending | Select-Object -First 1
             if ($LATEST_STORAGE) { $LAST_POINT_TIME = $LATEST_STORAGE.CreationTime }
         } catch { }
 
-        $SIZE_BY_REPO_ID[$RID] += $CHILD_SIZE
+        # S3 size tracking
+        if ($IS_S3) { $SIZE_BY_REPO_ID[$RID] += $CHILD_SIZE }
 
-        # Extract machine name from child backup name (e.g. "S3 Copy 1686654096\workstations01 - BUS2")
-        $MACHINE_NAME = "Unknown"
-        $BACKUP_DISPLAY_NAME = $B.Name
-        if ($BACKUP_DISPLAY_NAME -match '\\(.+?) - (.+)$') {
+        # Extract machine name
+        $MACHINE_NAME = $B.Name
+        if ($MACHINE_NAME -match '\\(.+?) - (.+)$') {
             $MACHINE_NAME = $Matches[2].Trim()
-        } elseif ($BACKUP_DISPLAY_NAME -match ' - (.+)$') {
+        } elseif ($MACHINE_NAME -match ' - (.+)$') {
             $MACHINE_NAME = $Matches[1].Trim()
         }
 
-        # Check if this backup's parent job is an active copy job
-        $PARENT_JOB_ID = $BACKUP.JobId.ToString()
-        $IS_JOB_LINKED = $ACTIVE_COPY_JOB_IDS.ContainsKey($PARENT_JOB_ID)
-
-        $CHILDREN_BY_REPO_ID[$RID].Add(@{
-            Name         = $BACKUP_DISPLAY_NAME
+        $ENTRY = @{
+            Name         = $B.Name
             MachineName  = $MACHINE_NAME
             Size         = $CHILD_SIZE
             SizeDisplay  = if ($CHILD_SIZE -gt 0) { Format-SizeBytes -Bytes $CHILD_SIZE } else { "N/A" }
             LastPoint    = $LAST_POINT_TIME
             LastPointStr = if ($LAST_POINT_TIME) { $LAST_POINT_TIME.ToString("yyyy-MM-dd") } else { "N/A" }
-            IsJobLinked  = $IS_JOB_LINKED
-        })
+            JobExists    = $JOB_EXISTS
+            RepoName     = $REPO_DISPLAY
+            IsS3         = $IS_S3
+        }
+
+        # Track S3 children for last-used bucket detection
+        if ($IS_S3) { $S3_CHILDREN_BY_REPO_ID[$RID].Add($ENTRY) }
+
+        # Orphan detection: no active job OR stale (applies to ALL repos)
+        $REASON = $null
+        if (-not $JOB_EXISTS) {
+            $REASON = "No active job"
+        } elseif ($null -ne $LAST_POINT_TIME -and $LAST_POINT_TIME -lt $ORPHAN_CUTOFF) {
+            $DAYS_AGO = [int]((Get-Date) - $LAST_POINT_TIME).TotalDays
+            $REASON = "Stale ($DAYS_AGO days)"
+        }
+
+        if ($REASON) {
+            $ENTRY.Reason = $REASON
+            $ALL_ORPHAN_ENTRIES.Add($ENTRY)
+        }
     }
 }
 
@@ -336,8 +374,6 @@ Write-Host ""
 Write-Host "Processing repositories..."
 
 $REPO_ROWS = [System.Collections.Generic.List[string[]]]::new()
-$ORPHAN_ROWS = [System.Collections.Generic.List[string[]]]::new()
-$ORPHAN_COUNT = 0
 
 $LAST_USED_BUCKET = "N/A"
 $LAST_USED_SIZE = "N/A"
@@ -389,10 +425,9 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     $REPO_ROWS.Add(@($BUCKET_NAME, $REPO.Name, $REPO_TYPE, $USED_SPACE_DISPLAY))
 
     # --- LAST USED tracking ---
-    # Find the most recent restore point time across all children in this repo
     $REPO_LATEST_TIME = [datetime]::MinValue
-    if ($CHILDREN_BY_REPO_ID.ContainsKey($REPO_ID)) {
-        foreach ($CHILD in $CHILDREN_BY_REPO_ID[$REPO_ID]) {
+    if ($S3_CHILDREN_BY_REPO_ID.ContainsKey($REPO_ID)) {
+        foreach ($CHILD in $S3_CHILDREN_BY_REPO_ID[$REPO_ID]) {
             if ($null -ne $CHILD.LastPoint -and $CHILD.LastPoint -gt $REPO_LATEST_TIME) {
                 $REPO_LATEST_TIME = $CHILD.LastPoint
             }
@@ -404,28 +439,13 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
         $LAST_USED_SIZE = $USED_SPACE_DISPLAY
         $LAST_USED_SIZE_BYTES = $USED_SPACE_BYTES
     }
+}
 
-    # --- ORPHAN DETECTION ---
-    # Two cases:
-    # 1. Unlinked: backup data in S3 not associated with any active copy job
-    # 2. Stale: last backup older than threshold (machine removed from job)
-    if ($CHILDREN_BY_REPO_ID.ContainsKey($REPO_ID)) {
-        foreach ($CHILD in $CHILDREN_BY_REPO_ID[$REPO_ID]) {
-            $REASON = $null
-
-            if (-not $CHILD.IsJobLinked) {
-                $REASON = "No active job"
-            } elseif ($null -ne $CHILD.LastPoint -and $CHILD.LastPoint -lt $ORPHAN_CUTOFF) {
-                $DAYS_AGO = [int]((Get-Date) - $CHILD.LastPoint).TotalDays
-                $REASON = "Stale ($DAYS_AGO days)"
-            }
-
-            if ($REASON) {
-                $ORPHAN_ROWS.Add(@($CHILD.MachineName, $CHILD.SizeDisplay, $CHILD.LastPointStr, $REASON, $BUCKET_NAME))
-                $ORPHAN_COUNT++
-            }
-        }
-    }
+# --- ORPHAN ROWS (all repos) ---
+$ORPHAN_ROWS = [System.Collections.Generic.List[string[]]]::new()
+$ORPHAN_COUNT = $ALL_ORPHAN_ENTRIES.Count
+foreach ($ENTRY in $ALL_ORPHAN_ENTRIES) {
+    $ORPHAN_ROWS.Add(@($ENTRY.MachineName, $ENTRY.SizeDisplay, $ENTRY.LastPointStr, $ENTRY.Reason, $ENTRY.RepoName))
 }
 
 # If only one S3 repo exists and last-used tracking didn't match via time, use it directly
@@ -456,7 +476,7 @@ if ($REPO_ROWS.Count -gt 0) {
 if ($ORPHAN_COUNT -gt 0) {
     Write-Host "=== Orphaned Backups ==="
     foreach ($ROW in $ORPHAN_ROWS) {
-        Write-Host "  Machine: $($ROW[0]) | Size: $($ROW[1]) | Last: $($ROW[2]) | Reason: $($ROW[3]) | Bucket: $($ROW[4])"
+        Write-Host "  Machine: $($ROW[0]) | Size: $($ROW[1]) | Last: $($ROW[2]) | Reason: $($ROW[3]) | Repo: $($ROW[4])"
     }
     Write-Host ""
 }
@@ -471,7 +491,7 @@ $HTML_INVENTORY = Build-HtmlTable `
     -EmptyMessage "No S3-compatible object storage repositories found."
 
 $HTML_ORPHANS = Build-HtmlTable `
-    -Headers @("Machine", "Size", "Last Backup", "Reason", "Bucket") `
+    -Headers @("Machine", "Size", "Last Backup", "Reason", "Repository") `
     -Rows $ORPHAN_ROWS `
     -ScanTimestamp $SCAN_TIMESTAMP `
     -EmptyMessage "No orphaned backups detected."

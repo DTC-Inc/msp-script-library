@@ -1,4 +1,4 @@
-# Diagnostic script - test all data extraction paths for S3 inventory
+# Diagnostic script - test all data extraction paths for S3 inventory + orphan detection
 # Run on a BDR server in PS7
 
 if ($PSVersionTable.PSVersion.Major -lt 7) {
@@ -35,83 +35,85 @@ try {
 } catch { Write-Host "FAILED: $_" }
 
 Write-Host "=========================================="
-Write-Host "2: SIZE + LAST BACKUP DATE (per child)"
+Write-Host "2: ALL ACTIVE JOBS"
 Write-Host "=========================================="
+$ACTIVE_JOB_IDS = @{}
 try {
-    $ALL_BACKUPS = Get-VBRBackup
-    foreach ($B in $ALL_BACKUPS) {
-        Write-Host "--- $($B.Name) ---"
-        Write-Host "  Type: $($B.TypeToString) | RepoId: $($B.RepositoryId) | PerVm: $($B.IsTruePerVmContainer)"
-
-        if ($B.IsTruePerVmContainer) {
-            $CHILDREN = $B.FindChildBackups()
-            Write-Host "  Children: $($CHILDREN.Count)"
-            $TOTAL = [long]0
-            foreach ($CHILD in $CHILDREN) {
-                $STORAGES = $CHILD.GetAllStorages()
-                $CHILD_SIZE = [long]0
-                foreach ($ST in $STORAGES) {
-                    try { if ($ST.Stats.BackupSize -gt 0) { $CHILD_SIZE += [long]$ST.Stats.BackupSize } } catch {}
-                }
-                $LATEST = $STORAGES | Sort-Object CreationTime -Descending | Select-Object -First 1
-                $LATEST_DATE = if ($LATEST) { $LATEST.CreationTime.ToString("yyyy-MM-dd") } else { "N/A" }
-
-                if ($CHILD_SIZE -ge 1GB) { $DISPLAY = "{0:N2} GB" -f ($CHILD_SIZE / 1GB) }
-                elseif ($CHILD_SIZE -ge 1MB) { $DISPLAY = "{0:N2} MB" -f ($CHILD_SIZE / 1MB) }
-                else { $DISPLAY = "$CHILD_SIZE B" }
-
-                Write-Host "    $($CHILD.Name) | $($STORAGES.Count) storages | $DISPLAY | Last: $LATEST_DATE"
-                $TOTAL += $CHILD_SIZE
-            }
-            if ($TOTAL -ge 1TB) { Write-Host "  TOTAL: $("{0:N2} TB" -f ($TOTAL / 1TB))" }
-            elseif ($TOTAL -ge 1GB) { Write-Host "  TOTAL: $("{0:N2} GB" -f ($TOTAL / 1GB))" }
-        }
-        Write-Host ""
+    $ALL_JOBS = @(Get-VBRJob -WarningAction SilentlyContinue)
+    Write-Host "Get-VBRJob: $($ALL_JOBS.Count)"
+    foreach ($J in $ALL_JOBS) {
+        $ACTIVE_JOB_IDS[$J.Id.ToString()] = $true
+        Write-Host "  $($J.Name) ($($J.JobType)) - $($J.Id)"
     }
-} catch { Write-Host "FAILED: $_" }
+} catch { Write-Host "Get-VBRJob FAILED: $_" }
+try {
+    $COPY_JOBS2 = @(Get-VBRBackupCopyJob -ErrorAction Stop)
+    Write-Host "Get-VBRBackupCopyJob: $($COPY_JOBS2.Count)"
+    foreach ($CJ in $COPY_JOBS2) {
+        $ACTIVE_JOB_IDS[$CJ.Id.ToString()] = $true
+        Write-Host "  $($CJ.Name) - $($CJ.Id)"
+    }
+} catch { Write-Host "Get-VBRBackupCopyJob FAILED: $_" }
+try {
+    $COMPUTER_JOBS = @(Get-VBRComputerBackupJob -ErrorAction SilentlyContinue)
+    Write-Host "Get-VBRComputerBackupJob: $($COMPUTER_JOBS.Count)"
+    foreach ($J in $COMPUTER_JOBS) {
+        $ACTIVE_JOB_IDS[$J.Id.ToString()] = $true
+        Write-Host "  $($J.Name) - $($J.Id)"
+    }
+} catch { Write-Host "Get-VBRComputerBackupJob FAILED: $_" }
+Write-Host "Total active job IDs: $($ACTIVE_JOB_IDS.Count)`n"
 
 Write-Host "=========================================="
-Write-Host "3: ORPHAN DETECTION (time-based + unlinked)"
+Write-Host "3: ORPHAN DETECTION (all repos, time + unlinked)"
 Write-Host "  Threshold: $ORPHAN_DAYS days (before $($ORPHAN_CUTOFF.ToString('yyyy-MM-dd')))"
 Write-Host "=========================================="
+
+# Repo name lookup
+$REPO_NAMES = @{}
 try {
-    $COPY_JOBS = Get-VBRBackupCopyJob -ErrorAction Stop
-    $ALL_BACKUPS = Get-VBRBackup
+    $ALL_REPOS = @(Get-VBRBackupRepository)
+    foreach ($R in $ALL_REPOS) { $REPO_NAMES[$R.Id.ToString()] = $R.Name }
+} catch { }
+try {
     $S3_REPOS = Get-VBRObjectStorageRepository -ErrorAction Stop
-    $S3_IDS = @{}
-    foreach ($R in $S3_REPOS) { $S3_IDS[$R.Id.ToString()] = $true }
+    foreach ($R in $S3_REPOS) { $REPO_NAMES[$R.Id.ToString()] = $R.Name }
+} catch { }
 
-    # Active copy job IDs targeting S3
-    $ACTIVE_CJ_IDS = @{}
-    foreach ($CJ in $COPY_JOBS) {
-        if ($null -ne $CJ.TargetRepository -and $S3_IDS.ContainsKey($CJ.TargetRepository.Id.ToString())) {
-            $ACTIVE_CJ_IDS[$CJ.Id.ToString()] = $CJ.Name
-            Write-Host "  Active copy job: $($CJ.Name) ($($CJ.Id))"
-        }
-    }
-
-    Write-Host ""
+try {
+    $ALL_BACKUPS = Get-VBRBackup
+    Write-Host "Total backups: $($ALL_BACKUPS.Count)`n"
 
     foreach ($B in $ALL_BACKUPS) {
         $RID = $B.RepositoryId.ToString()
-        if (-not $S3_IDS.ContainsKey($RID)) { continue }
-        if (-not $B.IsTruePerVmContainer) { continue }
+        $REPO_NAME = if ($REPO_NAMES.ContainsKey($RID)) { $REPO_NAMES[$RID] } else { $RID.Substring(0, 8) }
+        $JOB_EXISTS = $ACTIVE_JOB_IDS.ContainsKey($B.JobId.ToString())
 
-        $IS_JOB_LINKED = $ACTIVE_CJ_IDS.ContainsKey($B.JobId.ToString())
-        Write-Host "  Backup: $($B.Name) | JobId: $($B.JobId) | Linked: $IS_JOB_LINKED"
+        Write-Host "--- $($B.Name) ---"
+        Write-Host "  Type: $($B.TypeToString) | Repo: $REPO_NAME | JobId: $($B.JobId) | JobExists: $JOB_EXISTS | PerVm: $($B.IsTruePerVmContainer)"
 
-        $CHILDREN = $B.FindChildBackups()
-        foreach ($CHILD in $CHILDREN) {
-            $STORAGES = $CHILD.GetAllStorages()
+        $ENTRIES = @($B)
+        if ($B.IsTruePerVmContainer) {
+            try {
+                $CHILDREN = $B.FindChildBackups()
+                if ($CHILDREN) { $ENTRIES = @($CHILDREN) }
+                Write-Host "  Children: $($CHILDREN.Count)"
+            } catch { }
+        }
+
+        foreach ($E in $ENTRIES) {
+            $STORAGES = @()
+            try { $STORAGES = @($E.GetAllStorages()) } catch { }
             $LATEST = $STORAGES | Sort-Object CreationTime -Descending | Select-Object -First 1
             $LATEST_DATE = if ($LATEST) { $LATEST.CreationTime } else { $null }
             $LATEST_STR = if ($LATEST_DATE) { $LATEST_DATE.ToString("yyyy-MM-dd") } else { "N/A" }
 
-            $PARTS = $CHILD.Name -split ' - ', 2
-            $MACHINE = if ($PARTS.Count -ge 2) { $PARTS[1].Trim() } else { $CHILD.Name }
+            $MACHINE = $E.Name
+            if ($MACHINE -match '\\(.+?) - (.+)$') { $MACHINE = $Matches[2].Trim() }
+            elseif ($MACHINE -match ' - (.+)$') { $MACHINE = $Matches[1].Trim() }
 
             $REASON = $null
-            if (-not $IS_JOB_LINKED) {
+            if (-not $JOB_EXISTS) {
                 $REASON = "No active job"
             } elseif ($null -ne $LATEST_DATE -and $LATEST_DATE -lt $ORPHAN_CUTOFF) {
                 $DAYS = [int]((Get-Date) - $LATEST_DATE).TotalDays
@@ -119,7 +121,8 @@ try {
             }
 
             $STATUS = if ($REASON) { "ORPHANED - $REASON" } else { "ACTIVE" }
-            Write-Host "    [$STATUS] $MACHINE | Last: $LATEST_STR"
+            $SIZE_STR = if ($STORAGES.Count -gt 0) { "$($STORAGES.Count) storages" } else { "0 storages" }
+            Write-Host "    [$STATUS] $MACHINE | $SIZE_STR | Last: $LATEST_STR | Repo: $REPO_NAME"
         }
         Write-Host ""
     }
