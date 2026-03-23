@@ -291,22 +291,25 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  Target repo: $($S3_REPO.Name)"
     Write-Host "  Source jobs:  $($SOURCE_JOBS.Count)"
     Write-Host "  Mode:        Immediate (copies latest restore point)"
-    Write-Host "  Window:      Mon-Sat 10 PM - 5 AM, Sunday all day"
+    Write-Host "  Window:      Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
     Write-Host "  Retention:   $RETENTION_DAYS days"
     Write-Host ""
 
     try {
-        # Build backup window: Mon-Sat 10 PM - 5 AM, Sunday all day
+        # Build backup window: Mon-Fri 10 PM - 5 AM, Sat-Sun all day
         # BackupWindowOptions is a binary string: 168 chars (24 hours x 7 days)
         # Each char is 1 (allowed) or 0 (blocked). Order: Sun 00-23, Mon 00-23, ... Sat 00-23
+        # Backup window: 168 chars (24h x 7 days starting Sunday)
+        # 1 = allowed, 0 = blocked
+        # Sun: all day, Mon-Fri: 10 PM - 5 AM, Sat: all day
         $WINDOW = ""
         for ($DAY = 0; $DAY -lt 7; $DAY++) {
             for ($HOUR = 0; $HOUR -lt 24; $HOUR++) {
-                if ($DAY -eq 0) {
-                    # Sunday: all day
+                if ($DAY -eq 0 -or $DAY -eq 6) {
+                    # Sunday (0) and Saturday (6): all day
                     $WINDOW += "1"
                 } else {
-                    # Mon-Sat: 10 PM (22) through 4 AM (0-4), blocked 5 AM - 9 PM (5-21)
+                    # Mon-Fri: 10 PM (22) through 4 AM (0-4), blocked 5 AM - 9 PM (5-21)
                     if ($HOUR -le 4 -or $HOUR -ge 22) {
                         $WINDOW += "1"
                     } else {
@@ -328,7 +331,7 @@ if ($EXISTING_COPY_JOB) {
             -BackupWindowOptions $WINDOW
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
-        Write-Host "  Backup window: Mon-Sat 10 PM - 5 AM, Sunday all day"
+        Write-Host "  Backup window: Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
 
         # Enable the job (created disabled by default)
         try {
