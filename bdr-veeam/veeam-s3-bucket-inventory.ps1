@@ -1,13 +1,13 @@
 ## PLEASE SET THE FOLLOWING ENVIRONMENT VARIABLES IN YOUR RMM BEFORE RUNNING
-## $env:CUSTOM_FIELD_S3_BUCKET_NAME  - Text field: last used S3 bucket name
-## $env:CUSTOM_FIELD_S3_BUCKET_SIZE  - Text field: last used S3 bucket size (human readable)
-## $env:CUSTOM_FIELD_S3_ORPHANS_FOUND - Integer field: 1 if orphaned backups found, 0 if not
-## $env:CUSTOM_FIELD_S3_INVENTORY    - WYSIWYG field: HTML table of all S3 repos
-## $env:CUSTOM_FIELD_S3_ORPHANS      - WYSIWYG field: HTML table of orphaned backup data
-## $env:ORPHAN_DAYS_THRESHOLD        - Days since last backup to consider orphaned (default: 30)
-## $env:DESCRIPTION                  - Ticket # or initials for audit trail
-## $env:RMM                          - Set to 1 when running from RMM platform
-## $env:RMM_SCRIPT_PATH              - Script path provided by RMM (used for log location)
+## $env:CUSTOM_FIELD_S3_BUCKET_NAME    - Text field: last used S3 bucket name
+## $env:CUSTOM_FIELD_S3_BUCKET_SIZE    - Text field: last used S3 bucket size (human readable)
+## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
+## $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
+## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
+## $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
+## $env:DESCRIPTION                    - Ticket # or initials for audit trail
+## $env:RMM                            - Set to 1 when running from RMM platform
+## $env:RMM_SCRIPT_PATH                - Script path provided by RMM (used for log location)
 
 # ============================================================
 # PS7 BOOTSTRAP
@@ -142,9 +142,9 @@ if ($env:RMM -ne "1") {
 
     $env:CUSTOM_FIELD_S3_BUCKET_NAME = Read-Host "NinjaOne text field for S3 bucket name (blank to skip)"
     $env:CUSTOM_FIELD_S3_BUCKET_SIZE = Read-Host "NinjaOne text field for S3 bucket size (blank to skip)"
-    $env:CUSTOM_FIELD_S3_ORPHANS_FOUND = Read-Host "NinjaOne integer field for orphans found flag (blank to skip)"
     $env:CUSTOM_FIELD_S3_INVENTORY = Read-Host "NinjaOne WYSIWYG field for S3 inventory table (blank to skip)"
-    $env:CUSTOM_FIELD_S3_ORPHANS = Read-Host "NinjaOne WYSIWYG field for orphaned backups table (blank to skip)"
+    $env:CUSTOM_FIELD_ORPHANS_FOUND = Read-Host "NinjaOne integer field for orphans found flag (blank to skip)"
+    $env:CUSTOM_FIELD_ORPHANED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for orphaned backups table (blank to skip)"
 
     $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 
@@ -503,13 +503,13 @@ Write-Host "Writing to NinjaOne custom fields..."
 
 Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $LAST_USED_BUCKET
 Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_SIZE $LAST_USED_SIZE
-Set-NinjaField $env:CUSTOM_FIELD_S3_ORPHANS_FOUND "$([int]($ORPHAN_COUNT -gt 0))"
 Set-NinjaField $env:CUSTOM_FIELD_S3_INVENTORY $HTML_INVENTORY
-Set-NinjaField $env:CUSTOM_FIELD_S3_ORPHANS $HTML_ORPHANS
+Set-NinjaField $env:CUSTOM_FIELD_ORPHANS_FOUND "$([int]($ORPHAN_COUNT -gt 0))"
+Set-NinjaField $env:CUSTOM_FIELD_ORPHANED_BACKUPS $HTML_ORPHANS
 
 # If no Ninja available and no fields set, dump HTML to console
 if (-not (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue)) {
-    if (-not $env:CUSTOM_FIELD_S3_INVENTORY -and -not $env:CUSTOM_FIELD_S3_ORPHANS) {
+    if (-not $env:CUSTOM_FIELD_S3_INVENTORY -and -not $env:CUSTOM_FIELD_ORPHANED_BACKUPS) {
         Write-Host ""
         Write-Host "=== Inventory HTML ==="
         Write-Host $HTML_INVENTORY
