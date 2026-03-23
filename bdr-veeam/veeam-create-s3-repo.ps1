@@ -13,7 +13,7 @@
 ## $env:ORG_UUID                      - Organization UUID from NinjaRMM (REQUIRED, fails if empty)
 ## $env:B2_ENDPOINT                   - S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)
 ## $env:B2_REGION                     - S3 region ID (e.g. us-west-002)
-## $env:IMMUTABILITY_DAYS             - Object lock immutability period in days (default: 30)
+## $env:IMMUTABILITY_DAYS             - Object lock immutability period in days (default: 14)
 ##
 ## OUTPUT FIELDS (device-level, written after creation):
 ## $env:CUSTOM_FIELD_S3_BUCKET_NAME   - Text: bucket name
@@ -96,7 +96,7 @@ if ($env:RMM -ne "1") {
     if (-not $env:B2_ADMIN_APP_KEY) { $env:B2_ADMIN_APP_KEY = Read-Host "B2 admin app key (master key)" }
     if (-not $env:B2_ENDPOINT) { $env:B2_ENDPOINT = Read-Host "B2 S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)" }
     if (-not $env:B2_REGION) { $env:B2_REGION = Read-Host "B2 region (e.g. us-west-002)" }
-    if (-not $env:IMMUTABILITY_DAYS) { $env:IMMUTABILITY_DAYS = Read-Host "Immutability period in days (default 30)" }
+    if (-not $env:IMMUTABILITY_DAYS) { $env:IMMUTABILITY_DAYS = Read-Host "Immutability period in days (default 14)" }
 
     $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 } else {
@@ -125,7 +125,7 @@ if (-not $env:B2_REGION) {
 }
 
 # Defaults
-$IMMUTABILITY_DAYS = 30
+$IMMUTABILITY_DAYS = 14
 if ($env:IMMUTABILITY_DAYS) {
     try { $IMMUTABILITY_DAYS = [int]$env:IMMUTABILITY_DAYS } catch {}
 }
