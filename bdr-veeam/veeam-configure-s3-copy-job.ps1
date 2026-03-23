@@ -369,7 +369,8 @@ if ($EXISTING_COPY_JOB) {
         # Step 3: Enable encryption using the same key as source backup jobs
         try {
             Write-Host "  Step 3: Configuring encryption..."
-            # Find encryption key from the first source backup job that has one
+
+            # Find encryption key from source backup jobs
             $ENCRYPTION_KEY = $null
             foreach ($SJ in $SOURCE_JOBS) {
                 try {
@@ -386,16 +387,23 @@ if ($EXISTING_COPY_JOB) {
                     }
                 } catch { }
             }
-            # Fallback: just use the first available encryption key
             if (-not $ENCRYPTION_KEY) {
                 $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
                 if ($ENCRYPTION_KEY) { Write-Host "    Using first available encryption key." }
             }
 
             if ($ENCRYPTION_KEY) {
-                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions -EnableEncryption -EncryptionKey $ENCRYPTION_KEY
-                Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
-                Write-Host "  [OK] Encryption enabled."
+                # Set encryption directly on the underlying job object
+                $VBR_JOB = Get-VBRJob | Where-Object { $_.Id -eq $COPY_JOB.Id }
+                if ($VBR_JOB) {
+                    $JOB_OPTS = $VBR_JOB.GetOptions()
+                    $JOB_OPTS.BackupStorageOptions.StorageEncryptionEnabled = $true
+                    $JOB_OPTS.BackupStorageOptions.StorageEncryptionKey = $ENCRYPTION_KEY.Id
+                    Set-VBRJobOptions -Job $VBR_JOB -Options $JOB_OPTS
+                    Write-Host "  [OK] Encryption enabled."
+                } else {
+                    Write-Warning "  Could not find job object. Configure encryption manually."
+                }
             } else {
                 Write-Warning "  No encryption key found. Configure encryption manually."
             }
