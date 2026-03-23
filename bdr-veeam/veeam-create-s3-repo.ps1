@@ -322,25 +322,20 @@ if (-not $SKIP_B2_CREATION) {
         exit 1
     }
 
-    # Set default retention + lifecycle rule to purge hidden versions
-    # Hidden files = old versions replaced by newer uploads or deleted by Veeam.
-    # Without this rule, B2 keeps ALL versions forever and storage balloons.
+    # Set lifecycle rule to purge hidden (old) file versions.
+    # Without this, B2 keeps ALL versions forever and storage balloons.
     # daysFromHidingToDeleting = immutability + 1 day buffer so locked files
     # are never deleted before retention expires.
+    # NOTE: Do NOT set bucket-level defaultRetention here. Veeam manages
+    # immutability/retention itself via per-object locks. Setting a bucket
+    # default causes "default retention is not supported" errors in Veeam.
     $LIFECYCLE_PURGE_DAYS = $IMMUTABILITY_DAYS + 1
 
     try {
         $UPDATE_BODY = @{
-            accountId        = $B2_ACCOUNT_ID
-            bucketId         = $B2_BUCKET.bucketId
-            defaultRetention = @{
-                mode   = "governance"
-                period = @{
-                    duration = $IMMUTABILITY_DAYS
-                    unit     = "days"
-                }
-            }
-            lifecycleRules   = @(
+            accountId      = $B2_ACCOUNT_ID
+            bucketId       = $B2_BUCKET.bucketId
+            lifecycleRules = @(
                 @{
                     daysFromHidingToDeleting  = $LIFECYCLE_PURGE_DAYS
                     daysFromUploadingToHiding = $null
@@ -352,10 +347,9 @@ if (-not $SKIP_B2_CREATION) {
         Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
             -AuthToken $B2_AUTH_TOKEN -Body $UPDATE_BODY | Out-Null
 
-        Write-Host "  [OK] Default retention: $IMMUTABILITY_DAYS days (governance mode)"
         Write-Host "  [OK] Lifecycle rule: delete hidden versions after $LIFECYCLE_PURGE_DAYS days"
     } catch {
-        Write-Warning "  Failed to set retention/lifecycle: $_"
+        Write-Warning "  Failed to set lifecycle rule: $_"
     }
 
     # ============================================================
@@ -456,10 +450,23 @@ try {
     Write-Host "  [OK] Folder created: $BUCKET_SHORT_ID"
 
     # Detect Veeam version for the EnableBucketAutoProvision parameter
-    $VEEAM_VERSION = [version](Get-Item 'C:\Program Files\Veeam\Backup and Replication\Backup\Packages\VeeamDeploymentDll.dll').VersionInfo.ProductVersion
-    $NEEDS_AUTOPROVISION = $VEEAM_VERSION -ge [version]"12.3.1.1139"
+    $NEEDS_AUTOPROVISION = $false
+    $DLL_PATHS = @(
+        'C:\Program Files\Veeam\Backup and Replication\Backup\Packages\VeeamDeploymentDll.dll',
+        'C:\Program Files\Veeam\Backup and Replication\Backup\VeeamDeploymentDll.dll',
+        'C:\Program Files\Veeam\Backup and Replication\Console\VeeamDeploymentDll.dll'
+    )
+    foreach ($DLL in $DLL_PATHS) {
+        if (Test-Path $DLL) {
+            $VEEAM_VERSION = [version](Get-Item $DLL).VersionInfo.ProductVersion
+            $NEEDS_AUTOPROVISION = $VEEAM_VERSION -ge [version]"12.3.1.1139"
+            Write-Host "  Veeam version: $VEEAM_VERSION (AutoProvision param: $NEEDS_AUTOPROVISION)"
+            break
+        }
+    }
 
     # Create the repository (name = bucket name)
+    # Veeam manages immutability per-object, not bucket-level retention
     $REPO_PARAMS = @{
         AmazonS3Folder          = $VEEAM_FOLDER
         Connection              = $VEEAM_CONNECTION
