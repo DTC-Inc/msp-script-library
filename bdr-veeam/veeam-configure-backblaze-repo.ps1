@@ -265,14 +265,37 @@ if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 # ============================================================
 
 # Try reading existing bucket name and scoped keys from NinjaOne
+Write-Host "Checking for existing B2 credentials in NinjaOne..."
+Write-Host "  CUSTOM_FIELD_S3_BUCKET_NAME env: '$($env:CUSTOM_FIELD_S3_BUCKET_NAME)'"
+Write-Host "  CUSTOM_FIELD_S3_KEY_ID env:      '$($env:CUSTOM_FIELD_S3_KEY_ID)'"
+Write-Host "  CUSTOM_FIELD_S3_APP_KEY env:     '$($env:CUSTOM_FIELD_S3_APP_KEY)'"
+
 $EXISTING_BUCKET = $null
 $EXISTING_KEY_ID = $null
 $EXISTING_APP_KEY = $null
-try {
-    if ($env:CUSTOM_FIELD_S3_BUCKET_NAME) { $EXISTING_BUCKET = Ninja-Property-Get $env:CUSTOM_FIELD_S3_BUCKET_NAME 2>$null }
-    if ($env:CUSTOM_FIELD_S3_KEY_ID) { $EXISTING_KEY_ID = Ninja-Property-Get $env:CUSTOM_FIELD_S3_KEY_ID 2>$null }
-    if ($env:CUSTOM_FIELD_S3_APP_KEY) { $EXISTING_APP_KEY = Ninja-Property-Get $env:CUSTOM_FIELD_S3_APP_KEY 2>$null }
-} catch { }
+
+# Read existing values from NinjaOne device fields
+$NINJA_AVAILABLE = $null -ne (Get-Command "Ninja-Property-Get" -ErrorAction SilentlyContinue)
+if ($NINJA_AVAILABLE) {
+    try {
+        if ($env:CUSTOM_FIELD_S3_BUCKET_NAME) {
+            $EXISTING_BUCKET = Ninja-Property-Get $env:CUSTOM_FIELD_S3_BUCKET_NAME 2>$null
+            Write-Host "  Bucket value:  '$EXISTING_BUCKET'"
+        }
+        if ($env:CUSTOM_FIELD_S3_KEY_ID) {
+            $EXISTING_KEY_ID = Ninja-Property-Get $env:CUSTOM_FIELD_S3_KEY_ID 2>$null
+            Write-Host "  Key ID value:  $(if ($EXISTING_KEY_ID) { 'set' } else { 'empty' })"
+        }
+        if ($env:CUSTOM_FIELD_S3_APP_KEY) {
+            $EXISTING_APP_KEY = Ninja-Property-Get $env:CUSTOM_FIELD_S3_APP_KEY 2>$null
+            Write-Host "  App Key value: $(if ($EXISTING_APP_KEY) { 'set' } else { 'empty' })"
+        }
+    } catch {
+        Write-Warning "  Ninja-Property-Get failed: $_"
+    }
+} else {
+    Write-Host "  Ninja-Property-Get not available (not running in NinjaRMM)."
+}
 
 $SKIP_B2_CREATION = $false
 if ($EXISTING_BUCKET -and $EXISTING_KEY_ID -and $EXISTING_APP_KEY) {
