@@ -6,6 +6,7 @@
 ## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
 ## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup job's last run failed
 ## $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of jobs whose last run failed/warned
+## $env:CUSTOM_FIELD_S3_COPY_MISSING   - Checkbox field: checked if S3 copy job is missing or incomplete
 ## $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
 ## $env:DESCRIPTION                    - Ticket # or initials for audit trail
 ## $env:RMM                            - Set to 1 when running from RMM platform
@@ -491,6 +492,75 @@ try {
     Write-Warning "  Get-VBRBackupSession failed: $_"
 }
 
+# ------------------------------------------------------------
+# S3 copy job detection
+# ------------------------------------------------------------
+$S3_COPY_MISSING = $false
+$S3_COPY_MISSING_REASON = ""
+
+if ($OBJECT_STORAGE_REPOS -and $OBJECT_STORAGE_REPOS.Count -gt 0) {
+    Write-Host "  Checking S3 backup copy job status..."
+
+    # Get all copy jobs targeting S3 repos
+    $S3_COPY_JOBS = @()
+    foreach ($CJ in $COPY_JOBS) {
+        if ($null -ne $CJ.TargetRepository -and $S3_REPO_IDS.ContainsKey($CJ.TargetRepository.Id.ToString())) {
+            $S3_COPY_JOBS += $CJ
+        }
+    }
+
+    if ($S3_COPY_JOBS.Count -eq 0) {
+        $S3_COPY_MISSING = $true
+        $S3_COPY_MISSING_REASON = "No S3 backup copy job exists"
+        Write-Host "  [!] No S3 copy job found."
+    } else {
+        # Check if all backup jobs are linked to the copy job
+        $LINKED_IDS = @()
+        foreach ($CJ in $S3_COPY_JOBS) {
+            try {
+                if ($CJ.LinkedJobIds) { $LINKED_IDS += @($CJ.LinkedJobIds) }
+            } catch { }
+            try {
+                if ($CJ.BackupJob) { $LINKED_IDS += @($CJ.BackupJob | ForEach-Object { $_.Id }) }
+            } catch { }
+        }
+        $LINKED_IDS = @($LINKED_IDS | Select-Object -Unique)
+
+        # Get all non-copy backup jobs
+        $ALL_SOURCE_JOBS = @($ALL_BACKUPS | Where-Object {
+            -not $_.IsBackupCopy -and
+            $_.JobType -ne 'SimpleBackupCopyPolicy' -and
+            $_.JobType -ne 'BackupSync' -and
+            $_.JobType -ne 'SimpleBackupCopyWorker'
+        })
+        # Also check computer backup jobs
+        try {
+            $COMPUTER_JOBS = @(Get-VBRComputerBackupJob -ErrorAction SilentlyContinue)
+            $COMPUTER_JOB_IDS = @($COMPUTER_JOBS | ForEach-Object { $_.Id })
+        } catch { $COMPUTER_JOB_IDS = @() }
+
+        # Combine all source job IDs
+        $ALL_SOURCE_IDS = @()
+        $ALL_SOURCE_IDS += @($ALL_SOURCE_JOBS | ForEach-Object { $_.JobId } | Select-Object -Unique)
+        $ALL_SOURCE_IDS += $COMPUTER_JOB_IDS
+        $ALL_SOURCE_IDS = @($ALL_SOURCE_IDS | Select-Object -Unique)
+
+        $UNLINKED = @($ALL_SOURCE_IDS | Where-Object { $LINKED_IDS -notcontains $_ })
+
+        if ($UNLINKED.Count -gt 0) {
+            $S3_COPY_MISSING = $true
+            $S3_COPY_MISSING_REASON = "$($UNLINKED.Count) backup job(s) not in S3 copy job"
+            Write-Host "  [!] $($UNLINKED.Count) backup jobs missing from S3 copy job."
+        } else {
+            Write-Host "  [OK] S3 copy job exists with all backup jobs linked."
+        }
+    }
+} else {
+    $S3_COPY_MISSING = $true
+    $S3_COPY_MISSING_REASON = "No S3 repository configured"
+    Write-Host "  [!] No S3 repository found."
+}
+
 # If only one S3 repo exists and last-used tracking didn't match via time, use it directly
 if ($LAST_USED_BUCKET -eq "N/A" -and $REPO_ROWS.Count -eq 1) {
     $LAST_USED_BUCKET = $REPO_ROWS[0][0]
@@ -507,6 +577,7 @@ Write-Host "  Last used S3 size:   $LAST_USED_SIZE"
 Write-Host "  S3 repos found:      $($REPO_ROWS.Count)"
 Write-Host "  Orphaned backups:    $ORPHAN_COUNT"
 Write-Host "  Failed backups:      $FAILED_COUNT"
+Write-Host "  S3 copy job missing: $S3_COPY_MISSING $(if ($S3_COPY_MISSING_REASON) { "($S3_COPY_MISSING_REASON)" })"
 Write-Host ""
 
 if ($REPO_ROWS.Count -gt 0) {
@@ -566,6 +637,7 @@ Set-NinjaField $env:CUSTOM_FIELD_ORPHANS_FOUND "$([int]($ORPHAN_COUNT -gt 0))"
 Set-NinjaField $env:CUSTOM_FIELD_ORPHANED_BACKUPS $HTML_ORPHANS
 Set-NinjaField $env:CUSTOM_FIELD_FAILED_BACKUP "$([int]($FAILED_COUNT -gt 0))"
 Set-NinjaField $env:CUSTOM_FIELD_FAILED_BACKUPS $HTML_FAILED
+Set-NinjaField $env:CUSTOM_FIELD_S3_COPY_MISSING "$([int]$S3_COPY_MISSING)"
 
 # If no Ninja available and no fields set, dump HTML to console
 if (-not (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue)) {
