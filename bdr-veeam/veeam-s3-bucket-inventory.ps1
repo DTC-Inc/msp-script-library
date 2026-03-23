@@ -182,7 +182,7 @@ Write-Host "Querying S3-compatible object storage repositories..."
 $REPO_ROWS = [System.Collections.Generic.List[hashtable]]::new()
 $SCAN_TIMESTAMP = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-# Get object storage repos
+# Get object storage repos (for the list of S3 repos + their IDs)
 $OBJECT_STORAGE_REPOS = $null
 try {
     $OBJECT_STORAGE_REPOS = Get-VBRObjectStorageRepository -ErrorAction Stop
@@ -192,7 +192,6 @@ try {
 }
 
 if (-not $OBJECT_STORAGE_REPOS) {
-    # Fallback: filter Get-VBRBackupRepository for S3 types
     try {
         $OBJECT_STORAGE_REPOS = Get-VBRBackupRepository | Where-Object {
             $_.Type -like "AmazonS3*" -or $_.Type -eq "S3Compatible" -or $_.Type -match "S3"
@@ -203,34 +202,10 @@ if (-not $OBJECT_STORAGE_REPOS) {
     }
 }
 
-# Build a lookup of backup sizes per RepositoryId by summing GetAllStorages()
-Write-Host "  Calculating storage sizes from backup objects..."
-$SIZE_BY_REPO_ID = @{}
-try {
-    $ALL_BACKUPS = Get-VBRBackup
-    foreach ($BACKUP in $ALL_BACKUPS) {
-        $RID = $BACKUP.RepositoryId.ToString()
-        if (-not $SIZE_BY_REPO_ID.ContainsKey($RID)) {
-            $SIZE_BY_REPO_ID[$RID] = [long]0
-        }
-        try {
-            $STORAGES = $BACKUP.GetAllStorages()
-            foreach ($ST in $STORAGES) {
-                # Try multiple known size properties on storage objects
-                $ST_SIZE = 0
-                try { if ($ST.Stats -and $ST.Stats.BackupSize -gt 0) { $ST_SIZE = $ST.Stats.BackupSize } } catch {}
-                if ($ST_SIZE -eq 0) { try { if ($ST.BackupSize -gt 0) { $ST_SIZE = $ST.BackupSize } } catch {} }
-                if ($ST_SIZE -eq 0) { try { if ($ST.DataSize -gt 0) { $ST_SIZE = $ST.DataSize } } catch {} }
-                $SIZE_BY_REPO_ID[$RID] += $ST_SIZE
-            }
-        } catch { }
-    }
-} catch {
-    Write-Warning "  Could not enumerate backups for size calculation: $_"
-}
-
-# Also try getting size from backup copy jobs via TargetRepository
-Write-Host "  Checking backup copy jobs for additional repo details..."
+# Get backup copy jobs - their TargetRepository has populated sub-objects
+# (Get-VBRObjectStorageRepository returns skeleton objects with null sub-objects,
+# but Get-VBRBackupCopyJob TargetRepository has AmazonCompatibleOptions.BucketName etc.)
+Write-Host "  Querying backup copy jobs for bucket details..."
 $COPY_JOB_REPOS = @{}
 try {
     $COPY_JOBS = Get-VBRBackupCopyJob -ErrorAction Stop
@@ -245,99 +220,89 @@ try {
     Write-Warning "  Get-VBRBackupCopyJob failed: $_"
 }
 
+# Calculate storage sizes per repo by summing backup storages
+# Parent backups with IsTruePerVmContainer have 0 storages, so we
+# enumerate child backups via FindChildBackups() to get actual data
+Write-Host "  Calculating storage sizes from backup objects..."
+$SIZE_BY_REPO_ID = @{}
+try {
+    $ALL_BACKUPS = Get-VBRBackup
+    foreach ($BACKUP in $ALL_BACKUPS) {
+        $RID = $BACKUP.RepositoryId.ToString()
+        if (-not $SIZE_BY_REPO_ID.ContainsKey($RID)) {
+            $SIZE_BY_REPO_ID[$RID] = [long]0
+        }
+
+        # Collect backups to check: the backup itself + any child backups
+        $BACKUPS_TO_CHECK = @($BACKUP)
+        try {
+            if ($BACKUP.IsTruePerVmContainer) {
+                $CHILDREN = $BACKUP.FindChildBackups()
+                if ($CHILDREN) { $BACKUPS_TO_CHECK += $CHILDREN }
+            }
+        } catch { }
+
+        foreach ($B in $BACKUPS_TO_CHECK) {
+            try {
+                $STORAGES = $B.GetAllStorages()
+                foreach ($ST in $STORAGES) {
+                    $ST_SIZE = [long]0
+                    try { if ($ST.Stats -and $ST.Stats.BackupSize -gt 0) { $ST_SIZE = [long]$ST.Stats.BackupSize } } catch {}
+                    if ($ST_SIZE -eq 0) { try { if ($ST.BackupSize -gt 0) { $ST_SIZE = [long]$ST.BackupSize } } catch {} }
+                    if ($ST_SIZE -eq 0) { try { if ($ST.DataSize -gt 0) { $ST_SIZE = [long]$ST.DataSize } } catch {} }
+                    $SIZE_BY_REPO_ID[$RID] += $ST_SIZE
+                }
+            } catch { }
+        }
+    }
+} catch {
+    Write-Warning "  Could not enumerate backups for size calculation: $_"
+}
+
 # Process each S3 repo
 foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     Write-Host "  Processing: $($REPO.Name)"
     $REPO_ID = $REPO.Id.ToString()
 
     # --- BUCKET NAME ---
-    # Try multiple paths to find the bucket name from sub-objects
     $BUCKET_NAME = "N/A"
 
-    # Path 1: ArchiveRepository sub-object
-    try {
-        $AR = $REPO.ArchiveRepository
-        if ($null -ne $AR) {
-            if ($AR.BucketName)      { $BUCKET_NAME = $AR.BucketName }
-            elseif ($AR.Bucket)      { $BUCKET_NAME = $AR.Bucket }
-            elseif ($AR.AmazonS3Folder -and $AR.AmazonS3Folder.BucketName) { $BUCKET_NAME = $AR.AmazonS3Folder.BucketName }
-        }
-    } catch { }
+    # Primary: copy job TargetRepository (confirmed working on Veeam 12)
+    # AmazonCompatibleOptions.BucketName is populated here but NOT on
+    # objects from Get-VBRObjectStorageRepository (those are skeleton/null)
+    if ($COPY_JOB_REPOS.ContainsKey($REPO_ID)) {
+        $CJ_TR = $COPY_JOB_REPOS[$REPO_ID]
+        try {
+            $CJ_OPTS = $CJ_TR.AmazonCompatibleOptions
+            if ($null -eq $CJ_OPTS) { $CJ_OPTS = $CJ_TR.Options }
+            if ($null -ne $CJ_OPTS -and $CJ_OPTS.BucketName) {
+                $BUCKET_NAME = $CJ_OPTS.BucketName
+            }
+        } catch { }
+    }
 
-    # Path 2: AmazonCompatibleOptions / Options sub-object
+    # Fallback: try direct repo sub-objects (may work on other Veeam versions)
     if ($BUCKET_NAME -eq "N/A") {
         try {
             $OPTS = $REPO.AmazonCompatibleOptions
             if ($null -eq $OPTS) { $OPTS = $REPO.AmazonOptions }
             if ($null -eq $OPTS) { $OPTS = $REPO.Options }
-            if ($null -ne $OPTS) {
-                if ($OPTS.BucketName)  { $BUCKET_NAME = $OPTS.BucketName }
-                elseif ($OPTS.Bucket)  { $BUCKET_NAME = $OPTS.Bucket }
-                elseif ($OPTS.AmazonS3Folder -and $OPTS.AmazonS3Folder.BucketName) { $BUCKET_NAME = $OPTS.AmazonS3Folder.BucketName }
-            }
+            if ($null -ne $OPTS -and $OPTS.BucketName) { $BUCKET_NAME = $OPTS.BucketName }
         } catch { }
     }
-
-    # Path 3: Direct top-level properties
     if ($BUCKET_NAME -eq "N/A") {
         try { if ($REPO.BucketName) { $BUCKET_NAME = $REPO.BucketName } } catch {}
-        try { if ($BUCKET_NAME -eq "N/A" -and $REPO.Bucket) { $BUCKET_NAME = $REPO.Bucket } } catch {}
-        try { if ($BUCKET_NAME -eq "N/A" -and $REPO.AmazonS3Folder -and $REPO.AmazonS3Folder.BucketName) { $BUCKET_NAME = $REPO.AmazonS3Folder.BucketName } } catch {}
-    }
-
-    # Path 4: Copy job TargetRepository (richer object from Get-VBRBackupCopyJob)
-    if ($BUCKET_NAME -eq "N/A" -and $COPY_JOB_REPOS.ContainsKey($REPO_ID)) {
-        $CJ_TR = $COPY_JOB_REPOS[$REPO_ID]
-        try {
-            $CJ_AR = $CJ_TR.ArchiveRepository
-            if ($null -ne $CJ_AR) {
-                if ($CJ_AR.BucketName)  { $BUCKET_NAME = $CJ_AR.BucketName }
-                elseif ($CJ_AR.Bucket)  { $BUCKET_NAME = $CJ_AR.Bucket }
-            }
-        } catch { }
-        if ($BUCKET_NAME -eq "N/A") {
-            try {
-                $CJ_OPTS = $CJ_TR.AmazonCompatibleOptions
-                if ($null -eq $CJ_OPTS) { $CJ_OPTS = $CJ_TR.Options }
-                if ($null -ne $CJ_OPTS -and $CJ_OPTS.BucketName) { $BUCKET_NAME = $CJ_OPTS.BucketName }
-            } catch { }
-        }
-    }
-
-    # Path 5: Info sub-object
-    if ($BUCKET_NAME -eq "N/A") {
-        try {
-            $INFO = $REPO.Info
-            if ($null -ne $INFO) {
-                if ($INFO.BucketName) { $BUCKET_NAME = $INFO.BucketName }
-            }
-        } catch { }
     }
 
     # --- USED SPACE ---
     $USED_SPACE_DISPLAY = "N/A"
 
-    # Try direct repo properties first
+    # Try direct repo properties
     try { if ($null -ne $REPO.UsedSpace -and $REPO.UsedSpace -gt 0) { $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $REPO.UsedSpace } } catch {}
-    if ($USED_SPACE_DISPLAY -eq "N/A") {
-        try { if ($null -ne $REPO.UsedSpaceGB -and $REPO.UsedSpaceGB -gt 0) { $USED_SPACE_DISPLAY = "{0:N2} GB" -f $REPO.UsedSpaceGB } } catch {}
-    }
 
     # Fall back to summed storage sizes from backup objects
     if ($USED_SPACE_DISPLAY -eq "N/A" -and $SIZE_BY_REPO_ID.ContainsKey($REPO_ID) -and $SIZE_BY_REPO_ID[$REPO_ID] -gt 0) {
         $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $SIZE_BY_REPO_ID[$REPO_ID]
-    }
-
-    # Try CachedTotalSpace/CachedFreeSpace from Info
-    if ($USED_SPACE_DISPLAY -eq "N/A") {
-        try {
-            $CACHED_TOTAL = $REPO.Info.CachedTotalSpace
-            $CACHED_FREE  = $REPO.Info.CachedFreeSpace
-            if ($null -ne $CACHED_TOTAL -and $CACHED_TOTAL -gt 0 -and $null -ne $CACHED_FREE) {
-                $USED_BYTES = $CACHED_TOTAL - $CACHED_FREE
-                if ($USED_BYTES -ge 0) { $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $USED_BYTES }
-            }
-        } catch { }
     }
 
     # --- REPO TYPE ---
