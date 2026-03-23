@@ -350,6 +350,9 @@ if ($EXISTING_COPY_JOB) {
             }
         }
 
+        # Convert the binary string to VBRBackupWindowOptions
+        $WINDOW_OPTIONS = New-VBRBackupWindowOptions -BackupWindow $WINDOW
+
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
@@ -359,7 +362,7 @@ if ($EXISTING_COPY_JOB) {
             -RetentionType RestoreDays `
             -RetentionNumber $RETENTION_DAYS `
             -BackupWindowEnabled `
-            -BackupWindowOptions $WINDOW
+            -BackupWindowOptions $WINDOW_OPTIONS
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
         Write-Host "  Backup window: Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
