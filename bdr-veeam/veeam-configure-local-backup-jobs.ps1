@@ -1,9 +1,9 @@
 ## Configures all local backup jobs (agent/VM) with a standard schedule:
-##   Mon-Fri: 5 AM - 10 PM (blocked overnight for S3 copy window)
+##   Mon-Fri: 6 AM - 9 PM (blocked overnight for S3 copy window)
 ##   Sat-Sun: No local backups (S3 copy runs all day)
 ##
 ## This complements veeam-configure-s3-copy-job.ps1 which runs:
-##   Mon-Fri: 10 PM - 5 AM
+##   Mon-Fri: 10 PM - 6 AM
 ##   Sat-Sun: All day
 ##
 ## $env:DESCRIPTION   - Ticket # or initials for audit trail
@@ -121,7 +121,8 @@ if ($LOCAL_JOBS.Count -eq 0 -and $COMPUTER_JOBS.Count -eq 0) {
 
 # Backup window string: 168 chars (24h x 7 days starting Sunday)
 # 1 = allowed to run, 0 = blocked
-# Sun: blocked, Mon-Fri: 5 AM (05) - 9 PM (21), Sat: blocked
+# Sun: blocked, Mon-Fri: 6 AM - 9 PM, Sat: blocked
+# 9 PM stop -> 1 hr buffer -> 10 PM S3 copy starts
 $WINDOW = ""
 for ($DAY = 0; $DAY -lt 7; $DAY++) {
     for ($HOUR = 0; $HOUR -lt 24; $HOUR++) {
@@ -129,8 +130,8 @@ for ($DAY = 0; $DAY -lt 7; $DAY++) {
             # Sunday (0) and Saturday (6): blocked all day
             $WINDOW += "0"
         } else {
-            # Mon-Fri: 5 AM through 9 PM (21:59), blocked 10 PM - 4:59 AM
-            if ($HOUR -ge 5 -and $HOUR -le 21) {
+            # Mon-Fri: 6 AM (06) through 9 PM (21:59), blocked 10 PM - 5:59 AM
+            if ($HOUR -ge 6 -and $HOUR -le 21) {
                 $WINDOW += "1"
             } else {
                 $WINDOW += "0"
