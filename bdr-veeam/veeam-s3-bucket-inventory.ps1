@@ -176,18 +176,6 @@ if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 }
 
 # ------------------------------------------------------------
-# Connect to local VBR server
-# ------------------------------------------------------------
-Write-Host "Connecting to local VBR server..."
-try {
-    Connect-VBRServer -Server localhost -ErrorAction Stop
-    Write-Host "  [OK] Connected to VBR server."
-} catch {
-    Stop-Transcript
-    throw "Failed to connect to VBR server: $_"
-}
-
-# ------------------------------------------------------------
 # Collect S3-compatible object storage repositories
 # ------------------------------------------------------------
 Write-Host ""
@@ -333,8 +321,6 @@ if ($FALLBACK_REPOS) {
     }
 }
 
-# Disconnect from VBR
-try { Disconnect-VBRServer } catch { }
 
 Write-Host ""
 Write-Host "Found $($REPO_ROWS.Count) S3-compatible repositories."
