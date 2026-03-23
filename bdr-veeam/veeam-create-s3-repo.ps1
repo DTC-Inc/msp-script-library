@@ -322,7 +322,13 @@ if (-not $SKIP_B2_CREATION) {
         exit 1
     }
 
-    # Set default retention and disable versioning
+    # Set default retention + lifecycle rule to purge hidden versions
+    # Hidden files = old versions replaced by newer uploads or deleted by Veeam.
+    # Without this rule, B2 keeps ALL versions forever and storage balloons.
+    # daysFromHidingToDeleting = immutability + 1 day buffer so locked files
+    # are never deleted before retention expires.
+    $LIFECYCLE_PURGE_DAYS = $IMMUTABILITY_DAYS + 1
+
     try {
         $UPDATE_BODY = @{
             accountId        = $B2_ACCOUNT_ID
@@ -334,14 +340,22 @@ if (-not $SKIP_B2_CREATION) {
                     unit     = "days"
                 }
             }
+            lifecycleRules   = @(
+                @{
+                    daysFromHidingToDeleting  = $LIFECYCLE_PURGE_DAYS
+                    daysFromUploadingToHiding = $null
+                    fileNamePrefix            = ""
+                }
+            )
         } | ConvertTo-Json -Depth 5
 
         Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
             -AuthToken $B2_AUTH_TOKEN -Body $UPDATE_BODY | Out-Null
 
         Write-Host "  [OK] Default retention: $IMMUTABILITY_DAYS days (governance mode)"
+        Write-Host "  [OK] Lifecycle rule: delete hidden versions after $LIFECYCLE_PURGE_DAYS days"
     } catch {
-        Write-Warning "  Failed to set default retention: $_"
+        Write-Warning "  Failed to set retention/lifecycle: $_"
     }
 
     # ============================================================
