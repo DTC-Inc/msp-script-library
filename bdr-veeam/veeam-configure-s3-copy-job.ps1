@@ -375,7 +375,7 @@ if ($EXISTING_COPY_JOB) {
                 Write-Host "    Using key: $($ENCRYPTION_KEY.Id)"
                 $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions `
                     -CompressionLevel Auto `
-                    -StorageOptimizationType LocalTarget `
+                    -StorageOptimizationType Automatic `
                     -EnableEncryption `
                     -EncryptionKey $ENCRYPTION_KEY
                 Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
