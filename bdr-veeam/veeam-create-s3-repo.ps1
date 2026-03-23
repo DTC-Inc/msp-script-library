@@ -35,7 +35,7 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     }
     if (Test-Path $PWSH_PATH) {
         Write-Host "PowerShell $($PSVersionTable.PSVersion) detected. Re-launching in PowerShell 7 at: $PWSH_PATH"
-        $PS_ARGS = @('-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $MyInvocation.MyCommand.Path)
+        $PS_ARGS = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $MyInvocation.MyCommand.Path)
         & $PWSH_PATH @PS_ARGS
         exit $LASTEXITCODE
     } else {
