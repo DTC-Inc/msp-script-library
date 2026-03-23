@@ -4,6 +4,9 @@
 ## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
 ## $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
 ## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
+## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup jobs failed recently
+## $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of failed/warning backup sessions
+## $env:FAILED_BACKUP_HOURS            - Hours to look back for failed sessions (default: 24)
 ## $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
 ## $env:DESCRIPTION                    - Ticket # or initials for audit trail
 ## $env:RMM                            - Set to 1 when running from RMM platform
@@ -145,6 +148,8 @@ if ($env:RMM -ne "1") {
     $env:CUSTOM_FIELD_S3_INVENTORY = Read-Host "NinjaOne WYSIWYG field for S3 inventory table (blank to skip)"
     $env:CUSTOM_FIELD_ORPHANS_FOUND = Read-Host "NinjaOne integer field for orphans found flag (blank to skip)"
     $env:CUSTOM_FIELD_ORPHANED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for orphaned backups table (blank to skip)"
+    $env:CUSTOM_FIELD_FAILED_BACKUP = Read-Host "NinjaOne checkbox field for failed backup flag (blank to skip)"
+    $env:CUSTOM_FIELD_FAILED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for failed backups table (blank to skip)"
 
     $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 
@@ -172,7 +177,7 @@ if ($env:RMM -ne "1") {
 
 Start-Transcript -Path $LOG_PATH
 
-Write-Host "=== Veeam S3 Bucket Inventory ==="
+Write-Host "=== Veeam Inventory ==="
 Write-Host "Description:  $env:DESCRIPTION"
 Write-Host "Log path:     $LOG_PATH"
 Write-Host "RMM mode:     $($env:RMM -eq '1')"
@@ -448,6 +453,41 @@ foreach ($ENTRY in $ALL_ORPHAN_ENTRIES) {
     $ORPHAN_ROWS.Add(@($ENTRY.MachineName, $ENTRY.SizeDisplay, $ENTRY.LastPointStr, $ENTRY.Reason, $ENTRY.RepoName))
 }
 
+# ------------------------------------------------------------
+# Failed backup detection
+# ------------------------------------------------------------
+$FAILED_HOURS = 24
+if ($env:FAILED_BACKUP_HOURS) {
+    try { $FAILED_HOURS = [int]$env:FAILED_BACKUP_HOURS } catch {}
+}
+$FAILED_CUTOFF = (Get-Date).AddHours(-$FAILED_HOURS)
+Write-Host "  Checking for failed backup sessions in the last $FAILED_HOURS hours..."
+
+$FAILED_ROWS = [System.Collections.Generic.List[string[]]]::new()
+$FAILED_COUNT = 0
+
+try {
+    $RECENT_SESSIONS = Get-VBRBackupSession -ErrorAction Stop | Where-Object {
+        $_.EndTime -gt $FAILED_CUTOFF -and $_.IsCompleted -and ($_.Result -eq "Failed" -or $_.Result -eq "Warning")
+    }
+
+    foreach ($SESS in $RECENT_SESSIONS) {
+        # Extract job name (strip child worker suffixes for cleaner display)
+        $JOB_NAME = $SESS.OrigJobName
+        if (-not $JOB_NAME) { $JOB_NAME = $SESS.JobName }
+
+        $RESULT_STR = $SESS.Result.ToString()
+        $END_TIME_STR = $SESS.EndTime.ToString("yyyy-MM-dd HH:mm")
+        $DURATION_STR = if ($SESS.Progress -and $SESS.Progress.Duration) { $SESS.Progress.Duration.ToString("hh\:mm\:ss") } else { "N/A" }
+
+        $FAILED_ROWS.Add(@($JOB_NAME, $RESULT_STR, $END_TIME_STR, $DURATION_STR))
+        $FAILED_COUNT++
+    }
+    Write-Host "  [OK] Found $FAILED_COUNT failed/warning sessions."
+} catch {
+    Write-Warning "  Get-VBRBackupSession failed: $_"
+}
+
 # If only one S3 repo exists and last-used tracking didn't match via time, use it directly
 if ($LAST_USED_BUCKET -eq "N/A" -and $REPO_ROWS.Count -eq 1) {
     $LAST_USED_BUCKET = $REPO_ROWS[0][0]
@@ -463,6 +503,7 @@ Write-Host "  Last used S3 bucket: $LAST_USED_BUCKET"
 Write-Host "  Last used S3 size:   $LAST_USED_SIZE"
 Write-Host "  S3 repos found:      $($REPO_ROWS.Count)"
 Write-Host "  Orphaned backups:    $ORPHAN_COUNT"
+Write-Host "  Failed backups:      $FAILED_COUNT (last $FAILED_HOURS hrs)"
 Write-Host ""
 
 if ($REPO_ROWS.Count -gt 0) {
@@ -477,6 +518,14 @@ if ($ORPHAN_COUNT -gt 0) {
     Write-Host "=== Orphaned Backups ==="
     foreach ($ROW in $ORPHAN_ROWS) {
         Write-Host "  Machine: $($ROW[0]) | Size: $($ROW[1]) | Last: $($ROW[2]) | Reason: $($ROW[3]) | Repo: $($ROW[4])"
+    }
+    Write-Host ""
+}
+
+if ($FAILED_COUNT -gt 0) {
+    Write-Host "=== Failed Backups ==="
+    foreach ($ROW in $FAILED_ROWS) {
+        Write-Host "  Job: $($ROW[0]) | Result: $($ROW[1]) | Ended: $($ROW[2]) | Duration: $($ROW[3])"
     }
     Write-Host ""
 }
@@ -496,6 +545,12 @@ $HTML_ORPHANS = Build-HtmlTable `
     -ScanTimestamp $SCAN_TIMESTAMP `
     -EmptyMessage "No orphaned backups detected."
 
+$HTML_FAILED = Build-HtmlTable `
+    -Headers @("Job Name", "Result", "Ended", "Duration") `
+    -Rows $FAILED_ROWS `
+    -ScanTimestamp $SCAN_TIMESTAMP `
+    -EmptyMessage "No failed backup sessions in the last $FAILED_HOURS hours."
+
 # ------------------------------------------------------------
 # Write to NinjaOne custom fields
 # ------------------------------------------------------------
@@ -506,16 +561,21 @@ Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_SIZE $LAST_USED_SIZE
 Set-NinjaField $env:CUSTOM_FIELD_S3_INVENTORY $HTML_INVENTORY
 Set-NinjaField $env:CUSTOM_FIELD_ORPHANS_FOUND "$([int]($ORPHAN_COUNT -gt 0))"
 Set-NinjaField $env:CUSTOM_FIELD_ORPHANED_BACKUPS $HTML_ORPHANS
+Set-NinjaField $env:CUSTOM_FIELD_FAILED_BACKUP "$([int]($FAILED_COUNT -gt 0))"
+Set-NinjaField $env:CUSTOM_FIELD_FAILED_BACKUPS $HTML_FAILED
 
 # If no Ninja available and no fields set, dump HTML to console
 if (-not (Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue)) {
-    if (-not $env:CUSTOM_FIELD_S3_INVENTORY -and -not $env:CUSTOM_FIELD_ORPHANED_BACKUPS) {
+    if (-not $env:CUSTOM_FIELD_S3_INVENTORY -and -not $env:CUSTOM_FIELD_ORPHANED_BACKUPS -and -not $env:CUSTOM_FIELD_FAILED_BACKUPS) {
         Write-Host ""
         Write-Host "=== Inventory HTML ==="
         Write-Host $HTML_INVENTORY
         Write-Host ""
         Write-Host "=== Orphans HTML ==="
         Write-Host $HTML_ORPHANS
+        Write-Host ""
+        Write-Host "=== Failed Backups HTML ==="
+        Write-Host $HTML_FAILED
     }
 }
 
