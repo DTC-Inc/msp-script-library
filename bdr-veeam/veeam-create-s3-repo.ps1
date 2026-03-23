@@ -227,137 +227,178 @@ if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 }
 
 # ============================================================
-# B2 API: AUTH WITH ADMIN KEY
+# CHECK IF BUCKET + KEYS ALREADY EXIST (idempotency)
 # ============================================================
 
-Write-Host ""
-Write-Host "Authenticating to B2 with admin key..."
+# Try reading existing bucket name and scoped keys from NinjaOne
+$EXISTING_BUCKET = $null
+$EXISTING_KEY_ID = $null
+$EXISTING_APP_KEY = $null
+try {
+    if ($env:CUSTOM_FIELD_S3_BUCKET_NAME) { $EXISTING_BUCKET = Ninja-Property-Get $env:CUSTOM_FIELD_S3_BUCKET_NAME 2>$null }
+    if ($env:CUSTOM_FIELD_S3_KEY_ID) { $EXISTING_KEY_ID = Ninja-Property-Get $env:CUSTOM_FIELD_S3_KEY_ID 2>$null }
+    if ($env:CUSTOM_FIELD_S3_APP_KEY) { $EXISTING_APP_KEY = Ninja-Property-Get $env:CUSTOM_FIELD_S3_APP_KEY 2>$null }
+} catch { }
 
-$B2_SECURE_KEY = ConvertTo-SecureString $env:B2_ADMIN_APP_KEY -AsPlainText -Force
-$B2_CREDENTIAL = [PSCredential]::new($env:B2_ADMIN_KEY_ID, $B2_SECURE_KEY)
+$SKIP_B2_CREATION = $false
+if ($EXISTING_BUCKET -and $EXISTING_KEY_ID -and $EXISTING_APP_KEY) {
+    Write-Host "Existing B2 bucket and keys found in RMM:"
+    Write-Host "  Bucket:    $EXISTING_BUCKET"
+    Write-Host "  Key ID:    $EXISTING_KEY_ID"
+    Write-Host "  Skipping B2 bucket/key creation. Will create Veeam repo only."
+    Write-Host ""
+    $BUCKET_NAME = $EXISTING_BUCKET
+    $SCOPED_KEY_ID = $EXISTING_KEY_ID
+    $SCOPED_APP_KEY = $EXISTING_APP_KEY
+    # Extract short ID from existing bucket name for folder creation
+    if ($BUCKET_NAME -match '-([a-z0-9]{8})-veeam$') {
+        $BUCKET_SHORT_ID = $Matches[1]
+    }
+    $SKIP_B2_CREATION = $true
+}
 
-$B2_AUTH = $null
-$B2_API_VER = "v2"
-foreach ($VER in @("v2", "v4")) {
+$SCOPED_KEY_ID_OUT = $null
+$SCOPED_APP_KEY_OUT = $null
+
+if (-not $SKIP_B2_CREATION) {
+    # ============================================================
+    # B2 API: AUTH WITH ADMIN KEY
+    # ============================================================
+
+    Write-Host ""
+    Write-Host "Authenticating to B2 with admin key..."
+
+    $B2_SECURE_KEY = ConvertTo-SecureString $env:B2_ADMIN_APP_KEY -AsPlainText -Force
+    $B2_CREDENTIAL = [PSCredential]::new($env:B2_ADMIN_KEY_ID, $B2_SECURE_KEY)
+
+    $B2_AUTH = $null
+    $B2_API_VER = "v2"
+    foreach ($VER in @("v2", "v4")) {
+        try {
+            $B2_AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/$VER/b2_authorize_account" `
+                -Method GET `
+                -Authentication Basic `
+                -Credential $B2_CREDENTIAL `
+                -ErrorAction Stop
+            $B2_API_VER = $VER
+            break
+        } catch { }
+    }
+    if (-not $B2_AUTH) {
+        Write-Error "B2 authentication failed. Check B2_ADMIN_KEY_ID and B2_ADMIN_APP_KEY."
+        Stop-Transcript
+        exit 1
+    }
+
+    $B2_API_URL = $B2_AUTH.apiUrl
+    if (-not $B2_API_URL) { $B2_API_URL = $B2_AUTH.apiInfo.storageApi.apiUrl }
+    $B2_AUTH_TOKEN = $B2_AUTH.authorizationToken
+    $B2_ACCOUNT_ID = $B2_AUTH.accountId
+
+    Write-Host "  [OK] Account: $B2_ACCOUNT_ID (api: $B2_API_VER)"
+
+    # ============================================================
+    # CREATE B2 BUCKET
+    # ============================================================
+
+    Write-Host ""
+    Write-Host "Creating B2 bucket: $BUCKET_NAME"
+
     try {
-        $B2_AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/$VER/b2_authorize_account" `
-            -Method GET `
-            -Authentication Basic `
-            -Credential $B2_CREDENTIAL `
-            -ErrorAction Stop
-        $B2_API_VER = $VER
-        break
-    } catch { }
-}
-if (-not $B2_AUTH) {
-    Write-Error "B2 authentication failed. Check B2_ADMIN_KEY_ID and B2_ADMIN_APP_KEY."
-    Stop-Transcript
-    exit 1
-}
+        $CREATE_BODY = @{
+            accountId       = $B2_ACCOUNT_ID
+            bucketName      = $BUCKET_NAME
+            bucketType      = "allPrivate"
+            fileLockEnabled = $true
+        } | ConvertTo-Json
 
-$B2_API_URL = $B2_AUTH.apiUrl
-if (-not $B2_API_URL) { $B2_API_URL = $B2_AUTH.apiInfo.storageApi.apiUrl }
-$B2_AUTH_TOKEN = $B2_AUTH.authorizationToken
-$B2_ACCOUNT_ID = $B2_AUTH.accountId
+        $B2_BUCKET = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_bucket" `
+            -AuthToken $B2_AUTH_TOKEN -Body $CREATE_BODY
 
-Write-Host "  [OK] Account: $B2_ACCOUNT_ID (api: $B2_API_VER)"
+        Write-Host "  [OK] Bucket created: $($B2_BUCKET.bucketName) (ID: $($B2_BUCKET.bucketId))"
+    } catch {
+        Write-Error "B2 bucket creation failed: $_"
+        Stop-Transcript
+        exit 1
+    }
 
-# ============================================================
-# CREATE B2 BUCKET
-# ============================================================
-
-Write-Host ""
-Write-Host "Creating B2 bucket: $BUCKET_NAME"
-
-try {
-    $CREATE_BODY = @{
-        accountId       = $B2_ACCOUNT_ID
-        bucketName      = $BUCKET_NAME
-        bucketType      = "allPrivate"
-        fileLockEnabled = $true
-    } | ConvertTo-Json
-
-    $B2_BUCKET = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_bucket" `
-        -AuthToken $B2_AUTH_TOKEN -Body $CREATE_BODY
-
-    Write-Host "  [OK] Bucket created: $($B2_BUCKET.bucketName) (ID: $($B2_BUCKET.bucketId))"
-} catch {
-    Write-Error "B2 bucket creation failed: $_"
-    Stop-Transcript
-    exit 1
-}
-
-# Set default retention (object lock)
-try {
-    $RETENTION_BODY = @{
-        accountId        = $B2_ACCOUNT_ID
-        bucketId         = $B2_BUCKET.bucketId
-        defaultRetention = @{
-            mode   = "governance"
-            period = @{
-                duration = $IMMUTABILITY_DAYS
-                unit     = "days"
+    # Set default retention and disable versioning
+    try {
+        $UPDATE_BODY = @{
+            accountId        = $B2_ACCOUNT_ID
+            bucketId         = $B2_BUCKET.bucketId
+            defaultRetention = @{
+                mode   = "governance"
+                period = @{
+                    duration = $IMMUTABILITY_DAYS
+                    unit     = "days"
+                }
             }
-        }
-    } | ConvertTo-Json -Depth 5
+        } | ConvertTo-Json -Depth 5
 
-    Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
-        -AuthToken $B2_AUTH_TOKEN -Body $RETENTION_BODY | Out-Null
+        Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_update_bucket" `
+            -AuthToken $B2_AUTH_TOKEN -Body $UPDATE_BODY | Out-Null
 
-    Write-Host "  [OK] Default retention: $IMMUTABILITY_DAYS days (governance mode)"
-} catch {
-    Write-Warning "  Failed to set default retention: $_"
-}
+        Write-Host "  [OK] Default retention: $IMMUTABILITY_DAYS days (governance mode)"
+    } catch {
+        Write-Warning "  Failed to set default retention: $_"
+    }
 
-# ============================================================
-# CREATE SCOPED APPLICATION KEY (bucket-only access)
-# ============================================================
+    # ============================================================
+    # CREATE SCOPED APPLICATION KEY (bucket-only access)
+    # ============================================================
 
-Write-Host ""
-Write-Host "Creating scoped application key for bucket: $BUCKET_NAME"
+    Write-Host ""
+    Write-Host "Creating scoped application key for bucket: $BUCKET_NAME"
 
-$SCOPED_KEY_ID = $null
-$SCOPED_APP_KEY = $null
+    try {
+        $KEY_BODY = @{
+            accountId    = $B2_ACCOUNT_ID
+            capabilities = @(
+                "listBuckets"
+                "readBuckets"
+                "listFiles"
+                "readFiles"
+                "writeFiles"
+                "deleteFiles"
+                "readBucketEncryption"
+                "writeBucketEncryption"
+                "readBucketRetentions"
+                "writeBucketRetentions"
+                "readFileRetentions"
+                "writeFileRetentions"
+                "readFileLegalHolds"
+                "writeFileLegalHolds"
+                "bypassGovernance"
+            )
+            keyName      = $BUCKET_NAME
+            bucketId     = $B2_BUCKET.bucketId
+        } | ConvertTo-Json
 
-try {
-    $KEY_BODY = @{
-        accountId    = $B2_ACCOUNT_ID
-        capabilities = @(
-            "listBuckets"
-            "readBuckets"
-            "listFiles"
-            "readFiles"
-            "writeFiles"
-            "deleteFiles"
-            "readBucketEncryption"
-            "writeBucketEncryption"
-            "readBucketRetentions"
-            "writeBucketRetentions"
-            "readFileRetentions"
-            "writeFileRetentions"
-            "readFileLegalHolds"
-            "writeFileLegalHolds"
-            "bypassGovernance"
-        )
-        keyName      = $BUCKET_NAME
-        bucketId     = $B2_BUCKET.bucketId
-    } | ConvertTo-Json
+        $KEY_RESPONSE = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_key" `
+            -AuthToken $B2_AUTH_TOKEN -Body $KEY_BODY
 
-    $KEY_RESPONSE = Invoke-B2Api -Uri "$B2_API_URL/b2api/$B2_API_VER/b2_create_key" `
-        -AuthToken $B2_AUTH_TOKEN -Body $KEY_BODY
+        $SCOPED_KEY_ID = $KEY_RESPONSE.applicationKeyId
+        $SCOPED_APP_KEY = $KEY_RESPONSE.applicationKey
 
-    $SCOPED_KEY_ID = $KEY_RESPONSE.applicationKeyId
-    $SCOPED_APP_KEY = $KEY_RESPONSE.applicationKey
+        Write-Host "  [OK] Scoped key created: $SCOPED_KEY_ID"
+        Write-Host "  Bucket restriction: $($B2_BUCKET.bucketName) ($($B2_BUCKET.bucketId))"
+    } catch {
+        Write-Error "Failed to create scoped application key: $_"
+        Write-Host "  Bucket ($BUCKET_NAME) was created but no scoped key exists."
+        Stop-Transcript
+        exit 1
+    }
 
-    Write-Host "  [OK] Scoped key created: $SCOPED_KEY_ID"
-    Write-Host "  Capabilities: bucket-scoped read/write/delete + immutability"
-    Write-Host "  Bucket restriction: $($B2_BUCKET.bucketName) ($($B2_BUCKET.bucketId))"
-} catch {
-    Write-Error "Failed to create scoped application key: $_"
-    Write-Host "  Bucket ($BUCKET_NAME) was created but no scoped key exists."
-    Write-Host "  Create a scoped key manually in the B2 console."
-    Stop-Transcript
-    exit 1
+    # Let the scoped key propagate before Veeam tries to use it
+    Write-Host "  Waiting 5 seconds for key propagation..."
+    Start-Sleep -Seconds 5
+
+    $SCOPED_KEY_ID_OUT = $SCOPED_KEY_ID
+    $SCOPED_APP_KEY_OUT = $SCOPED_APP_KEY
+} else {
+    $SCOPED_KEY_ID_OUT = $SCOPED_KEY_ID
+    $SCOPED_APP_KEY_OUT = $SCOPED_APP_KEY
 }
 
 # ============================================================
@@ -370,8 +411,8 @@ Write-Host "Creating Veeam S3 repository: $BUCKET_NAME"
 try {
     # Add the SCOPED B2 credentials to Veeam (not the admin key)
     $VEEAM_ACCOUNT = Add-VBRAmazonAccount `
-        -AccessKey $SCOPED_KEY_ID `
-        -SecretKey $SCOPED_APP_KEY `
+        -AccessKey $SCOPED_KEY_ID_OUT `
+        -SecretKey $SCOPED_APP_KEY_OUT `
         -Description "$env:DESCRIPTION $BUCKET_NAME"
 
     Write-Host "  [OK] Veeam account added."
@@ -429,13 +470,16 @@ Write-Host "=== Complete ==="
 Write-Host "  Bucket:       $BUCKET_NAME"
 Write-Host "  Repository:   $BUCKET_NAME"
 Write-Host "  Folder:       $BUCKET_SHORT_ID"
-Write-Host "  Scoped key:   $SCOPED_KEY_ID"
+Write-Host "  Scoped key:   $SCOPED_KEY_ID_OUT"
 Write-Host "  Immutability: $IMMUTABILITY_DAYS days"
 Write-Host ""
 
-Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $BUCKET_NAME
-Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID
-Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY
+# Only write to NinjaOne if we created new B2 resources
+if (-not $SKIP_B2_CREATION) {
+    Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $BUCKET_NAME
+    Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID_OUT
+    Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY_OUT
+}
 
 Write-Host ""
 Write-Host "=== Script complete ==="
