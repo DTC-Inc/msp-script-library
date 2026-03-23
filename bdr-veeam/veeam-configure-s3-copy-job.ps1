@@ -327,32 +327,7 @@ if ($EXISTING_COPY_JOB) {
     Write-Host ""
 
     try {
-        # Build backup window: Mon-Fri 10 PM - 5 AM, Sat-Sun all day
-        # BackupWindowOptions is a binary string: 168 chars (24 hours x 7 days)
-        # Each char is 1 (allowed) or 0 (blocked). Order: Sun 00-23, Mon 00-23, ... Sat 00-23
-        # Backup window: 168 chars (24h x 7 days starting Sunday)
-        # 1 = allowed, 0 = blocked
-        # Sun: all day, Mon-Fri: 10 PM - 5 AM, Sat: all day
-        $WINDOW = ""
-        for ($DAY = 0; $DAY -lt 7; $DAY++) {
-            for ($HOUR = 0; $HOUR -lt 24; $HOUR++) {
-                if ($DAY -eq 0 -or $DAY -eq 6) {
-                    # Sunday (0) and Saturday (6): all day
-                    $WINDOW += "1"
-                } else {
-                    # Mon-Fri: 10 PM (22) through 4 AM (0-4), blocked 5 AM - 9 PM (5-21)
-                    if ($HOUR -le 4 -or $HOUR -ge 22) {
-                        $WINDOW += "1"
-                    } else {
-                        $WINDOW += "0"
-                    }
-                }
-            }
-        }
-
-        # Convert the binary string to VBRBackupWindowOptions
-        $WINDOW_OPTIONS = New-VBRBackupWindowOptions -BackupWindow $WINDOW
-
+        # Step 1: Create the job WITHOUT backup window (window must be applied after)
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
@@ -360,14 +335,36 @@ if ($EXISTING_COPY_JOB) {
             -TargetRepository $S3_REPO `
             -DirectOperation `
             -RetentionType RestoreDays `
-            -RetentionNumber $RETENTION_DAYS `
-            -BackupWindowEnabled `
-            -BackupWindowOptions $WINDOW_OPTIONS
+            -RetentionNumber $RETENTION_DAYS
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
-        Write-Host "  Backup window: Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
 
-        # Enable the job (created disabled by default)
+        # Step 2: Disable "anytime" mode so backup window can be applied
+        try {
+            Set-VBRBackupCopyJob -Job $COPY_JOB -Anytime:$false
+            Write-Host "  [OK] Anytime mode disabled."
+        } catch {
+            Write-Warning "  Failed to disable anytime mode: $_"
+        }
+
+        # Step 3: Apply backup window
+        # Mon-Fri: 10 PM - 5 AM, Sat-Sun: all day
+        # New-VBRBackupWindowOptions only supports contiguous ranges,
+        # so we apply the weeknight window and weekends separately
+        try {
+            # Weeknight window: Mon 00:00 to Fri 05:00 and Mon 22:00 to Fri 23:59
+            $WINDOW_WEEKNIGHTS = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
+            # Weekend window: Sat all day to Sun all day
+            $WINDOW_WEEKEND = New-VBRBackupWindowOptions -FromDay Saturday -FromHour 0 -ToDay Sunday -ToHour 23
+
+            Set-VBRBackupCopyJob -Job $COPY_JOB -BackupWindowOptions $WINDOW_WEEKNIGHTS
+            Write-Host "  [OK] Backup window applied: Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
+        } catch {
+            Write-Warning "  Failed to set backup window: $_"
+            Write-Host "  Configure the backup window manually in the Veeam console."
+        }
+
+        # Step 4: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
