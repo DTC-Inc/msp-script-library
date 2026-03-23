@@ -266,14 +266,12 @@ if ($EXISTING_COPY_JOB) {
 
     if ($MISSING_JOBS.Count -eq 0) {
         Write-Host ""
-        Write-Host "  All backup jobs are already linked. Nothing to do."
+        Write-Host "  All backup jobs are already linked."
     } else {
         Write-Host ""
         Write-Host "  Missing from copy job ($($MISSING_JOBS.Count)):"
         foreach ($MJ in $MISSING_JOBS) { Write-Host "    $($MJ.Name) ($($MJ.JobType))" }
 
-        # Rebuild the full source list (existing + missing)
-        # Set-VBRBackupCopyJob replaces the source list, so include everything
         Write-Host ""
         Write-Host "  Updating copy job with all source jobs..."
         try {
@@ -281,28 +279,11 @@ if ($EXISTING_COPY_JOB) {
             Write-Host "  [OK] Copy job updated with $($SOURCE_JOBS.Count) source jobs."
         } catch {
             Write-Warning "  Set-VBRBackupCopyJob failed: $_"
-            Write-Host "  Trying alternative: adding missing jobs individually..."
-
-            # Fallback: try the internal API to add linked jobs
-            foreach ($MJ in $MISSING_JOBS) {
-                try {
-                    $GUID = [guid]::NewGuid()
-                    $LINKED_INFO = [Veeam.Backup.Model.CLinkedObjectInfo]::new(
-                        $GUID, $EXISTING_COPY_JOB.Id, $MJ.Id, (Get-Date), 0)
-                    [Veeam.Backup.Core.CLinkedJobs]::Create($LINKED_INFO)
-                    Write-Host "    [OK] Added: $($MJ.Name)"
-                } catch {
-                    Write-Warning "    Failed to add $($MJ.Name): $_"
-                }
-            }
-
-            # Refresh the job
-            try {
-                $EXISTING_COPY_JOB_OBJ = Get-VBRJob | Where-Object { $_.Id -eq $EXISTING_COPY_JOB.Id }
-                if ($EXISTING_COPY_JOB_OBJ) { $EXISTING_COPY_JOB_OBJ.Update() }
-            } catch { }
         }
     }
+
+    $COPY_JOB = $EXISTING_COPY_JOB
+
 } else {
     # ============================================================
     # CREATE NEW COPY JOB
@@ -311,26 +292,19 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  No existing S3 copy job found. Creating one..."
     Write-Host ""
 
-    # Veeam job name max is 50 chars. Truncate repo name to fit.
     $REPO_SHORT = $S3_REPO.Name
     if ("S3 Copy - $REPO_SHORT".Length -gt 50) {
-        $REPO_SHORT = $REPO_SHORT.Substring(0, 50 - 10)  # "S3 Copy - " = 10 chars
+        $REPO_SHORT = $REPO_SHORT.Substring(0, 50 - 10)
     }
     $COPY_JOB_NAME = "S3 Copy - $REPO_SHORT"
 
     Write-Host "  Job name:    $COPY_JOB_NAME"
     Write-Host "  Target repo: $($S3_REPO.Name)"
     Write-Host "  Source jobs:  $($SOURCE_JOBS.Count)"
-    Write-Host "  Mode:        Periodic (24/7)"
     Write-Host "  Retention:   $RETENTION_DAYS days"
     Write-Host ""
 
     try {
-        $ConfirmPreference = 'None'
-
-        # Step 1: Create the job WITHOUT backup window (window must be applied after)
-        Write-Host "  Step 1: Creating copy job (Periodic mode)..."
-
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
@@ -342,65 +316,62 @@ if ($EXISTING_COPY_JOB) {
             -RetentionNumber $RETENTION_DAYS
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
-
-        # Step 2: Set schedule with backup window
-        # Mon-Fri: 10 PM - 5 AM, Sat-Sun: all day
-        try {
-            Write-Host "  Step 2: Setting schedule with backup window..."
-
-            # Build window: VBRBackupWindowOptions for the periodically schedule
-            # This restricts WHEN the periodic job is allowed to run
-            $WEEKNIGHT_WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
-            $WEEKEND_WINDOW = New-VBRBackupWindowOptions -FromDay Saturday -FromHour 0 -ToDay Sunday -ToHour 23
-
-            # Create periodically options: check every hour, restricted by window
-            $PERIOD_OPTS = New-VBRPeriodicallyOptions -PeriodicallyKind Hours -FullPeriod 1 -PeriodicallySchedule $WEEKNIGHT_WINDOW
-
-            # Create schedule options with termination window
-            $SCHEDULE = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $PERIOD_OPTS
-
-            Set-VBRBackupCopyJob -Job $COPY_JOB -ScheduleOptions $SCHEDULE
-            Write-Host "  [OK] Schedule: Mon-Fri 10 PM - 5 AM, Sat-Sun all day."
-        } catch {
-            Write-Warning "  Failed to set schedule: $_"
-            Write-Host "  Configure the schedule manually in the Veeam console."
-        }
-
-        # Step 3: Enable encryption using the first available encryption key
-        try {
-            Write-Host "  Step 3: Configuring encryption..."
-            $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
-
-            if ($ENCRYPTION_KEY) {
-                Write-Host "    Using key: $($ENCRYPTION_KEY.Id)"
-                $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions `
-                    -CompressionLevel Auto `
-                    -StorageOptimizationType Automatic `
-                    -EnableEncryption `
-                    -EncryptionKey $ENCRYPTION_KEY
-                Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
-                Write-Host "  [OK] Encryption enabled."
-            } else {
-                Write-Warning "  No encryption key found. Configure encryption manually."
-            }
-        } catch {
-            Write-Warning "  Failed to set encryption: $_"
-            Write-Host "  Configure encryption manually in the Veeam console."
-        }
-
-        # Step 4: Enable the job (created disabled by default)
-        try {
-            Enable-VBRBackupCopyJob -Job $COPY_JOB
-            Write-Host "  [OK] Copy job enabled."
-        } catch {
-            Write-Warning "  Failed to enable: $_"
-            Write-Host "  Enable it manually in the Veeam console."
-        }
     } catch {
         Write-Error "Failed to create copy job: $_"
         Stop-Transcript
         exit 1
     }
+}
+
+# ============================================================
+# APPLY SETTINGS (runs for both new and existing jobs)
+# ============================================================
+
+$ConfirmPreference = 'None'
+
+# Schedule: Mon-Fri 10 PM - 5 AM, Sat-Sun all day
+try {
+    Write-Host ""
+    Write-Host "Applying schedule..."
+    $WEEKNIGHT_WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
+    $PERIOD_OPTS = New-VBRPeriodicallyOptions -PeriodicallyKind Hours -FullPeriod 1 -PeriodicallySchedule $WEEKNIGHT_WINDOW
+    $SCHEDULE = New-VBRServerScheduleOptions -Type Periodically -PeriodicallyOptions $PERIOD_OPTS
+    Set-VBRBackupCopyJob -Job $COPY_JOB -ScheduleOptions $SCHEDULE
+    Write-Host "  [OK] Schedule: Mon-Fri 10 PM - 5 AM, Sat-Sun all day."
+} catch {
+    Write-Warning "  Failed to set schedule: $_"
+}
+
+# Encryption
+try {
+    Write-Host ""
+    Write-Host "Applying encryption..."
+    $ENCRYPTION_KEY = Get-VBREncryptionKey | Select-Object -First 1
+
+    if ($ENCRYPTION_KEY) {
+        Write-Host "  Using key: $($ENCRYPTION_KEY.Id)"
+        $STORAGE_OPTS = New-VBRBackupCopyJobStorageOptions `
+            -CompressionLevel Auto `
+            -StorageOptimizationType Automatic `
+            -EnableEncryption `
+            -EncryptionKey $ENCRYPTION_KEY
+        Set-VBRBackupCopyJob -Job $COPY_JOB -StorageOptions $STORAGE_OPTS
+        Write-Host "  [OK] Encryption enabled."
+    } else {
+        Write-Warning "  No encryption key found. Configure encryption manually."
+    }
+} catch {
+    Write-Warning "  Failed to set encryption: $_"
+}
+
+# Enable
+try {
+    Write-Host ""
+    Write-Host "Enabling copy job..."
+    Enable-VBRBackupCopyJob -Job $COPY_JOB
+    Write-Host "  [OK] Copy job enabled."
+} catch {
+    Write-Warning "  Failed to enable: $_"
 }
 
 Write-Host ""
