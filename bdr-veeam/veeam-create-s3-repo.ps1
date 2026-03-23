@@ -161,8 +161,14 @@ Write-Host "=== Veeam S3 Repository Creation ==="
 Write-Host "Description: $env:DESCRIPTION"
 Write-Host ""
 
-# Org UUID: inherited from org-level field in NinjaRMM, arrives as env var
-$ORG_UUID = $env:CUSTOM_FIELD_ORG_UUID
+# Org UUID: CUSTOM_FIELD_ORG_UUID contains the NinjaOne field NAME (e.g. "dtcOrgGuid").
+# We pass that to Ninja-Property-Get to read the actual UUID value.
+$ORG_UUID = $null
+if ($env:CUSTOM_FIELD_ORG_UUID) {
+    try {
+        $ORG_UUID = Ninja-Property-Get $env:CUSTOM_FIELD_ORG_UUID 2>$null
+    } catch { }
+}
 if (-not $ORG_UUID) {
     Write-Error "CUSTOM_FIELD_ORG_UUID is empty. Set the org UUID field in NinjaRMM."
     Stop-Transcript
