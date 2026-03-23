@@ -25,6 +25,12 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
     }
 }
 
+# Preload Veeam's SQLite assembly before PS7's version gets loaded
+$VEEAM_SQLITE = "C:\Program Files\Veeam\Backup and Replication\Backup\Microsoft.Data.Sqlite.dll"
+if (Test-Path $VEEAM_SQLITE) {
+    try { [System.Reflection.Assembly]::LoadFrom($VEEAM_SQLITE) | Out-Null } catch { }
+}
+
 # ============================================================
 # INPUT HANDLING
 # ============================================================
