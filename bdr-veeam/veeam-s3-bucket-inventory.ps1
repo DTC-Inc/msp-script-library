@@ -55,7 +55,7 @@ function Build-HtmlInventoryTable {
     if ($Rows.Count -eq 0) {
         $DATA_ROWS = @"
         <tr>
-            <td colspan="5" style="text-align:center;color:#6b7280;font-style:italic;padding:16px 12px;">
+            <td colspan="4" style="text-align:center;color:#6b7280;font-style:italic;padding:16px 12px;">
                 No S3-compatible object storage repositories found.
             </td>
         </tr>
@@ -70,7 +70,6 @@ function Build-HtmlInventoryTable {
             <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">$(ConvertTo-SafeHtml $ROW.RepoName)</td>
             <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">$(ConvertTo-SafeHtml $ROW.RepoType)</td>
             <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">$(ConvertTo-SafeHtml $ROW.UsedSpace)</td>
-            <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">$(ConvertTo-SafeHtml $ROW.TotalSpace)</td>
         </tr>
 "@
             $ROW_INDEX++
@@ -86,7 +85,6 @@ function Build-HtmlInventoryTable {
                 <th style="padding:10px 12px;text-align:left;font-weight:600;color:#374151;border-bottom:2px solid #d1d5db;">Repository Name</th>
                 <th style="padding:10px 12px;text-align:left;font-weight:600;color:#374151;border-bottom:2px solid #d1d5db;">Type</th>
                 <th style="padding:10px 12px;text-align:left;font-weight:600;color:#374151;border-bottom:2px solid #d1d5db;">Used Space</th>
-                <th style="padding:10px 12px;text-align:left;font-weight:600;color:#374151;border-bottom:2px solid #d1d5db;">Total Capacity</th>
             </tr>
         </thead>
         <tbody>
@@ -184,141 +182,175 @@ Write-Host "Querying S3-compatible object storage repositories..."
 $REPO_ROWS = [System.Collections.Generic.List[hashtable]]::new()
 $SCAN_TIMESTAMP = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
-# Primary method: Get-VBRObjectStorageRepository (Veeam 12+)
+# Get object storage repos
 $OBJECT_STORAGE_REPOS = $null
 try {
     $OBJECT_STORAGE_REPOS = Get-VBRObjectStorageRepository -ErrorAction Stop
-    Write-Host "  [OK] Get-VBRObjectStorageRepository returned $($OBJECT_STORAGE_REPOS.Count) repositories."
+    Write-Host "  [OK] Found $($OBJECT_STORAGE_REPOS.Count) object storage repositories."
 } catch {
-    Write-Warning "  Get-VBRObjectStorageRepository not available or failed: $_"
-    Write-Host "  Falling back to Get-VBRBackupRepository filter..."
+    Write-Warning "  Get-VBRObjectStorageRepository failed: $_"
 }
 
-# Fallback: filter all repos for S3-compatible types
-$FALLBACK_REPOS = $null
 if (-not $OBJECT_STORAGE_REPOS) {
+    # Fallback: filter Get-VBRBackupRepository for S3 types
     try {
-        $FALLBACK_REPOS = Get-VBRBackupRepository | Where-Object {
-            $_.Type -like "AmazonS3*" -or $_.Type -eq "S3Compatible"
+        $OBJECT_STORAGE_REPOS = Get-VBRBackupRepository | Where-Object {
+            $_.Type -like "AmazonS3*" -or $_.Type -eq "S3Compatible" -or $_.Type -match "S3"
         }
-        Write-Host "  [OK] Fallback found $($FALLBACK_REPOS.Count) S3-compatible repositories."
+        Write-Host "  [OK] Fallback found $($OBJECT_STORAGE_REPOS.Count) S3-compatible repositories."
     } catch {
-        Write-Warning "  Fallback repository query failed: $_"
+        Write-Warning "  Fallback query failed: $_"
     }
 }
 
-# Process Get-VBRObjectStorageRepository results (preferred path)
-if ($OBJECT_STORAGE_REPOS) {
-    foreach ($REPO in $OBJECT_STORAGE_REPOS) {
-        Write-Host "  Processing: $($REPO.Name)"
-
-        $BUCKET_NAME = "N/A"
+# Build a lookup of backup sizes per RepositoryId by summing GetAllStorages()
+Write-Host "  Calculating storage sizes from backup objects..."
+$SIZE_BY_REPO_ID = @{}
+try {
+    $ALL_BACKUPS = Get-VBRBackup
+    foreach ($BACKUP in $ALL_BACKUPS) {
+        $RID = $BACKUP.RepositoryId.ToString()
+        if (-not $SIZE_BY_REPO_ID.ContainsKey($RID)) {
+            $SIZE_BY_REPO_ID[$RID] = [long]0
+        }
         try {
-            if ($REPO.BucketName)    { $BUCKET_NAME = $REPO.BucketName }
-            elseif ($REPO.Bucket)    { $BUCKET_NAME = $REPO.Bucket }
-            elseif ($REPO.AmazonS3Folder -and $REPO.AmazonS3Folder.BucketName) { $BUCKET_NAME = $REPO.AmazonS3Folder.BucketName }
-        } catch { }
-
-        $ENDPOINT = "N/A"
-        try {
-            if ($REPO.ConnectionInfo -and $REPO.ConnectionInfo.Endpoint) { $ENDPOINT = $REPO.ConnectionInfo.Endpoint }
-            elseif ($REPO.ServicePoint)  { $ENDPOINT = $REPO.ServicePoint }
-            elseif ($REPO.Endpoint)      { $ENDPOINT = $REPO.Endpoint }
-        } catch { }
-
-        $USED_SPACE_DISPLAY = "N/A"
-        try {
-            if ($null -ne $REPO.UsedSpace -and $REPO.UsedSpace -gt 0) {
-                $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $REPO.UsedSpace
-            } elseif ($null -ne $REPO.UsedSpaceGB -and $REPO.UsedSpaceGB -gt 0) {
-                $USED_SPACE_DISPLAY = "{0:N2} GB" -f $REPO.UsedSpaceGB
+            $STORAGES = $BACKUP.GetAllStorages()
+            foreach ($ST in $STORAGES) {
+                # Try multiple known size properties on storage objects
+                $ST_SIZE = 0
+                try { if ($ST.Stats -and $ST.Stats.BackupSize -gt 0) { $ST_SIZE = $ST.Stats.BackupSize } } catch {}
+                if ($ST_SIZE -eq 0) { try { if ($ST.BackupSize -gt 0) { $ST_SIZE = $ST.BackupSize } } catch {} }
+                if ($ST_SIZE -eq 0) { try { if ($ST.DataSize -gt 0) { $ST_SIZE = $ST.DataSize } } catch {} }
+                $SIZE_BY_REPO_ID[$RID] += $ST_SIZE
             }
         } catch { }
-
-        $TOTAL_SPACE_DISPLAY = "N/A"
-        try {
-            if ($null -ne $REPO.TotalSpace -and $REPO.TotalSpace -gt 0) {
-                $TOTAL_SPACE_DISPLAY = Format-SizeBytes -Bytes $REPO.TotalSpace
-            }
-        } catch { }
-
-        $REPO_TYPE = "N/A"
-        try {
-            if ($REPO.Type) { $REPO_TYPE = $REPO.Type.ToString() }
-        } catch { }
-
-        $REPO_ROWS.Add(@{
-            RepoName    = $REPO.Name
-            BucketName  = $BUCKET_NAME
-            Endpoint    = $ENDPOINT
-            RepoType    = $REPO_TYPE
-            UsedSpace   = $USED_SPACE_DISPLAY
-            TotalSpace  = $TOTAL_SPACE_DISPLAY
-        })
     }
+} catch {
+    Write-Warning "  Could not enumerate backups for size calculation: $_"
 }
 
-# Process fallback results (Get-VBRBackupRepository filtered)
-if ($FALLBACK_REPOS) {
-    foreach ($REPO in $FALLBACK_REPOS) {
-        Write-Host "  Processing (fallback): $($REPO.Name)"
+# Also try getting size from backup copy jobs via TargetRepository
+Write-Host "  Checking backup copy jobs for additional repo details..."
+$COPY_JOB_REPOS = @{}
+try {
+    $COPY_JOBS = Get-VBRBackupCopyJob -ErrorAction Stop
+    foreach ($CJ in $COPY_JOBS) {
+        if ($null -ne $CJ.TargetRepository) {
+            $TR = $CJ.TargetRepository
+            $COPY_JOB_REPOS[$TR.Id.ToString()] = $TR
+        }
+    }
+    Write-Host "  [OK] Found $($COPY_JOBS.Count) backup copy jobs."
+} catch {
+    Write-Warning "  Get-VBRBackupCopyJob failed: $_"
+}
 
-        $BUCKET_NAME = "N/A"
+# Process each S3 repo
+foreach ($REPO in $OBJECT_STORAGE_REPOS) {
+    Write-Host "  Processing: $($REPO.Name)"
+    $REPO_ID = $REPO.Id.ToString()
+
+    # --- BUCKET NAME ---
+    # Try multiple paths to find the bucket name from sub-objects
+    $BUCKET_NAME = "N/A"
+
+    # Path 1: ArchiveRepository sub-object
+    try {
+        $AR = $REPO.ArchiveRepository
+        if ($null -ne $AR) {
+            if ($AR.BucketName)      { $BUCKET_NAME = $AR.BucketName }
+            elseif ($AR.Bucket)      { $BUCKET_NAME = $AR.Bucket }
+            elseif ($AR.AmazonS3Folder -and $AR.AmazonS3Folder.BucketName) { $BUCKET_NAME = $AR.AmazonS3Folder.BucketName }
+        }
+    } catch { }
+
+    # Path 2: AmazonCompatibleOptions / Options sub-object
+    if ($BUCKET_NAME -eq "N/A") {
         try {
-            $EXTENTS = $null
-            if ($REPO.PSObject.Methods.Name -contains 'GetExtentList') {
-                $EXTENTS = $REPO.GetExtentList()
-            }
-            if ($EXTENTS) {
-                $FIRST_EXTENT = $EXTENTS | Select-Object -First 1
-                if ($FIRST_EXTENT.AmazonS3Folder -and $FIRST_EXTENT.AmazonS3Folder.BucketName) {
-                    $BUCKET_NAME = $FIRST_EXTENT.AmazonS3Folder.BucketName
-                }
-            }
-
-            if ($BUCKET_NAME -eq "N/A") {
-                if ($REPO.AmazonS3Folder -and $REPO.AmazonS3Folder.BucketName) { $BUCKET_NAME = $REPO.AmazonS3Folder.BucketName }
-                elseif ($REPO.Info -and $REPO.Info.BucketName)                 { $BUCKET_NAME = $REPO.Info.BucketName }
-                elseif ($REPO.BucketName)                                       { $BUCKET_NAME = $REPO.BucketName }
+            $OPTS = $REPO.AmazonCompatibleOptions
+            if ($null -eq $OPTS) { $OPTS = $REPO.AmazonOptions }
+            if ($null -eq $OPTS) { $OPTS = $REPO.Options }
+            if ($null -ne $OPTS) {
+                if ($OPTS.BucketName)  { $BUCKET_NAME = $OPTS.BucketName }
+                elseif ($OPTS.Bucket)  { $BUCKET_NAME = $OPTS.Bucket }
+                elseif ($OPTS.AmazonS3Folder -and $OPTS.AmazonS3Folder.BucketName) { $BUCKET_NAME = $OPTS.AmazonS3Folder.BucketName }
             }
         } catch { }
+    }
 
-        $ENDPOINT = "N/A"
+    # Path 3: Direct top-level properties
+    if ($BUCKET_NAME -eq "N/A") {
+        try { if ($REPO.BucketName) { $BUCKET_NAME = $REPO.BucketName } } catch {}
+        try { if ($BUCKET_NAME -eq "N/A" -and $REPO.Bucket) { $BUCKET_NAME = $REPO.Bucket } } catch {}
+        try { if ($BUCKET_NAME -eq "N/A" -and $REPO.AmazonS3Folder -and $REPO.AmazonS3Folder.BucketName) { $BUCKET_NAME = $REPO.AmazonS3Folder.BucketName } } catch {}
+    }
+
+    # Path 4: Copy job TargetRepository (richer object from Get-VBRBackupCopyJob)
+    if ($BUCKET_NAME -eq "N/A" -and $COPY_JOB_REPOS.ContainsKey($REPO_ID)) {
+        $CJ_TR = $COPY_JOB_REPOS[$REPO_ID]
         try {
-            if ($REPO.ServicePoint)                        { $ENDPOINT = $REPO.ServicePoint }
-            elseif ($REPO.Info -and $REPO.Info.Endpoint)  { $ENDPOINT = $REPO.Info.Endpoint }
+            $CJ_AR = $CJ_TR.ArchiveRepository
+            if ($null -ne $CJ_AR) {
+                if ($CJ_AR.BucketName)  { $BUCKET_NAME = $CJ_AR.BucketName }
+                elseif ($CJ_AR.Bucket)  { $BUCKET_NAME = $CJ_AR.Bucket }
+            }
         } catch { }
+        if ($BUCKET_NAME -eq "N/A") {
+            try {
+                $CJ_OPTS = $CJ_TR.AmazonCompatibleOptions
+                if ($null -eq $CJ_OPTS) { $CJ_OPTS = $CJ_TR.Options }
+                if ($null -ne $CJ_OPTS -and $CJ_OPTS.BucketName) { $BUCKET_NAME = $CJ_OPTS.BucketName }
+            } catch { }
+        }
+    }
 
-        $USED_SPACE_DISPLAY = "N/A"
-        $TOTAL_SPACE_DISPLAY = "N/A"
+    # Path 5: Info sub-object
+    if ($BUCKET_NAME -eq "N/A") {
+        try {
+            $INFO = $REPO.Info
+            if ($null -ne $INFO) {
+                if ($INFO.BucketName) { $BUCKET_NAME = $INFO.BucketName }
+            }
+        } catch { }
+    }
+
+    # --- USED SPACE ---
+    $USED_SPACE_DISPLAY = "N/A"
+
+    # Try direct repo properties first
+    try { if ($null -ne $REPO.UsedSpace -and $REPO.UsedSpace -gt 0) { $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $REPO.UsedSpace } } catch {}
+    if ($USED_SPACE_DISPLAY -eq "N/A") {
+        try { if ($null -ne $REPO.UsedSpaceGB -and $REPO.UsedSpaceGB -gt 0) { $USED_SPACE_DISPLAY = "{0:N2} GB" -f $REPO.UsedSpaceGB } } catch {}
+    }
+
+    # Fall back to summed storage sizes from backup objects
+    if ($USED_SPACE_DISPLAY -eq "N/A" -and $SIZE_BY_REPO_ID.ContainsKey($REPO_ID) -and $SIZE_BY_REPO_ID[$REPO_ID] -gt 0) {
+        $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $SIZE_BY_REPO_ID[$REPO_ID]
+    }
+
+    # Try CachedTotalSpace/CachedFreeSpace from Info
+    if ($USED_SPACE_DISPLAY -eq "N/A") {
         try {
             $CACHED_TOTAL = $REPO.Info.CachedTotalSpace
             $CACHED_FREE  = $REPO.Info.CachedFreeSpace
-            if ($null -ne $CACHED_TOTAL -and $CACHED_TOTAL -gt 0) {
-                $TOTAL_SPACE_DISPLAY = Format-SizeBytes -Bytes $CACHED_TOTAL
-                if ($null -ne $CACHED_FREE) {
-                    $USED_BYTES = $CACHED_TOTAL - $CACHED_FREE
-                    if ($USED_BYTES -ge 0) {
-                        $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $USED_BYTES
-                    }
-                }
+            if ($null -ne $CACHED_TOTAL -and $CACHED_TOTAL -gt 0 -and $null -ne $CACHED_FREE) {
+                $USED_BYTES = $CACHED_TOTAL - $CACHED_FREE
+                if ($USED_BYTES -ge 0) { $USED_SPACE_DISPLAY = Format-SizeBytes -Bytes $USED_BYTES }
             }
         } catch { }
-
-        $REPO_TYPE = "N/A"
-        try {
-            if ($REPO.Type) { $REPO_TYPE = $REPO.Type.ToString() }
-        } catch { }
-
-        $REPO_ROWS.Add(@{
-            RepoName    = $REPO.Name
-            BucketName  = $BUCKET_NAME
-            Endpoint    = $ENDPOINT
-            RepoType    = $REPO_TYPE
-            UsedSpace   = $USED_SPACE_DISPLAY
-            TotalSpace  = $TOTAL_SPACE_DISPLAY
-        })
     }
+
+    # --- REPO TYPE ---
+    $REPO_TYPE = "N/A"
+    try { if ($REPO.Type) { $REPO_TYPE = $REPO.Type.ToString() } } catch {}
+    try { if ($REPO_TYPE -eq "N/A" -and $REPO.TypeDisplay) { $REPO_TYPE = $REPO.TypeDisplay } } catch {}
+
+    $REPO_ROWS.Add(@{
+        RepoName   = $REPO.Name
+        BucketName = $BUCKET_NAME
+        RepoType   = $REPO_TYPE
+        UsedSpace  = $USED_SPACE_DISPLAY
+    })
 }
 
 
@@ -335,9 +367,7 @@ if ($REPO_ROWS.Count -eq 0) {
         Write-Host "  Repo:       $($ROW.RepoName)"
         Write-Host "  Bucket:     $($ROW.BucketName)"
         Write-Host "  Type:       $($ROW.RepoType)"
-        Write-Host "  Endpoint:   $($ROW.Endpoint)"
         Write-Host "  Used Space: $($ROW.UsedSpace)"
-        Write-Host "  Total:      $($ROW.TotalSpace)"
         Write-Host ""
     }
 }
