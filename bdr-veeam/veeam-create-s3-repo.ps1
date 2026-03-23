@@ -278,6 +278,7 @@ try {
 # Set default retention (object lock)
 try {
     $RETENTION_BODY = @{
+        accountId        = $B2_ACCOUNT_ID
         bucketId         = $B2_BUCKET.bucketId
         defaultRetention = @{
             mode   = "governance"
