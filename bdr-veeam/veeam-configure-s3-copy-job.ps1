@@ -321,7 +321,7 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  Job name:    $COPY_JOB_NAME"
     Write-Host "  Target repo: $($S3_REPO.Name)"
     Write-Host "  Source jobs:  $($SOURCE_JOBS.Count)"
-    Write-Host "  Mode:        Immediate"
+    Write-Host "  Mode:        Periodic (daily at 10 PM)"
     Write-Host "  Window:      Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
     Write-Host "  Retention:   $RETENTION_DAYS days"
     Write-Host ""
@@ -330,35 +330,26 @@ if ($EXISTING_COPY_JOB) {
         $ConfirmPreference = 'None'
 
         # Step 1: Create the job WITHOUT backup window (window must be applied after)
-        Write-Host "  Step 1: Creating copy job (Immediate mode)..."
+        Write-Host "  Step 1: Creating copy job (Periodic mode)..."
+
+        # Schedule: daily at 10 PM
+        $SCHEDULE = New-VBRServerScheduleOptions -Type Daily -DailyOptions (New-VBRDailyOptions -Type Everyday) -Period "22:00"
+
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
             -BackupJob $SOURCE_JOBS `
             -TargetRepository $S3_REPO `
             -DirectOperation `
-            -Mode Immediate `
+            -Mode Periodic `
+            -ScheduleOptions $SCHEDULE `
             -RetentionType RestoreDays `
             -RetentionNumber $RETENTION_DAYS
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
+        Write-Host "  Schedule: Daily at 10 PM"
 
-        # Step 2: Apply backup window (Mon-Fri 10 PM - 5 AM, Sat-Sun all day)
-        try {
-            Write-Host "  Step 2: Disabling anytime mode..."
-            Set-VBRBackupCopyJob -Job $COPY_JOB -AnyTime:$false
-            Write-Host "  [OK] Anytime disabled."
-
-            Write-Host "  Step 3: Applying backup window..."
-            $WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
-            Set-VBRBackupCopyJob -Job $COPY_JOB -BackupWindowOptions $WINDOW
-            Write-Host "  [OK] Backup window applied."
-        } catch {
-            Write-Warning "  Failed to set backup window: $_"
-            Write-Host "  Set the backup window manually in the Veeam console."
-        }
-
-        # Step 4: Enable the job (created disabled by default)
+        # Step 2: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
