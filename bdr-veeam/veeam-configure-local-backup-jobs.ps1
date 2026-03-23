@@ -39,6 +39,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     if (Test-Path $VEEAM_BACKUP_DIR) {
         $null = [System.AppDomain]::CurrentDomain.add_AssemblyResolve({
             param($sender, $args)
+            if (-not $args.Name) { return $null }
             $ASSEMBLY_NAME = [System.Reflection.AssemblyName]::new($args.Name)
             $VEEAM_DLL = Join-Path "C:\Program Files\Veeam\Backup and Replication\Backup" "$($ASSEMBLY_NAME.Name).dll"
             if (Test-Path $VEEAM_DLL) {

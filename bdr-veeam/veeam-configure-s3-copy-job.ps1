@@ -40,6 +40,7 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
     if (Test-Path $VEEAM_BACKUP_DIR) {
         $null = [System.AppDomain]::CurrentDomain.add_AssemblyResolve({
             param($sender, $args)
+            if (-not $args.Name) { return $null }
             $ASSEMBLY_NAME = [System.Reflection.AssemblyName]::new($args.Name)
             $VEEAM_DLL = Join-Path "C:\Program Files\Veeam\Backup and Replication\Backup" "$($ASSEMBLY_NAME.Name).dll"
             if (Test-Path $VEEAM_DLL) {
@@ -310,7 +311,12 @@ if ($EXISTING_COPY_JOB) {
     Write-Host "  No existing S3 copy job found. Creating one..."
     Write-Host ""
 
-    $COPY_JOB_NAME = "S3 Copy - $($S3_REPO.Name)"
+    # Veeam job name max is 50 chars. Truncate repo name to fit.
+    $REPO_SHORT = $S3_REPO.Name
+    if ("S3 Copy - $REPO_SHORT".Length -gt 50) {
+        $REPO_SHORT = $REPO_SHORT.Substring(0, 50 - 10)  # "S3 Copy - " = 10 chars
+    }
+    $COPY_JOB_NAME = "S3 Copy - $REPO_SHORT"
 
     Write-Host "  Job name:    $COPY_JOB_NAME"
     Write-Host "  Target repo: $($S3_REPO.Name)"
