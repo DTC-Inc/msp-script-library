@@ -108,29 +108,25 @@ $SCRIPT_LOG_NAME = "veeam-s3-bucket-inventory.log"
 # ============================================================
 
 if ($env:RMM -ne "1") {
-    # Interactive mode
+    # Interactive mode - prompt and store directly in env vars
     $VALID_INPUT = 0
     while ($VALID_INPUT -ne 1) {
-        $DESCRIPTION = Read-Host "Please enter the ticket # and/or your initials (used for audit trail)"
-        if ($DESCRIPTION) {
+        $env:DESCRIPTION = Read-Host "Please enter the ticket # and/or your initials (used for audit trail)"
+        if ($env:DESCRIPTION) {
             $VALID_INPUT = 1
         } else {
             Write-Host "Invalid input. Please try again."
         }
     }
 
-    $CUSTOM_FIELD_S3_INVENTORY = Read-Host "Enter the NinjaOne WYSIWYG custom field name to write the inventory table to (leave blank to skip)"
+    $env:CUSTOM_FIELD_S3_INVENTORY = Read-Host "Enter the NinjaOne WYSIWYG custom field name to write the inventory table to (leave blank to skip)"
 
     $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 
 } else {
-    # RMM mode
-    $DESCRIPTION               = $env:DESCRIPTION
-    $CUSTOM_FIELD_S3_INVENTORY = $env:CUSTOM_FIELD_S3_INVENTORY
-    $RMM_SCRIPT_PATH           = $env:RMM_SCRIPT_PATH
-
-    if ($RMM_SCRIPT_PATH) {
-        $LOG_DIR = "$RMM_SCRIPT_PATH\logs"
+    # RMM mode - env vars are already set by the RMM platform
+    if ($env:RMM_SCRIPT_PATH) {
+        $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
         if (-not (Test-Path $LOG_DIR)) {
             New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null
         }
@@ -139,9 +135,9 @@ if ($env:RMM -ne "1") {
         $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
     }
 
-    if (-not $DESCRIPTION) {
+    if (-not $env:DESCRIPTION) {
         Write-Host "DESCRIPTION is null. This was most likely run automatically from the RMM with no description passed."
-        $DESCRIPTION = "No Description"
+        $env:DESCRIPTION = "No Description"
     }
 }
 
@@ -152,11 +148,11 @@ if ($env:RMM -ne "1") {
 Start-Transcript -Path $LOG_PATH
 
 Write-Host "=== Veeam S3 Bucket Inventory ==="
-Write-Host "Description:  $DESCRIPTION"
+Write-Host "Description:  $env:DESCRIPTION"
 Write-Host "Log path:     $LOG_PATH"
 Write-Host "RMM mode:     $($env:RMM -eq '1')"
 Write-Host "PS version:   $($PSVersionTable.PSVersion)"
-Write-Host "Custom field: $CUSTOM_FIELD_S3_INVENTORY"
+Write-Host "Custom field: $env:CUSTOM_FIELD_S3_INVENTORY"
 Write-Host ""
 
 # ------------------------------------------------------------
@@ -372,14 +368,14 @@ Write-Host "HTML table built ($($HTML_TABLE.Length) characters)."
 # ------------------------------------------------------------
 # Write to NinjaOne WYSIWYG custom field
 # ------------------------------------------------------------
-if ($CUSTOM_FIELD_S3_INVENTORY) {
+if ($env:CUSTOM_FIELD_S3_INVENTORY) {
     Write-Host ""
-    Write-Host "Writing to NinjaOne custom field: $CUSTOM_FIELD_S3_INVENTORY"
+    Write-Host "Writing to NinjaOne custom field: $env:CUSTOM_FIELD_S3_INVENTORY"
 
     $NINJA_CMD = Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue
     if ($NINJA_CMD) {
         try {
-            Ninja-Property-Set $CUSTOM_FIELD_S3_INVENTORY $HTML_TABLE
+            Ninja-Property-Set $env:CUSTOM_FIELD_S3_INVENTORY $HTML_TABLE
             Write-Host "  [OK] Custom field updated successfully."
         } catch {
             Write-Warning "  Failed to write to NinjaOne custom field: $_"
