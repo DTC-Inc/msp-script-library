@@ -327,7 +327,10 @@ if ($EXISTING_COPY_JOB) {
     Write-Host ""
 
     try {
+        $ConfirmPreference = 'None'
+
         # Step 1: Create the job WITHOUT backup window (window must be applied after)
+        Write-Host "  Step 1: Creating copy job..."
         $COPY_JOB = Add-VBRBackupCopyJob `
             -Name $COPY_JOB_NAME `
             -Description "$env:DESCRIPTION" `
@@ -339,32 +342,19 @@ if ($EXISTING_COPY_JOB) {
 
         Write-Host "  [OK] Copy job created: $($COPY_JOB.Name)"
 
-        # Step 2: Disable "anytime" mode so backup window can be applied
+        # Step 2: Apply backup window (Mon-Fri 10 PM - 5 AM, Sat-Sun all day)
         try {
+            Write-Host "  Step 2: Applying backup window..."
             Set-VBRBackupCopyJob -Job $COPY_JOB -Anytime:$false
-            Write-Host "  [OK] Anytime mode disabled."
-        } catch {
-            Write-Warning "  Failed to disable anytime mode: $_"
-        }
-
-        # Step 3: Apply backup window
-        # Mon-Fri: 10 PM - 5 AM, Sat-Sun: all day
-        # New-VBRBackupWindowOptions only supports contiguous ranges,
-        # so we apply the weeknight window and weekends separately
-        try {
-            # Weeknight window: Mon 00:00 to Fri 05:00 and Mon 22:00 to Fri 23:59
-            $WINDOW_WEEKNIGHTS = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
-            # Weekend window: Sat all day to Sun all day
-            $WINDOW_WEEKEND = New-VBRBackupWindowOptions -FromDay Saturday -FromHour 0 -ToDay Sunday -ToHour 23
-
-            Set-VBRBackupCopyJob -Job $COPY_JOB -BackupWindowOptions $WINDOW_WEEKNIGHTS
-            Write-Host "  [OK] Backup window applied: Mon-Fri 10 PM - 5 AM, Sat-Sun all day"
+            $WINDOW = New-VBRBackupWindowOptions -FromDay Monday -FromHour 22 -ToDay Friday -ToHour 5
+            Set-VBRBackupCopyJob -Job $COPY_JOB -BackupWindowOptions $WINDOW
+            Write-Host "  [OK] Backup window applied."
         } catch {
             Write-Warning "  Failed to set backup window: $_"
-            Write-Host "  Configure the backup window manually in the Veeam console."
+            Write-Host "  Set the backup window manually in the Veeam console."
         }
 
-        # Step 4: Enable the job (created disabled by default)
+        # Step 3: Enable the job (created disabled by default)
         try {
             Enable-VBRBackupCopyJob -Job $COPY_JOB
             Write-Host "  [OK] Copy job enabled."
