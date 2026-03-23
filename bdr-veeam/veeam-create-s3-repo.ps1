@@ -84,18 +84,23 @@ function Invoke-B2Api {
 }
 
 function Set-NinjaField {
-    param([string]$FieldName, [string]$Value)
+    param(
+        [string]$FieldName,
+        [string]$Value,
+        [switch]$Secret
+    )
     if (-not $FieldName) { return }
+    $DISPLAY = if ($Secret -and $Value.Length -gt 4) { "$($Value.Substring(0, 4))***" } else { $Value }
     $NINJA_CMD = Get-Command "Ninja-Property-Set" -ErrorAction SilentlyContinue
     if ($NINJA_CMD) {
         try {
             Ninja-Property-Set $FieldName $Value
-            Write-Host "  [OK] $FieldName = $Value"
+            Write-Host "  [OK] $FieldName = $DISPLAY"
         } catch {
             Write-Warning "  Failed to write $FieldName : $_"
         }
     } else {
-        Write-Host "  [SKIP] Ninja-Property-Set not available. $FieldName = $Value"
+        Write-Host "  [SKIP] Ninja-Property-Set not available. $FieldName = $DISPLAY"
     }
 }
 
@@ -244,7 +249,7 @@ $SKIP_B2_CREATION = $false
 if ($EXISTING_BUCKET -and $EXISTING_KEY_ID -and $EXISTING_APP_KEY) {
     Write-Host "Existing B2 bucket and keys found in RMM:"
     Write-Host "  Bucket:    $EXISTING_BUCKET"
-    Write-Host "  Key ID:    $EXISTING_KEY_ID"
+    Write-Host "  Key ID:    $($EXISTING_KEY_ID.Substring(0, [Math]::Min(8, $EXISTING_KEY_ID.Length)))..."
     Write-Host "  Skipping B2 bucket/key creation. Will create Veeam repo only."
     Write-Host ""
     $BUCKET_NAME = $EXISTING_BUCKET
@@ -395,7 +400,7 @@ if (-not $SKIP_B2_CREATION) {
         $SCOPED_KEY_ID = $KEY_RESPONSE.applicationKeyId
         $SCOPED_APP_KEY = $KEY_RESPONSE.applicationKey
 
-        Write-Host "  [OK] Scoped key created: $SCOPED_KEY_ID"
+        Write-Host "  [OK] Scoped key created: $($SCOPED_KEY_ID.Substring(0, [Math]::Min(8, $SCOPED_KEY_ID.Length)))..."
         Write-Host "  Bucket restriction: $($B2_BUCKET.bucketName) ($($B2_BUCKET.bucketId))"
     } catch {
         Write-Error "Failed to create scoped application key: $_"
@@ -411,8 +416,8 @@ if (-not $SKIP_B2_CREATION) {
     Write-Host ""
     Write-Host "Saving B2 credentials to NinjaOne..."
     Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $BUCKET_NAME
-    Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID_OUT
-    Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY_OUT
+    Set-NinjaField $env:CUSTOM_FIELD_S3_KEY_ID $SCOPED_KEY_ID_OUT -Secret
+    Set-NinjaField $env:CUSTOM_FIELD_S3_APP_KEY $SCOPED_APP_KEY_OUT -Secret
 
     # Let the scoped key propagate before Veeam tries to use it
     Write-Host "  Waiting 5 seconds for key propagation..."
@@ -514,7 +519,7 @@ Write-Host "=== Complete ==="
 Write-Host "  Bucket:       $BUCKET_NAME"
 Write-Host "  Repository:   $BUCKET_NAME"
 Write-Host "  Folder:       $BUCKET_SHORT_ID"
-Write-Host "  Scoped key:   $SCOPED_KEY_ID_OUT"
+Write-Host "  Scoped key:   $($SCOPED_KEY_ID_OUT.Substring(0, [Math]::Min(8, $SCOPED_KEY_ID_OUT.Length)))..."
 Write-Host "  Immutability: $IMMUTABILITY_DAYS days"
 Write-Host ""
 
