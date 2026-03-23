@@ -501,7 +501,6 @@ try {
         ImmutabilityPeriod          = $IMMUTABILITY_DAYS
         EnableBucketAutoProvision   = $false
         Description                 = "$env:DESCRIPTION $BUCKET_NAME"
-        Confirm                     = $false
     }
 
     $VEEAM_REPO = Add-VBRAmazonS3CompatibleRepository @REPO_PARAMS
