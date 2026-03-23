@@ -140,13 +140,21 @@ Write-Host "=== Veeam S3 Repository Creation ==="
 Write-Host "Description: $env:DESCRIPTION"
 Write-Host ""
 
-# Org UUID is required. Every bucket must be traceable to an org.
-if (-not $env:CUSTOM_FIELD_ORG_UUID) {
-    Write-Error "ORG_UUID is required. Set the organization UUID in NinjaRMM before running."
+# Org UUID: read from org-level NinjaOne field (device-level env vars don't
+# carry org-level fields, so we must query it explicitly)
+$ORG_UUID = $env:CUSTOM_FIELD_ORG_UUID
+if (-not $ORG_UUID) {
+    try {
+        $ORG_UUID = Ninja-Property-Get -Organization dtcOrgGuid 2>$null
+    } catch { }
+}
+if (-not $ORG_UUID) {
+    Write-Error "ORG_UUID is required. Set the dtcOrgGuid field at the organization level in NinjaRMM."
     Stop-Transcript
     exit 1
 }
-$ORG_PREFIX = $env:CUSTOM_FIELD_ORG_UUID.Replace("-", "").ToLower()
+Write-Host "Org UUID: $ORG_UUID"
+$ORG_PREFIX = $ORG_UUID.Replace("-", "").ToLower()
 
 # Generate time-based short ID for this bucket
 $BUCKET_SHORT_ID = New-TimeBasedShortId
@@ -162,7 +170,7 @@ if ($BUCKET_NAME.Length -gt 50) {
 }
 
 Write-Host "Bucket name:       $BUCKET_NAME"
-Write-Host "Org UUID:          $($env:CUSTOM_FIELD_ORG_UUID)"
+Write-Host "Org UUID:          $ORG_UUID"
 Write-Host "Org prefix:        $ORG_PREFIX"
 Write-Host "Bucket short ID:   $BUCKET_SHORT_ID"
 Write-Host "Endpoint:          $env:B2_ENDPOINT"
