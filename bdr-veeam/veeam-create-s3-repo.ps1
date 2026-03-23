@@ -198,7 +198,8 @@ if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
 Write-Host ""
 Write-Host "Authenticating to B2 with admin key..."
 
-$B2_CREDS = [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($env:B2_ADMIN_KEY_ID):$($env:B2_ADMIN_APP_KEY)"))
+$B2_SECURE_KEY = ConvertTo-SecureString $env:B2_ADMIN_APP_KEY -AsPlainText -Force
+$B2_CREDENTIAL = [PSCredential]::new($env:B2_ADMIN_KEY_ID, $B2_SECURE_KEY)
 
 $B2_AUTH = $null
 $B2_API_VER = "v2"
@@ -206,7 +207,8 @@ foreach ($VER in @("v2", "v4")) {
     try {
         $B2_AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/$VER/b2_authorize_account" `
             -Method GET `
-            -Headers @{ Authorization = "Basic $B2_CREDS" } `
+            -Authentication Basic `
+            -Credential $B2_CREDENTIAL `
             -ErrorAction Stop
         $B2_API_VER = $VER
         break

@@ -92,14 +92,16 @@ Write-Host "=== B2 Bucket Audit ==="
 Write-Host ""
 
 Write-Host "Authenticating to Backblaze B2..."
-$B2_CREDS = [Convert]::ToBase64String([System.Text.Encoding]::ASCII.GetBytes("$($env:B2_KEY_ID):$($env:B2_APP_KEY)"))
+$B2_SECURE_KEY = ConvertTo-SecureString $env:B2_APP_KEY -AsPlainText -Force
+$B2_CREDENTIAL = [PSCredential]::new($env:B2_KEY_ID, $B2_SECURE_KEY)
 
 $AUTH = $null
-foreach ($API_VER in @("v2", "v4", "v3")) {
+foreach ($API_VER in @("v2", "v4")) {
     try {
         $AUTH = Invoke-RestMethod -Uri "https://api.backblazeb2.com/b2api/$API_VER/b2_authorize_account" `
             -Method GET `
-            -Headers @{ Authorization = "Basic $B2_CREDS" } `
+            -Authentication Basic `
+            -Credential $B2_CREDENTIAL `
             -ErrorAction Stop
         Write-Host "  [OK] Authenticated via $API_VER"
         break
