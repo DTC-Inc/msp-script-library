@@ -1,0 +1,40 @@
+# ===== HYPER-V HOST AUDIT =====
+# Server Lifecycle - Quote Validation Audit SOP (BookStack Page 1787)
+# Run on the EXISTING Hyper-V host when migrating VMs to a new host.
+# All multi-line blocks compressed to single-line for safe console paste.
+
+Write-Host "===== HOST OS & HARDWARE =====" -ForegroundColor Cyan
+Get-CimInstance Win32_OperatingSystem | Select-Object CSName, Caption, Version | Format-List
+Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, TotalPhysicalMemory, NumberOfProcessors | Format-List
+Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
+
+Write-Host "===== HOST MEMORY =====" -ForegroundColor Cyan
+$os = Get-CimInstance Win32_OperatingSystem
+[PSCustomObject]@{TotalGB=[math]::Round($os.TotalVisibleMemorySize/1MB,1);FreeGB=[math]::Round($os.FreePhysicalMemory/1MB,1);UsedGB=[math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)} | Format-List
+
+Write-Host "===== HOST DISK LAYOUT =====" -ForegroundColor Cyan
+Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}}, @{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}, @{N='UsedGB';E={[math]::Round(($_.Size-$_.FreeSpace)/1GB,1)}} | Format-Table -AutoSize
+
+Write-Host "===== RAID / STORAGE CONTROLLER =====" -ForegroundColor Cyan
+Get-CimInstance Win32_SCSIController | Select-Object Name, DriverName | Format-Table -AutoSize
+
+Write-Host "===== VM INVENTORY =====" -ForegroundColor Cyan
+Get-VM | Select-Object Name, State, Generation, @{N='MemoryAssignedGB';E={[math]::Round($_.MemoryAssigned/1GB,1)}}, @{N='MemoryStartupGB';E={[math]::Round($_.MemoryStartup/1GB,1)}}, ProcessorCount, DynamicMemoryEnabled | Format-Table -AutoSize
+
+Write-Host "===== VHDX PATHS & SIZES =====" -ForegroundColor Cyan
+Get-VM | Get-VMHardDiskDrive | ForEach-Object { $vhd = Get-VHD -Path $_.Path -ErrorAction SilentlyContinue; [PSCustomObject]@{VMName=$_.VMName;Path=$_.Path;MaxSizeGB=if($vhd){[math]::Round($vhd.Size/1GB,1)}else{'ERROR'};UsedGB=if($vhd){[math]::Round($vhd.FileSize/1GB,1)}else{'ERROR'};Type=if($vhd){$vhd.VhdType}else{'N/A'}} } | Format-Table -AutoSize
+
+Write-Host "===== VM CHECKPOINTS =====" -ForegroundColor Cyan
+$snaps = Get-VM | Get-VMSnapshot -ErrorAction SilentlyContinue
+if ($snaps) { $snaps | Select-Object VMName, Name, CreationTime | Format-Table -AutoSize } else { Write-Host "No checkpoints found" }
+
+Write-Host "===== VIRTUAL SWITCHES =====" -ForegroundColor Cyan
+Get-VMSwitch | Select-Object Name, SwitchType, NetAdapterInterfaceDescription, EmbeddedTeamingEnabled | Format-Table -AutoSize
+
+Write-Host "===== HOST NETWORK ADAPTERS =====" -ForegroundColor Cyan
+Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, LinkSpeed | Format-Table -AutoSize
+
+Write-Host "===== VMQ STATUS =====" -ForegroundColor Cyan
+Get-NetAdapterVmq -ErrorAction SilentlyContinue | Select-Object Name, InterfaceDescription, Enabled | Format-Table -AutoSize
+
+Write-Host "===== HOST AUDIT COMPLETE =====" -ForegroundColor Green
