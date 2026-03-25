@@ -1,40 +1,162 @@
-# ===== HYPER-V HOST AUDIT =====
-# Server Lifecycle - Quote Validation Audit SOP (BookStack Page 1787)
-# Run on the EXISTING Hyper-V host when migrating VMs to a new host.
-# All multi-line blocks compressed to single-line for safe console paste.
+#Requires -RunAsAdministrator
+#Requires -Modules Hyper-V
+<#
+.SYNOPSIS
+    Audits an existing Hyper-V host for server lifecycle quote validation.
 
-Write-Host "===== HOST OS & HARDWARE =====" -ForegroundColor Cyan
-Get-CimInstance Win32_OperatingSystem | Select-Object CSName, Caption, Version | Format-List
-Get-CimInstance Win32_ComputerSystem | Select-Object Manufacturer, Model, TotalPhysicalMemory, NumberOfProcessors | Format-List
-Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
+.DESCRIPTION
+    Gathers comprehensive Hyper-V host information during VM migration scenarios.
+    Designed to run on the EXISTING host when migrating VMs to a new host.
 
-Write-Host "===== HOST MEMORY =====" -ForegroundColor Cyan
-$os = Get-CimInstance Win32_OperatingSystem
-[PSCustomObject]@{TotalGB=[math]::Round($os.TotalVisibleMemorySize/1MB,1);FreeGB=[math]::Round($os.FreePhysicalMemory/1MB,1);UsedGB=[math]::Round(($os.TotalVisibleMemorySize-$os.FreePhysicalMemory)/1MB,1)} | Format-List
+    Collects:
+    - Host OS, hardware, CPU, and memory details
+    - Disk layout and storage controller inventory
+    - VM inventory with memory and processor allocation
+    - VHDX paths, sizes, and types
+    - VM checkpoints (snapshots)
+    - Virtual switch configuration
+    - Physical network adapters and VMQ status
 
-Write-Host "===== HOST DISK LAYOUT =====" -ForegroundColor Cyan
-Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID, @{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}}, @{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}}, @{N='UsedGB';E={[math]::Round(($_.Size-$_.FreeSpace)/1GB,1)}} | Format-Table -AutoSize
+    Output is logged via Start-Transcript for QA evidence retention.
 
-Write-Host "===== RAID / STORAGE CONTROLLER =====" -ForegroundColor Cyan
-Get-CimInstance Win32_SCSIController | Select-Object Name, DriverName | Format-Table -AutoSize
+    Reference: Server Lifecycle - Quote Validation Audit SOP (BookStack Page 1787)
 
-Write-Host "===== VM INVENTORY =====" -ForegroundColor Cyan
-Get-VM | Select-Object Name, State, Generation, @{N='MemoryAssignedGB';E={[math]::Round($_.MemoryAssigned/1GB,1)}}, @{N='MemoryStartupGB';E={[math]::Round($_.MemoryStartup/1GB,1)}}, ProcessorCount, DynamicMemoryEnabled | Format-Table -AutoSize
+.PARAMETER LogPath
+    Directory for the transcript log file.
+    Default: $env:SystemRoot\Logs\HyperVAudit
 
-Write-Host "===== VHDX PATHS & SIZES =====" -ForegroundColor Cyan
-Get-VM | Get-VMHardDiskDrive | ForEach-Object { $vhd = Get-VHD -Path $_.Path -ErrorAction SilentlyContinue; [PSCustomObject]@{VMName=$_.VMName;Path=$_.Path;MaxSizeGB=if($vhd){[math]::Round($vhd.Size/1GB,1)}else{'ERROR'};UsedGB=if($vhd){[math]::Round($vhd.FileSize/1GB,1)}else{'ERROR'};Type=if($vhd){$vhd.VhdType}else{'N/A'}} } | Format-Table -AutoSize
+.EXAMPLE
+    .\Invoke-HyperVHostAudit.ps1
+    Run a full host audit with default log path.
 
-Write-Host "===== VM CHECKPOINTS =====" -ForegroundColor Cyan
-$snaps = Get-VM | Get-VMSnapshot -ErrorAction SilentlyContinue
-if ($snaps) { $snaps | Select-Object VMName, Name, CreationTime | Format-Table -AutoSize } else { Write-Host "No checkpoints found" }
+.EXAMPLE
+    .\Invoke-HyperVHostAudit.ps1 -LogPath "C:\AuditLogs"
+    Run audit with a custom log output directory.
 
-Write-Host "===== VIRTUAL SWITCHES =====" -ForegroundColor Cyan
-Get-VMSwitch | Select-Object Name, SwitchType, NetAdapterInterfaceDescription, EmbeddedTeamingEnabled | Format-Table -AutoSize
+.NOTES
+    Version:        1.1.0
+    Author:         AlrightLad
+    Requirements:   PowerShell 5.1+, Administrator rights, Hyper-V role installed
+#>
 
-Write-Host "===== HOST NETWORK ADAPTERS =====" -ForegroundColor Cyan
-Get-NetAdapter | Select-Object Name, InterfaceDescription, Status, LinkSpeed | Format-Table -AutoSize
+[CmdletBinding()]
+param(
+    [string]$LogPath = "$env:SystemRoot\Logs\HyperVAudit"
+)
 
-Write-Host "===== VMQ STATUS =====" -ForegroundColor Cyan
-Get-NetAdapterVmq -ErrorAction SilentlyContinue | Select-Object Name, InterfaceDescription, Enabled | Format-Table -AutoSize
+# ── Logging ──────────────────────────────────────────────────────────────────
+if (-not (Test-Path $LogPath)) {
+    New-Item -ItemType Directory -Path $LogPath -Force | Out-Null
+}
 
+$timestamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$hostname  = $env:COMPUTERNAME
+$logFile   = Join-Path $LogPath "HyperVAudit-${hostname}-${timestamp}.log"
+Start-Transcript -Path $logFile -Append
+
+# ── Helper ───────────────────────────────────────────────────────────────────
+function Write-Section {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host "===== $Title =====" -ForegroundColor Cyan
+}
+
+# ── Host OS & Hardware ───────────────────────────────────────────────────────
+Write-Section "HOST OS & HARDWARE"
+Get-CimInstance Win32_OperatingSystem |
+    Select-Object CSName, Caption, Version | Format-List
+Get-CimInstance Win32_ComputerSystem |
+    Select-Object Manufacturer, Model, TotalPhysicalMemory, NumberOfProcessors | Format-List
+Get-CimInstance Win32_Processor |
+    Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
+
+# ── Disk Layout ──────────────────────────────────────────────────────────────
+Write-Section "DISK LAYOUT"
+Get-CimInstance Win32_LogicalDisk |
+    Select-Object Name, Size, FreeSpace | Format-Table -AutoSize
+
+# ── Storage Controllers ──────────────────────────────────────────────────────
+Write-Section "STORAGE CONTROLLERS"
+Get-CimInstance Win32_SCSIController |
+    Select-Object Name, Manufacturer, DeviceID | Format-Table -AutoSize
+
+# ── Cache VM list once to avoid repeated calls and cross-section drift ───────
+$allVMs = Get-VM
+
+# ── VM Inventory ─────────────────────────────────────────────────────────────
+Write-Section "VM INVENTORY"
+$allVMs | Select-Object Name, State, Generation,
+    @{N = 'MemoryAssignedGB';  E = { [math]::Round($_.MemoryAssigned / 1GB, 1) }},
+    @{N = 'MemoryStartupGB';   E = { [math]::Round($_.MemoryStartup  / 1GB, 1) }},
+    ProcessorCount, DynamicMemoryEnabled |
+    Format-Table -AutoSize
+
+# ── VHDX Paths & Sizes ──────────────────────────────────────────────────────
+Write-Section "VHDX PATHS & SIZES"
+$allVMs | Get-VMHardDiskDrive | ForEach-Object {
+    try {
+        $vhd = Get-VHD -Path $_.Path -ErrorAction Stop
+        [PSCustomObject]@{
+            VMName    = $_.VMName
+            Path      = $_.Path
+            MaxSizeGB = [math]::Round($vhd.Size     / 1GB, 1)
+            UsedGB    = [math]::Round($vhd.FileSize  / 1GB, 1)
+            Type      = $vhd.VhdType
+        }
+    }
+    catch {
+        Write-Warning "Failed to read VHD '$($_.Path)' for VM '$($_.VMName)': $_"
+        [PSCustomObject]@{
+            VMName    = $_.VMName
+            Path      = $_.Path
+            MaxSizeGB = 'ERROR'
+            UsedGB    = 'ERROR'
+            Type      = 'N/A'
+        }
+    }
+} | Format-Table -AutoSize
+
+# ── VM Checkpoints ───────────────────────────────────────────────────────────
+Write-Section "VM CHECKPOINTS"
+try {
+    $snaps = $allVMs | Get-VMSnapshot -ErrorAction Stop
+    if ($snaps) {
+        $snaps | Select-Object VMName, Name, CreationTime | Format-Table -AutoSize
+    }
+    else {
+        Write-Host "No checkpoints found."
+    }
+}
+catch [Microsoft.HyperV.PowerShell.VirtualizationException] {
+    Write-Host "No checkpoints found."
+}
+catch {
+    Write-Warning "Failed to query checkpoints: $_"
+}
+
+# ── Virtual Switches ────────────────────────────────────────────────────────
+Write-Section "VIRTUAL SWITCHES"
+Get-VMSwitch |
+    Select-Object Name, SwitchType, NetAdapterInterfaceDescription | Format-Table -AutoSize
+
+# ── Network Adapters ────────────────────────────────────────────────────────
+Write-Section "NETWORK ADAPTERS"
+Get-NetAdapter |
+    Select-Object Name, InterfaceDescription, Status, LinkSpeed | Format-Table -AutoSize
+
+# ── VMQ Status ──────────────────────────────────────────────────────────────
+Write-Section "VMQ STATUS"
+try {
+    Get-NetAdapterVmq -ErrorAction Stop |
+        Select-Object Name, InterfaceDescription, Enabled | Format-Table -AutoSize
+}
+catch {
+    Write-Warning "VMQ data unavailable: $_"
+}
+
+# ── Done ────────────────────────────────────────────────────────────────────
+Write-Host ""
 Write-Host "===== HOST AUDIT COMPLETE =====" -ForegroundColor Green
+Write-Host "Transcript saved to: $logFile"
+
+Stop-Transcript
