@@ -100,7 +100,7 @@ foreach ($org in $ninjaOrgs) {
             id           = $haloClientId
             customfields = @(
                 [ordered]@{
-                    name  = "DTC Client GUID"
+                    name  = "CFDtcClientGuid"
                     value = $guid
                 }
             )
