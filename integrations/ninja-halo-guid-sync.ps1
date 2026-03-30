@@ -14,7 +14,7 @@ $HaloTenant       = "dtctoday"
 $HaloScope        = "read:customers edit:customers"
 
 $NinjaClientId     = "YOUR_NINJA_CLIENT_ID_IN_1Password"
-$NinjaClientSecret = 'YOUR_NINJA_CLIENT_ID_IN_1Password'
+$NinjaClientSecret = 'YOUR_NINJA_CLIENT_SECRET_IN_1Password'
 $NinjaBaseUrl      = "https://app.ninjarmm.com"
 
 # --- AUTHENTICATE: HALO ---
