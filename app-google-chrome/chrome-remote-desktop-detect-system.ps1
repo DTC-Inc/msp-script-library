@@ -1,27 +1,22 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $Description                         - Ticket # or initials for audit trail
+## $Description                          - Ticket # or initials for audit trail
 ## $CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM custom field to write the result to (default: "Remote")
 
-# Chrome Remote Desktop Detection Script
+# Chrome Remote Desktop Detection Script (SYSTEM context)
 #
-# Detects whether Chrome Remote Desktop is installed or actively running on
-# the endpoint. Designed to run in three contexts:
-#   - Daily from SYSTEM
-#   - At computer boot (SYSTEM)
-#   - At user login (current user context)
+# Detects Chrome Remote Desktop presence from the SYSTEM account.
+# Designed for daily scheduled runs and computer-boot triggers.
 #
-# Checks:
+# Checks (all SYSTEM-visible):
 #   1. HKLM uninstall registry (system-wide MSI install)
-#   2. HKCU uninstall registry for the running user (per-user install)
-#   3. Program Files install path (system-wide)
-#   4. %LOCALAPPDATA%\Google\Chrome Remote Desktop for the running user
-#   5. The "chromoting" Windows service (Chrome Remote Desktop Service)
-#   6. The remoting_host.exe process
+#   2. Program Files install path (system-wide)
+#   3. The "chromoting" Windows service (Chrome Remote Desktop Service)
+#   4. The remoting_host.exe process
 #
-# Per-user install detection (HKCU and %LOCALAPPDATA%) only fires when the
-# script runs in the user's context. SYSTEM-context runs catch system-wide
-# installs and any active service/process; the user-login run is what
-# catches per-user Chrome installs.
+# This script does NOT check HKCU or %LOCALAPPDATA% because in SYSTEM
+# context those resolve to SYSTEM's profile, which never has CRD. The
+# user-context companion script (chrome-remote-desktop-detect-user.ps1)
+# handles per-user installs at login.
 #
 # "Installed" counts as "active" for the purposes of this check, per the
 # requirement that any presence of Chrome Remote Desktop should flag the
@@ -31,8 +26,14 @@
 #   - Writes 1 (active) or 0 (not active) to a NinjaRMM custom field
 #   - Writes a detailed transcript log for troubleshooting
 #   - Exit code 0 = not active, 1 = active
+#
+# Field collision warning:
+#   This script and the user-context companion default to DIFFERENT
+#   custom field names ("Remote" vs "RemoteUser") so they don't
+#   overwrite each other. OR them together in NinjaRMM dashboards or
+#   conditions to get a single "CRD anywhere" signal.
 
-$ScriptLogName = "chrome-remote-desktop-detect.log"
+$ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
 # --- Input handling: RMM vs interactive ----------------------------------
 
@@ -74,13 +75,14 @@ if (-not (Test-Path -Path $logDir)) {
 Start-Transcript -Path $LogPath
 
 Write-Host "============================================"
-Write-Host "Chrome Remote Desktop Detection"
+Write-Host "Chrome Remote Desktop Detection (SYSTEM)"
 Write-Host "============================================"
 Write-Host ""
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 Write-Host "Custom Field: $CustomFieldGoogleChromeActiveBoolean"
+Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 
@@ -107,31 +109,6 @@ function Test-CRDInstalledHKLM {
     return $false
 }
 
-# Check HKCU uninstall keys for the running user
-# Chrome Remote Desktop is commonly installed per-user via the Chrome
-# browser and lives only in HKCU, so HKLM-only checks miss it. Only
-# meaningful when this script runs in user context (login trigger);
-# SYSTEM runs will see SYSTEM's HKCU and find nothing here.
-function Test-CRDInstalledHKCU {
-    $registryPaths = @(
-        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
-
-    foreach ($path in $registryPaths) {
-        $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
-            $_.DisplayName -like "*Chrome Remote Desktop*"
-        }
-        if ($apps) {
-            foreach ($app in $apps) {
-                Write-Host "  [HKCU] Found: $($app.DisplayName) ($($app.DisplayVersion))"
-            }
-            return $true
-        }
-    }
-    return $false
-}
-
 # Check the system-wide install path under Program Files
 function Test-CRDInstallPath {
     $installPaths = @(
@@ -143,17 +120,6 @@ function Test-CRDInstallPath {
             Write-Host "  [Path] Found install directory: $path"
             return $true
         }
-    }
-    return $false
-}
-
-# Check %LOCALAPPDATA% for the running user
-# Like the HKCU check, this is only meaningful in user context.
-function Test-CRDUserAppData {
-    $crdPath = Join-Path $env:LOCALAPPDATA "Google\Chrome Remote Desktop"
-    if (Test-Path $crdPath) {
-        Write-Host "  [LocalAppData] Found: $crdPath"
-        return $true
     }
     return $false
 }
@@ -184,12 +150,10 @@ Write-Host "Running detection checks..."
 Write-Host ""
 
 $checks = [ordered]@{
-    "HKLM Uninstall Registry"   = Test-CRDInstalledHKLM
-    "HKCU Uninstall Registry"   = Test-CRDInstalledHKCU
-    "Program Files Install"     = Test-CRDInstallPath
-    "User AppData Install"      = Test-CRDUserAppData
-    "Chromoting Service"        = Test-CRDService
-    "remoting_host Process"     = Test-CRDProcess
+    "HKLM Uninstall Registry" = Test-CRDInstalledHKLM
+    "Program Files Install"   = Test-CRDInstallPath
+    "Chromoting Service"      = Test-CRDService
+    "remoting_host Process"   = Test-CRDProcess
 }
 
 Write-Host ""
