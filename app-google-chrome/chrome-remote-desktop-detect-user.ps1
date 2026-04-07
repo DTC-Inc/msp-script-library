@@ -2,7 +2,7 @@
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
 ## $env:RMM                                          - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
 ## $env:Description                                  - Ticket # or initials for audit trail
-## $env:GoogleChromeRemoteDesktopUserStatePath       - Path to the shared user state JSON (default: "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json")
+## $env:OrgName                                      - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
 
 # Chrome Remote Desktop Detection Script (USER context)
 #
@@ -35,11 +35,24 @@
 
 $ScriptLogName = "chrome-remote-desktop-detect-user.log"
 
-# --- Default RMM environment variables if not provided -------------------
+# --- Required: $env:OrgName ----------------------------------------------
+# OrgName namespaces the shared state under %PUBLIC%\<OrgName>\rmm-db\.
+# It must be set in the RMM script preset (or interactively for testing).
 
-if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopUserStatePath)) {
-    $env:GoogleChromeRemoteDesktopUserStatePath = "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json"
+if ([string]::IsNullOrEmpty($env:OrgName)) {
+    if ($env:RMM -eq "1") {
+        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
+        exit 99
+    } else {
+        while ([string]::IsNullOrEmpty($env:OrgName)) {
+            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
+        }
+    }
 }
+
+# --- Computed paths ------------------------------------------------------
+
+$UserStatePath = "$env:PUBLIC\$env:OrgName\rmm-db\google-chrome-remote-desktop-user-active.json"
 
 # --- Input handling: RMM vs interactive ----------------------------------
 
@@ -53,12 +66,12 @@ if ($env:RMM -ne "1") {
             Write-Host "Invalid input. Please try again."
         }
     }
-    $LogPath = "$env:LOCALAPPDATA\dtc-logs\$ScriptLogName"
+    $LogPath = "$env:LOCALAPPDATA\$env:OrgName-logs\$ScriptLogName"
 } else {
     if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
         $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
     } else {
-        $LogPath = "$env:LOCALAPPDATA\dtc-logs\$ScriptLogName"
+        $LogPath = "$env:LOCALAPPDATA\$env:OrgName-logs\$ScriptLogName"
     }
     if ([string]::IsNullOrEmpty($env:Description)) {
         Write-Host "Description is null. This was most likely run automatically from the RMM."
@@ -82,7 +95,8 @@ Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
-Write-Host "User State Path: $env:GoogleChromeRemoteDesktopUserStatePath"
+Write-Host "OrgName: $env:OrgName"
+Write-Host "User State Path: $UserStatePath"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Username: $env:USERNAME"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -184,7 +198,7 @@ Write-Host ""
 
 # --- Update shared JSON state file ---------------------------------------
 
-$state = Read-CRDUserState -Path $env:GoogleChromeRemoteDesktopUserStatePath
+$state = Read-CRDUserState -Path $UserStatePath
 
 if ($isActive) {
     $state[$env:USERNAME] = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
@@ -199,8 +213,8 @@ if ($isActive) {
 }
 
 try {
-    Write-CRDUserState -Path $env:GoogleChromeRemoteDesktopUserStatePath -State $state
-    Write-Host "Wrote user state file: $env:GoogleChromeRemoteDesktopUserStatePath"
+    Write-CRDUserState -Path $UserStatePath -State $state
+    Write-Host "Wrote user state file: $UserStatePath"
 } catch {
     Write-Host "ERROR: Could not write user state file - $_"
 }

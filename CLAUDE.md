@@ -6,70 +6,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an MSP (Managed Service Provider) script library containing PowerShell scripts for automation, deployment, configuration, and management tasks across various platforms and vendors. Scripts are designed to be executed both interactively and via RMM (Remote Monitoring and Management) platforms.
 
-## Git Workflow and Branching Strategy
-
-**CRITICAL: All changes must be made in enhancement or problem branches, never directly to `main`.**
-
-### Branch Protection
-- The `main` branch represents production code deployed to customer environments
-- All script modifications must go through enhancement/problem branches and pull requests
-- Direct commits to `main` are prohibited to prevent untested code from reaching production
-
-### Workflow for All Changes
-
-1. **Create an Enhancement or Problem Branch**
-   ```bash
-   git checkout -b enhancement/descriptive-name
-   # or
-   git checkout -b problem/descriptive-name
-   ```
-   Branch naming convention: `enhancement/` or `problem/` prefix followed by descriptive name
-   - `enhancement/` - New features, improvements, or enhancements
-   - `problem/` - Bug fixes, hotfixes, or any issue resolution
-
-   Examples:
-   - `enhancement/admin-user-180day-deletion`
-   - `problem/iso-dismount-error`
-   - `problem/script-hanging-rmm`
-
-2. **Make Changes on the Branch**
-   - Make all code modifications on the enhancement or problem branch
-   - Commit changes with descriptive messages
-   - Test thoroughly in both interactive and RMM modes
-
-3. **Push Branch**
-   ```bash
-   git push -u origin enhancement/descriptive-name
-   ```
-
-4. **Create Pull Request**
-   - Create PR from your branch to `main`
-   - Include description of changes, testing performed, and RMM compatibility
-   - Wait for review and approval before merging
-
-5. **Merge to Main**
-   - Only merge after testing and approval
-   - Delete branch after successful merge
-
-### If Changes Are Accidentally Committed to Main
-
-If changes are committed and pushed to `main` before creating a proper branch:
-
-```bash
-# Revert the commit from main
-git revert <commit-hash> --no-edit
-git push
-
-# Create enhancement/problem branch and restore the changes
-git checkout -b enhancement/descriptive-name
-git cherry-pick <commit-hash>
-git push -u origin enhancement/descriptive-name
-```
-
-### Exception: Documentation Updates
-
-Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `main` if they do not affect script functionality.
-
 ## Code Architecture
 
 ### Script Structure Standard
@@ -82,13 +18,20 @@ All scripts follow a consistent three-part structure defined in `script-template
    - Each variable should be documented as a comment (e.g., `## $variableName`)
 
 2. **Input Handling Section**
-   - Detects execution context via `$RMM` variable (1 = RMM mode, undefined = interactive mode)
-   - Interactive mode: Prompts user with `Read-Host` for required inputs with validation loop
-   - RMM mode: Uses pre-set variables passed by RMM platform
+   - **All RMM-supplied variables come via environment variables** (`$env:VarName`). NinjaRMM passes script preset variables to PowerShell as environment variables, so the script must read them via `$env:` at every use site. Bare `$VarName` references resolve to `$null` in true RMM mode and silently fall through to the interactive branch.
+   - Detects execution context via `$env:RMM` — environment variables are strings, so compare against `"1"` not `1`. Anything other than `"1"` is interactive mode.
+   - Interactive mode: Prompts user with `Read-Host` for required inputs with validation loop. Write the result back to `$env:Description` so the rest of the script can keep referencing `$env:` consistently.
+   - RMM mode: Uses pre-set environment variables passed by the RMM platform. Defaults for any optional variables (custom field names, state file paths, etc.) should be set at the top of the script by writing to `$env:` directly:
+     ```powershell
+     if ([string]::IsNullOrEmpty($env:CustomFieldFooBoolean)) {
+         $env:CustomFieldFooBoolean = "fooDetected"
+     }
+     ```
    - Sets `$LogPath` based on context:
-     - Interactive: `$ENV:WINDIR\logs\`
-     - RMM: `$RMMScriptPath\logs\` (fallback to `$ENV:WINDIR\logs\` if null)
-   - Always captures `$Description` for audit trail
+     - **SYSTEM-context script, interactive:** `$env:WINDIR\logs\`
+     - **SYSTEM-context script, RMM:** `$env:RMMScriptPath\logs\` (fallback to `$env:WINDIR\logs\` if `$env:RMMScriptPath` is null)
+     - **User-context script:** `$env:LOCALAPPDATA\dtc-logs\` — `$env:WINDIR\logs\` requires admin and a user-context script will fail to write there
+   - Always captures `$env:Description` for audit trail
 
 3. **Script Logic Section**
    - Wrapped in `Start-Transcript` / `Stop-Transcript` for full logging
@@ -169,6 +112,237 @@ $output = "$env:WINDIR\temp\installer.exe"
 Invoke-WebRequest -Uri $downloadURL -OutFile $output
 Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
 ```
+
+### Application Detection Patterns
+
+When detecting whether an application is installed or active, **check every install vector** — applications can land in many places depending on how they were installed. A check that only looks at HKLM uninstall keys will miss per-user Chrome extensions, sideloaded installers, Microsoft Store apps, and anything that shipped via `%LOCALAPPDATA%`.
+
+Canonical example: `app-google-chrome/chrome-remote-desktop-detect-system.ps1` and `chrome-remote-desktop-detect-user.ps1`.
+
+**System-visible install detection** (run from SYSTEM):
+```powershell
+# 1. HKLM uninstall registry — system-wide MSI installs
+function Test-AppInstalledHKLM {
+    $registryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($path in $registryPaths) {
+        $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
+            $_.DisplayName -like "*App Name*"
+        }
+        if ($apps) { return $true }
+    }
+    return $false
+}
+
+# 2. Program Files install path
+function Test-AppInstallPath {
+    $installPaths = @(
+        "${env:ProgramFiles}\Vendor\App",
+        "${env:ProgramFiles(x86)}\Vendor\App"
+    )
+    foreach ($path in $installPaths) {
+        if (Test-Path $path) { return $true }
+    }
+    return $false
+}
+
+# 3. Windows service
+function Test-AppService {
+    $service = Get-Service -Name "appservice" -ErrorAction SilentlyContinue
+    return [bool]$service
+}
+
+# 4. Running process
+function Test-AppProcess {
+    $process = Get-Process -Name "app" -ErrorAction SilentlyContinue
+    return [bool]$process
+}
+```
+
+**User-visible install detection** (run from user context — see Cross-Context Detection below):
+```powershell
+# HKCU uninstall registry — per-user installs (e.g., Chrome extensions)
+function Test-AppInstalledHKCU {
+    $registryPaths = @(
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    foreach ($path in $registryPaths) {
+        $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
+            $_.DisplayName -like "*App Name*"
+        }
+        if ($apps) { return $true }
+    }
+    return $false
+}
+
+# %LOCALAPPDATA% install path — per-user app data
+function Test-AppUserAppData {
+    $appPath = Join-Path $env:LOCALAPPDATA "Vendor\App"
+    return (Test-Path $appPath)
+}
+```
+
+**Why check both HKCU and HKLM:** A SYSTEM-context script reading `HKCU:` resolves to SYSTEM's profile, which is empty. To catch per-user installs you must run a separate script in user context. See "Cross-Context Detection" below.
+
+### NinjaRMM Custom Field Patterns
+
+NinjaRMM custom fields come in several types and have important runtime constraints. Pick the right type up front and respect the constraints.
+
+**Field types and use cases:**
+
+| Type | Use for | Notes |
+|---|---|---|
+| **Checkbox / Boolean** | Yes/no presence flags ("Detected", "Compliant") | Write `1` or `0`. NinjaRMM stores as boolean. |
+| **Text** | Short status strings, dropdown values | Limited to 200 chars. Use for things like "User + System", "Failed", "Vulnerable". |
+| **WYSIWYG / HTML** | Rich formatted reports for technician dashboards | No 200-char limit. Use for detailed multi-line output, tables, lists, color-coded status. |
+| **Multi-line text** | Logs, transcripts, free-form notes | Larger character limit than single-line text. |
+
+**Standard write pattern** — `Ninja-Property-Set` works for all field types; the cmdlet figures out the type from the field's NinjaRMM configuration:
+```powershell
+if ($env:RMM -eq "1") {
+    try {
+        Ninja-Property-Set -Name $env:CustomFieldFooDetected -Value $detected
+        Write-Host "Wrote $detected to '$env:CustomFieldFooDetected'"
+    } catch {
+        Write-Host "ERROR: Failed to write '$env:CustomFieldFooDetected' - $_"
+    }
+}
+```
+
+**HTML field generation** — build the string with `[System.Text.StringBuilder]` for clarity, write the final string with `Ninja-Property-Set`:
+```powershell
+$htmlBuilder = [System.Text.StringBuilder]::new()
+[void]$htmlBuilder.Append('<p><strong>App Status:</strong> ')
+if ($detected) {
+    [void]$htmlBuilder.Append('<span style="color:#b22222;">Detected</span></p>')
+    [void]$htmlBuilder.Append('<ul>')
+    [void]$htmlBuilder.Append('<li><strong>Where:</strong> System, User</li>')
+    [void]$htmlBuilder.Append('</ul>')
+} else {
+    [void]$htmlBuilder.Append('<span style="color:#228b22;">Not Detected</span></p>')
+}
+$detailsHtml = $htmlBuilder.ToString()
+Ninja-Property-Set -Name $env:CustomFieldFooDetails -Value $detailsHtml
+```
+
+**`Ninja-Property-Set` and `Ninja-Property-Get` only work in SYSTEM context.** They shell out to `ninjarmm-cli.exe` which lives in a SYSTEM-only path. From a user-context script the cmdlets fall over with `"Failed to start ninjarmm-cli. Unable to find ninjarmm-cli.exe."` and — worse — that error string comes back as the apparent return value of `Ninja-Property-Get`, so naive read-modify-write logic will happily store the error message in the custom field. **Never call these cmdlets from a user-context script.** See the cross-context pattern below.
+
+**Naming convention for custom field RMM variables:** `$env:CustomField<Domain><Description>`:
+- `$env:CustomFieldGoogleChromeRemoteDesktopDetected`
+- `$env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn`
+- `$env:CustomFieldGoogleChromeRemoteDesktopFoundDetails`
+
+The default value (the actual NinjaRMM field name) should be camelCase matching the variable name without the `CustomField` prefix:
+```powershell
+if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeRemoteDesktopDetected)) {
+    $env:CustomFieldGoogleChromeRemoteDesktopDetected = "googleChromeRemoteDesktopDetected"
+}
+```
+
+### Cross-Context Detection (User + System Split)
+
+Some detection tasks need both SYSTEM-visible state (HKLM, services, processes) and per-user state (HKCU, `%LOCALAPPDATA%`). Because:
+1. `Ninja-Property-Set` only works in SYSTEM context
+2. SYSTEM context can't see per-user `HKCU` or `%LOCALAPPDATA%`
+
+… you can't do everything in one script. The pattern is **two scripts plus a shared JSON file**:
+
+**File layout:**
+- `category/<thing>-detect-system.ps1` — runs as SYSTEM, daily and at boot triggers
+- `category/<thing>-detect-user.ps1` — runs in user context, login trigger
+- Shared JSON state: `$env:PUBLIC\$env:OrgName\rmm-db\<thing>-user-active.json`
+
+**Why `$env:PUBLIC\$env:OrgName\rmm-db\`:**
+- `$env:PUBLIC` resolves to `C:\Users\Public`, which is universally writable by all authenticated users with inherited permissions, so the user-context script can write without ACL setup
+- `$env:OrgName` namespaces it per organization (e.g., `DTC`) so the same scripts are white-label friendly across MSP deployments — the org name is supplied as a required RMM preset variable
+- `rmm-db\` makes it clear this is "shared state managed by RMM scripts"
+- Each script gets its own JSON file in `rmm-db\` — keeps schemas isolated, avoids cross-script collisions
+
+**Required RMM variable for any cross-context script:**
+```powershell
+## $env:OrgName - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
+```
+
+Validate it early and fail fast in RMM mode:
+```powershell
+if ([string]::IsNullOrEmpty($env:OrgName)) {
+    if ($env:RMM -eq "1") {
+        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
+        exit 99
+    } else {
+        while ([string]::IsNullOrEmpty($env:OrgName)) {
+            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
+        }
+    }
+}
+```
+
+**Why JSON over SQLite:**
+- PowerShell handles JSON natively (`ConvertFrom-Json` / `ConvertTo-Json`) — no module install, no vendored binaries
+- State files are small (<1 KB) and single-endpoint scope, so SQLite's ACID guarantees and queryability aren't worth the deployment friction
+- Human-readable for troubleshooting; per-script files mean no schema migrations
+- Race conditions on a single endpoint are rare (login events are sequential) and the worst case is one user's entry briefly missing until their next login fixes it
+
+**JSON schema** — keep it simple, username keyed to ISO8601 timestamp:
+```json
+{
+  "WilmaGarraway": "2026-04-07T13:45:00Z",
+  "BobSmith":      "2026-04-06T09:12:00Z"
+}
+```
+
+**User-context script responsibilities:**
+1. Detect the per-user state (HKCU + `%LOCALAPPDATA%`)
+2. Read the JSON (treat missing/corrupt as empty hashtable)
+3. If active, add/update own entry with current timestamp; if not active, remove own entry
+4. Write JSON back
+5. **Never call `Ninja-Property-Set` or `Ninja-Property-Get`**
+
+**SYSTEM-context script responsibilities (sole writer to NinjaRMM):**
+1. Run system-side detection (HKLM, Program Files, services, processes)
+2. Read the JSON to learn which users are active
+3. Compute final field values:
+   - Boolean: `$systemActive -or $userActive`
+   - Context label: `"System"`, `"User"`, or `"User + System"`
+   - HTML details: pretty list of system hits + active usernames
+4. Write all NinjaRMM custom fields (one writer = no race conditions, no merge logic)
+
+**JSON helper functions** (lift these into any cross-context script):
+```powershell
+function Read-UserState {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @{} }
+    try {
+        $raw = Get-Content -Raw -Path $Path -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
+        $json = $raw | ConvertFrom-Json -ErrorAction Stop
+        $hash = @{}
+        foreach ($prop in $json.PSObject.Properties) {
+            $hash[$prop.Name] = $prop.Value
+        }
+        return $hash
+    } catch {
+        Write-Host "  Could not read existing state file (treating as empty): $_"
+        return @{}
+    }
+}
+
+function Write-UserState {
+    param([string]$Path, [hashtable]$State)
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) {
+        New-Item -Path $dir -ItemType Directory -Force | Out-Null
+    }
+    ($State | ConvertTo-Json -Depth 5) | Set-Content -Path $Path -Force
+}
+```
+
+**Stale entry handling** — for most cases, the user-context script removes its own entry on uninstall and that's enough. If you need stricter staleness (e.g., for users who never log in again), have the SYSTEM script age out entries older than N days when it reads the JSON. Keep it optional — don't add complexity until you need it.
+
+**Canonical example:** `app-google-chrome/chrome-remote-desktop-detect-system.ps1` and `app-google-chrome/chrome-remote-desktop-detect-user.ps1`.
 
 ### User Notification for Impactful Scripts
 
@@ -339,9 +513,16 @@ if ($veeamVersion -ge $requiredVersion) {
 
 ## Testing Scripts
 
-- **Interactive Testing**: Run script directly in PowerShell without setting `$RMM` variable
-- **RMM Simulation**: Set `$RMM=1` and pre-define required variables before running script
-- **Log Verification**: Always check transcript logs in `$ENV:WINDIR\logs\` after execution
+- **Interactive Testing**: Run script directly in PowerShell without setting `$env:RMM`. The script will prompt for `$env:Description` via `Read-Host`.
+- **RMM Simulation**: Set the RMM environment variables before invoking the script:
+  ```powershell
+  $env:RMM = "1"
+  $env:Description = "Test run"
+  $env:CustomFieldFooBoolean = "fooDetected"  # if applicable
+  .\your-script.ps1
+  ```
+  Remember: NinjaRMM passes preset variables as environment variables, so this is the correct way to mimic real RMM execution.
+- **Log Verification**: Always check transcript logs after execution. SYSTEM-context scripts log to `$env:WINDIR\logs\`; user-context scripts log to `$env:LOCALAPPDATA\dtc-logs\`.
 
 ## Repository Context
 
@@ -349,3 +530,16 @@ if ($veeamVersion -ge $requiredVersion) {
 - **Execution Context**: Windows endpoints, servers, and management consoles
 - **RMM Platforms**: Designed for integration with NinjaRMM, ConnectWise Automate, ConnectWise Control
 - **Target Audience**: MSP technicians and automation engineers
+
+## Git Workflow
+
+**Branching Model:**
+* `development` — default branch (HEAD), active work lands here
+* `release` — stable/production branch, merged from development when ready
+* `enhancement/{name}` — branched from development for new functionality
+* `problem/{name}` — branched from development for bug fixes and issue resolution
+* No `main` or `master` branches
+
+**GitHub Issues & Labels:**
+* New functionality uses the **enhancement** label, not "feature"
+* Configure repository labels accordingly

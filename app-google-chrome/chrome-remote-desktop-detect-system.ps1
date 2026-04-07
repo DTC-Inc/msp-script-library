@@ -3,10 +3,10 @@
 ## $env:RMM                                                  - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
 ## $env:Description                                          - Ticket # or initials for audit trail
 ## $env:RMMScriptPath                                        - Optional log directory base provided by the RMM
+## $env:OrgName                                              - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
 ## $env:CustomFieldGoogleChromeRemoteDesktopDetected         - Boolean (1/0) field name (default: "googleChromeRemoteDesktopDetected")
 ## $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn   - Text field name for context labels (default: "googleChromeRemoteDesktopContextFoundIn")
 ## $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails     - HTML field name for the formatted detail report (default: "googleChromeRemoteDesktopFoundDetails")
-## $env:GoogleChromeRemoteDesktopUserStatePath               - Path to the shared user state JSON (default: "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json")
 
 # Chrome Remote Desktop Detection Script (SYSTEM context)
 #
@@ -39,6 +39,21 @@
 
 $ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
+# --- Required: $env:OrgName ----------------------------------------------
+# OrgName namespaces the shared state under %PUBLIC%\<OrgName>\rmm-db\.
+# It must be set in the RMM script preset (or interactively for testing).
+
+if ([string]::IsNullOrEmpty($env:OrgName)) {
+    if ($env:RMM -eq "1") {
+        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
+        exit 99
+    } else {
+        while ([string]::IsNullOrEmpty($env:OrgName)) {
+            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
+        }
+    }
+}
+
 # --- Default RMM environment variables if not provided -------------------
 
 if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeRemoteDesktopDetected)) {
@@ -50,9 +65,10 @@ if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeRemoteDesktopContextFoun
 if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeRemoteDesktopFoundDetails)) {
     $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails = "googleChromeRemoteDesktopFoundDetails"
 }
-if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopUserStatePath)) {
-    $env:GoogleChromeRemoteDesktopUserStatePath = "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json"
-}
+
+# --- Computed paths ------------------------------------------------------
+
+$UserStatePath = "$env:PUBLIC\$env:OrgName\rmm-db\google-chrome-remote-desktop-user-active.json"
 
 # --- Input handling: RMM vs interactive ----------------------------------
 
@@ -95,10 +111,11 @@ Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
+Write-Host "OrgName: $env:OrgName"
 Write-Host "Detected Field: $env:CustomFieldGoogleChromeRemoteDesktopDetected"
 Write-Host "Context Field: $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn"
 Write-Host "Details Field: $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails"
-Write-Host "User State Path: $env:GoogleChromeRemoteDesktopUserStatePath"
+Write-Host "User State Path: $UserStatePath"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
@@ -194,7 +211,7 @@ $systemChecks = [ordered]@{
 
 Write-Host ""
 Write-Host "Reading user state JSON..."
-$userState = Read-CRDUserState -Path $env:GoogleChromeRemoteDesktopUserStatePath
+$userState = Read-CRDUserState -Path $UserStatePath
 $activeUsers = @($userState.Keys | Sort-Object)
 if ($activeUsers.Count -gt 0) {
     foreach ($u in $activeUsers) {
