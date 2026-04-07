@@ -1,7 +1,10 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $Description                          - Ticket # or initials for audit trail
-## $CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM boolean (1/0) custom field for THIS script's result (default: "Remote")
-## $CustomFieldGoogleChromeContextString - Name of the NinjaRMM text custom field shared with the user-context script (default: "RemoteContext")
+## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
+## $env:RMM                                  - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description                          - Ticket # or initials for audit trail
+## $env:RMMScriptPath                        - Optional log directory base provided by the RMM
+## $env:CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM boolean (1/0) custom field for THIS script's result (default: "Remote")
+## $env:CustomFieldGoogleChromeContextString - Name of the NinjaRMM text custom field shared with the user-context script (default: "RemoteContext")
 
 # Chrome Remote Desktop Detection Script (SYSTEM context)
 #
@@ -41,37 +44,42 @@
 
 $ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
+# --- Default RMM environment variables if not provided -------------------
+# NinjaRMM passes script preset variables as environment variables, so
+# every RMM-supplied input is read from $env: throughout this script.
+# Defaults are set here by writing to $env: so the rest of the script
+# can reference $env:VarName at every use site.
+
+if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeActiveBoolean)) {
+    $env:CustomFieldGoogleChromeActiveBoolean = "Remote"
+}
+if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeContextString)) {
+    $env:CustomFieldGoogleChromeContextString = "RemoteContext"
+}
+
 # --- Input handling: RMM vs interactive ----------------------------------
 
-if ($RMM -ne 1) {
+if ($env:RMM -ne "1") {
     $ValidInput = 0
     while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        if ($Description) {
+        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
+        if ($env:Description) {
             $ValidInput = 1
         } else {
             Write-Host "Invalid input. Please try again."
         }
     }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
     } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
     }
-    if ($null -eq $Description) {
+    if ([string]::IsNullOrEmpty($env:Description)) {
         Write-Host "Description is null. This was most likely run automatically from the RMM."
-        $Description = "RMM Automated Scan"
+        $env:Description = "RMM Automated Scan"
     }
-}
-
-# Default custom field names if not provided by RMM
-if ([string]::IsNullOrEmpty($CustomFieldGoogleChromeActiveBoolean)) {
-    $CustomFieldGoogleChromeActiveBoolean = "Remote"
-}
-if ([string]::IsNullOrEmpty($CustomFieldGoogleChromeContextString)) {
-    $CustomFieldGoogleChromeContextString = "RemoteContext"
 }
 
 # Ensure log directory exists before starting transcript
@@ -87,11 +95,11 @@ Write-Host "============================================"
 Write-Host "Chrome Remote Desktop Detection (SYSTEM)"
 Write-Host "============================================"
 Write-Host ""
-Write-Host "Description: $Description"
+Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
-Write-Host "Boolean Custom Field: $CustomFieldGoogleChromeActiveBoolean"
-Write-Host "Context Custom Field: $CustomFieldGoogleChromeContextString"
+Write-Host "RMM: $env:RMM"
+Write-Host "Boolean Custom Field: $env:CustomFieldGoogleChromeActiveBoolean"
+Write-Host "Context Custom Field: $env:CustomFieldGoogleChromeContextString"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
@@ -227,19 +235,19 @@ function Update-CRDContextField {
 
 # Only attempt the Ninja-Property-Set calls when running from the RMM,
 # since the cmdlets only exist inside the NinjaRMM agent context.
-if ($RMM -eq 1) {
+if ($env:RMM -eq "1") {
     try {
-        Ninja-Property-Set -Name $CustomFieldGoogleChromeActiveBoolean -Value $result
-        Write-Host "Wrote $result to NinjaRMM boolean field '$CustomFieldGoogleChromeActiveBoolean'"
+        Ninja-Property-Set -Name $env:CustomFieldGoogleChromeActiveBoolean -Value $result
+        Write-Host "Wrote $result to NinjaRMM boolean field '$env:CustomFieldGoogleChromeActiveBoolean'"
     } catch {
-        Write-Host "ERROR: Failed to write boolean field '$CustomFieldGoogleChromeActiveBoolean' - $_"
+        Write-Host "ERROR: Failed to write boolean field '$env:CustomFieldGoogleChromeActiveBoolean' - $_"
     }
 
-    Update-CRDContextField -FieldName $CustomFieldGoogleChromeContextString -ThisContext "System" -IsActive ([bool]$isActive)
+    Update-CRDContextField -FieldName $env:CustomFieldGoogleChromeContextString -ThisContext "System" -IsActive ([bool]$isActive)
 } else {
     Write-Host "Interactive mode - skipping Ninja-Property-Set calls"
-    Write-Host "Would have written: $CustomFieldGoogleChromeActiveBoolean = $result"
-    Write-Host "Would have updated context field '$CustomFieldGoogleChromeContextString' with label 'System' (active = $isActive)"
+    Write-Host "Would have written: $env:CustomFieldGoogleChromeActiveBoolean = $result"
+    Write-Host "Would have updated context field '$env:CustomFieldGoogleChromeContextString' with label 'System' (active = $isActive)"
 }
 
 Stop-Transcript
