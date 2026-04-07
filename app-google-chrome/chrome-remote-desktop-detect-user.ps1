@@ -1,8 +1,8 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                                    - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description                            - Ticket # or initials for audit trail
-## $env:GoogleChromeRemoteDesktopStateDir      - Directory where per-user state files live (default: "C:\ProgramData\DTC\google-chrome-remote-desktop-state")
+## $env:RMM                                          - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description                                  - Ticket # or initials for audit trail
+## $env:GoogleChromeRemoteDesktopUserStatePath       - Path to the shared user state JSON (default: "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json")
 
 # Chrome Remote Desktop Detection Script (USER context)
 #
@@ -15,39 +15,30 @@
 #
 # This script does NOT call NinjaRMM cmdlets. The Ninja-Property-Get and
 # Ninja-Property-Set cmdlets only work when scripts run from the
-# NinjaRMM agent in SYSTEM context. From user context the cmdlets fall
-# over with "Failed to start ninjarmm-cli".
+# NinjaRMM agent in SYSTEM context.
 #
-# Instead, this script writes a presence-only marker file at
-# $StateDir\$env:USERNAME.txt:
-#   - File present = Chrome Remote Desktop is active for this user
-#   - File absent  = not active
-#   - File mtime   = last detection time (used by the SYSTEM-context
-#                    companion script to age out stale entries)
+# Instead, this script maintains a single shared JSON file at
+# C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json
+# that maps username -> last-detected ISO timestamp:
+#
+#   {
+#     "WilmaGarraway": "2026-04-07T13:45:00Z",
+#     "BobSmith":      "2026-04-06T09:12:00Z"
+#   }
+#
+# When CRD is detected this script adds/updates its own entry. When
+# CRD is no longer detected this script removes its own entry.
 #
 # The SYSTEM-context companion (chrome-remote-desktop-detect-system.ps1)
-# reads this directory, aggregates the per-user signals with its own
-# system-wide checks, and is the SOLE writer to NinjaRMM custom fields.
-#
-# "Installed" counts as "active" for the purposes of this check, per the
-# requirement that any presence of Chrome Remote Desktop should flag the
-# machine.
-#
-# Output:
-#   - Writes/removes a state file at $StateDir\$env:USERNAME.txt
-#   - Writes a detailed transcript log to user-writable %LOCALAPPDATA%
-#   - Exit code 0 = not active, 1 = active
+# reads this JSON, combines it with system-side detection, and writes
+# the unified result to NinjaRMM custom fields.
 
 $ScriptLogName = "chrome-remote-desktop-detect-user.log"
 
 # --- Default RMM environment variables if not provided -------------------
-# NinjaRMM passes script preset variables as environment variables, so
-# every RMM-supplied input is read from $env: throughout this script.
-# Defaults are set here by writing to $env: so the rest of the script
-# can reference $env:VarName at every use site.
 
-if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopStateDir)) {
-    $env:GoogleChromeRemoteDesktopStateDir = "C:\ProgramData\DTC\google-chrome-remote-desktop-state"
+if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopUserStatePath)) {
+    $env:GoogleChromeRemoteDesktopUserStatePath = "C:\Users\Public\DTC\rmm-db\google-chrome-remote-desktop-user-active.json"
 }
 
 # --- Input handling: RMM vs interactive ----------------------------------
@@ -91,7 +82,7 @@ Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
-Write-Host "State Dir: $env:GoogleChromeRemoteDesktopStateDir"
+Write-Host "User State Path: $env:GoogleChromeRemoteDesktopUserStatePath"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Username: $env:USERNAME"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
@@ -99,7 +90,7 @@ Write-Host ""
 
 # --- Detection functions -------------------------------------------------
 
-# Check HKCU uninstall keys for the running user
+# Check HKCU uninstall keys for the running user.
 # Chrome Remote Desktop is commonly installed per-user via the Chrome
 # browser and lives only in HKCU.
 function Test-CRDInstalledHKCU {
@@ -107,7 +98,6 @@ function Test-CRDInstalledHKCU {
         "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
     )
-
     foreach ($path in $registryPaths) {
         $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
             $_.DisplayName -like "*Chrome Remote Desktop*"
@@ -122,7 +112,7 @@ function Test-CRDInstalledHKCU {
     return $false
 }
 
-# Check %LOCALAPPDATA% for the running user
+# Check %LOCALAPPDATA% for the running user.
 function Test-CRDUserAppData {
     $crdPath = Join-Path $env:LOCALAPPDATA "Google\Chrome Remote Desktop"
     if (Test-Path $crdPath) {
@@ -130,6 +120,39 @@ function Test-CRDUserAppData {
         return $true
     }
     return $false
+}
+
+# --- JSON state helpers --------------------------------------------------
+
+function Read-CRDUserState {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return @{} }
+    try {
+        $raw = Get-Content -Raw -Path $Path -ErrorAction Stop
+        if ([string]::IsNullOrWhiteSpace($raw)) { return @{} }
+        $json = $raw | ConvertFrom-Json -ErrorAction Stop
+        $hash = @{}
+        foreach ($prop in $json.PSObject.Properties) {
+            $hash[$prop.Name] = $prop.Value
+        }
+        return $hash
+    } catch {
+        Write-Host "  Could not read existing state file (treating as empty): $_"
+        return @{}
+    }
+}
+
+function Write-CRDUserState {
+    param(
+        [string]$Path,
+        [hashtable]$State
+    )
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-Path $dir)) {
+        New-Item -Path $dir -ItemType Directory -Force | Out-Null
+        Write-Host "Created state directory: $dir"
+    }
+    ($State | ConvertTo-Json -Depth 5) | Set-Content -Path $Path -Force
 }
 
 # --- Run detection -------------------------------------------------------
@@ -159,41 +182,27 @@ Write-Host "RESULT: Chrome Remote Desktop Active = $result"
 Write-Host "============================================"
 Write-Host ""
 
-# --- Write/remove state file ---------------------------------------------
+# --- Update shared JSON state file ---------------------------------------
 
-# Ensure the shared state directory exists. C:\ProgramData allows
-# authenticated users to create subdirectories with inherited
-# permissions, so each user can manage their own state file in here.
-if (-not (Test-Path -Path $env:GoogleChromeRemoteDesktopStateDir)) {
-    try {
-        New-Item -Path $env:GoogleChromeRemoteDesktopStateDir -ItemType Directory -Force | Out-Null
-        Write-Host "Created state directory: $env:GoogleChromeRemoteDesktopStateDir"
-    } catch {
-        Write-Host "ERROR: Could not create state directory '$env:GoogleChromeRemoteDesktopStateDir' - $_"
+$state = Read-CRDUserState -Path $env:GoogleChromeRemoteDesktopUserStatePath
+
+if ($isActive) {
+    $state[$env:USERNAME] = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
+    Write-Host "Adding/updating $env:USERNAME in user state file"
+} else {
+    if ($state.ContainsKey($env:USERNAME)) {
+        $state.Remove($env:USERNAME)
+        Write-Host "Removing $env:USERNAME from user state file (no longer active)"
+    } else {
+        Write-Host "$env:USERNAME not in user state file (still not active)"
     }
 }
 
-$stateFile = Join-Path $env:GoogleChromeRemoteDesktopStateDir "$env:USERNAME.txt"
-
-if ($isActive) {
-    try {
-        # Write empty file; presence is the signal, mtime is the timestamp
-        Set-Content -Path $stateFile -Value "" -Force
-        Write-Host "Wrote state file: $stateFile"
-    } catch {
-        Write-Host "ERROR: Could not write state file '$stateFile' - $_"
-    }
-} else {
-    if (Test-Path $stateFile) {
-        try {
-            Remove-Item -Path $stateFile -Force
-            Write-Host "Removed state file: $stateFile (no longer active)"
-        } catch {
-            Write-Host "ERROR: Could not remove state file '$stateFile' - $_"
-        }
-    } else {
-        Write-Host "No state file present (still not active)"
-    }
+try {
+    Write-CRDUserState -Path $env:GoogleChromeRemoteDesktopUserStatePath -State $state
+    Write-Host "Wrote user state file: $env:GoogleChromeRemoteDesktopUserStatePath"
+} catch {
+    Write-Host "ERROR: Could not write user state file - $_"
 }
 
 Stop-Transcript
