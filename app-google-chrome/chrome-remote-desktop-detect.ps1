@@ -1,6 +1,6 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $Description       - Ticket # or initials for audit trail
-## $NinjaCustomField  - Name of the NinjaRMM custom field to write the result to (default: "Remote")
+## $Description                         - Ticket # or initials for audit trail
+## $CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM custom field to write the result to (default: "Remote")
 
 # Chrome Remote Desktop Detection Script
 #
@@ -53,8 +53,8 @@ if ($RMM -ne 1) {
 }
 
 # Default custom field name if not provided by RMM
-if ([string]::IsNullOrEmpty($NinjaCustomField)) {
-    $NinjaCustomField = "Remote"
+if ([string]::IsNullOrEmpty($CustomFieldGoogleChromeActiveBoolean)) {
+    $CustomFieldGoogleChromeActiveBoolean = "Remote"
 }
 
 # Ensure log directory exists before starting transcript
@@ -73,7 +73,7 @@ Write-Host ""
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "Ninja Custom Field: $NinjaCustomField"
+Write-Host "Custom Field: $CustomFieldGoogleChromeActiveBoolean"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 
@@ -226,14 +226,14 @@ Write-Host ""
 # the cmdlet only exists inside the NinjaRMM agent context.
 if ($RMM -eq 1) {
     try {
-        Ninja-Property-Set -Name $NinjaCustomField -Value $result
-        Write-Host "Wrote $result to NinjaRMM custom field '$NinjaCustomField'"
+        Ninja-Property-Set -Name $CustomFieldGoogleChromeActiveBoolean -Value $result
+        Write-Host "Wrote $result to NinjaRMM custom field '$CustomFieldGoogleChromeActiveBoolean'"
     } catch {
-        Write-Host "ERROR: Failed to write to NinjaRMM custom field '$NinjaCustomField' - $_"
+        Write-Host "ERROR: Failed to write to NinjaRMM custom field '$CustomFieldGoogleChromeActiveBoolean' - $_"
     }
 } else {
     Write-Host "Interactive mode - skipping Ninja-Property-Set call"
-    Write-Host "Would have written: Ninja-Property-Set -Name '$NinjaCustomField' -Value $result"
+    Write-Host "Would have written: Ninja-Property-Set -Name '$CustomFieldGoogleChromeActiveBoolean' -Value $result"
 }
 
 Stop-Transcript
