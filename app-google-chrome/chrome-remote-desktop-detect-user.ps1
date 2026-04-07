@@ -1,10 +1,8 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                                  - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description                          - Ticket # or initials for audit trail
-## $env:RMMScriptPath                        - Optional log directory base provided by the RMM
-## $env:CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM boolean (1/0) custom field for THIS script's result (default: "RemoteUser")
-## $env:CustomFieldGoogleChromeContextString - Name of the NinjaRMM text custom field shared with the system-context script (default: "RemoteContext")
+## $env:RMM                                    - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description                            - Ticket # or initials for audit trail
+## $env:GoogleChromeRemoteDesktopStateDir      - Directory where per-user state files live (default: "C:\ProgramData\DTC\google-chrome-remote-desktop-state")
 
 # Chrome Remote Desktop Detection Script (USER context)
 #
@@ -15,30 +13,30 @@
 #   1. HKCU uninstall registry (per-user install)
 #   2. %LOCALAPPDATA%\Google\Chrome Remote Desktop for the running user
 #
-# This script does NOT check HKLM, Program Files, the chromoting
-# service, or the remoting_host process. Those are SYSTEM-visible and
-# handled by the system-context companion script
-# (chrome-remote-desktop-detect-system.ps1).
+# This script does NOT call NinjaRMM cmdlets. The Ninja-Property-Get and
+# Ninja-Property-Set cmdlets only work when scripts run from the
+# NinjaRMM agent in SYSTEM context. From user context the cmdlets fall
+# over with "Failed to start ninjarmm-cli".
+#
+# Instead, this script writes a presence-only marker file at
+# $StateDir\$env:USERNAME.txt:
+#   - File present = Chrome Remote Desktop is active for this user
+#   - File absent  = not active
+#   - File mtime   = last detection time (used by the SYSTEM-context
+#                    companion script to age out stale entries)
+#
+# The SYSTEM-context companion (chrome-remote-desktop-detect-system.ps1)
+# reads this directory, aggregates the per-user signals with its own
+# system-wide checks, and is the SOLE writer to NinjaRMM custom fields.
 #
 # "Installed" counts as "active" for the purposes of this check, per the
 # requirement that any presence of Chrome Remote Desktop should flag the
 # machine.
 #
 # Output:
-#   - Writes 1 (active) or 0 (not active) to a per-script boolean field
-#     (default "RemoteUser" for this script, "Remote" for the companion)
-#   - Updates a SHARED text field (default "RemoteContext") that both
-#     scripts contribute to. The script reads the current value, adds
-#     or removes its own context label ("User"), and writes back.
-#     Possible final values: "", "System", "User", "System, User".
-#   - Writes a detailed transcript log for troubleshooting
+#   - Writes/removes a state file at $StateDir\$env:USERNAME.txt
+#   - Writes a detailed transcript log to user-writable %LOCALAPPDATA%
 #   - Exit code 0 = not active, 1 = active
-#
-# Field collision notes:
-#   The boolean fields default to DIFFERENT names so this user-context
-#   script doesn't overwrite the system result on every login. The
-#   shared text field is safe because the read-merge-write logic
-#   preserves the other script's contribution.
 
 $ScriptLogName = "chrome-remote-desktop-detect-user.log"
 
@@ -48,11 +46,8 @@ $ScriptLogName = "chrome-remote-desktop-detect-user.log"
 # Defaults are set here by writing to $env: so the rest of the script
 # can reference $env:VarName at every use site.
 
-if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeActiveBoolean)) {
-    $env:CustomFieldGoogleChromeActiveBoolean = "RemoteUser"
-}
-if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeContextString)) {
-    $env:CustomFieldGoogleChromeContextString = "RemoteContext"
+if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopStateDir)) {
+    $env:GoogleChromeRemoteDesktopStateDir = "C:\ProgramData\DTC\google-chrome-remote-desktop-state"
 }
 
 # --- Input handling: RMM vs interactive ----------------------------------
@@ -96,9 +91,9 @@ Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
-Write-Host "Boolean Custom Field: $env:CustomFieldGoogleChromeActiveBoolean"
-Write-Host "Context Custom Field: $env:CustomFieldGoogleChromeContextString"
+Write-Host "State Dir: $env:GoogleChromeRemoteDesktopStateDir"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
+Write-Host "Username: $env:USERNAME"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
 
@@ -164,63 +159,41 @@ Write-Host "RESULT: Chrome Remote Desktop Active = $result"
 Write-Host "============================================"
 Write-Host ""
 
-# --- Write to NinjaRMM custom fields -------------------------------------
+# --- Write/remove state file ---------------------------------------------
 
-# Read-merge-write helper for the shared context field. Reads the
-# current value, adds or removes this script's context label, and
-# writes the merged result back. Preserves the other context script's
-# contribution.
-function Update-CRDContextField {
-    param(
-        [string]$FieldName,
-        [string]$ThisContext,  # "System" or "User"
-        [bool]$IsActive
-    )
-
-    $current = ""
+# Ensure the shared state directory exists. C:\ProgramData allows
+# authenticated users to create subdirectories with inherited
+# permissions, so each user can manage their own state file in here.
+if (-not (Test-Path -Path $env:GoogleChromeRemoteDesktopStateDir)) {
     try {
-        $current = Ninja-Property-Get -Name $FieldName
-        if ($null -eq $current) { $current = "" }
+        New-Item -Path $env:GoogleChromeRemoteDesktopStateDir -ItemType Directory -Force | Out-Null
+        Write-Host "Created state directory: $env:GoogleChromeRemoteDesktopStateDir"
     } catch {
-        Write-Host "  Could not read existing context field (treating as empty): $_"
-        $current = ""
-    }
-
-    # Parse current value into a set, drop our own label so we can re-add it
-    $contexts = @()
-    if (-not [string]::IsNullOrWhiteSpace($current)) {
-        $contexts = $current -split ',\s*' | Where-Object { $_ -and $_ -ne $ThisContext }
-    }
-    if ($IsActive) {
-        $contexts += $ThisContext
-    }
-
-    # Sort alphabetically for deterministic output
-    $newValue = ($contexts | Sort-Object -Unique) -join ', '
-
-    try {
-        Ninja-Property-Set -Name $FieldName -Value $newValue
-        Write-Host "Updated NinjaRMM context field '$FieldName': '$current' -> '$newValue'"
-    } catch {
-        Write-Host "ERROR: Failed to write context field '$FieldName' - $_"
+        Write-Host "ERROR: Could not create state directory '$env:GoogleChromeRemoteDesktopStateDir' - $_"
     }
 }
 
-# Only attempt the Ninja-Property-Set calls when running from the RMM,
-# since the cmdlets only exist inside the NinjaRMM agent context.
-if ($env:RMM -eq "1") {
-    try {
-        Ninja-Property-Set -Name $env:CustomFieldGoogleChromeActiveBoolean -Value $result
-        Write-Host "Wrote $result to NinjaRMM boolean field '$env:CustomFieldGoogleChromeActiveBoolean'"
-    } catch {
-        Write-Host "ERROR: Failed to write boolean field '$env:CustomFieldGoogleChromeActiveBoolean' - $_"
-    }
+$stateFile = Join-Path $env:GoogleChromeRemoteDesktopStateDir "$env:USERNAME.txt"
 
-    Update-CRDContextField -FieldName $env:CustomFieldGoogleChromeContextString -ThisContext "User" -IsActive ([bool]$isActive)
+if ($isActive) {
+    try {
+        # Write empty file; presence is the signal, mtime is the timestamp
+        Set-Content -Path $stateFile -Value "" -Force
+        Write-Host "Wrote state file: $stateFile"
+    } catch {
+        Write-Host "ERROR: Could not write state file '$stateFile' - $_"
+    }
 } else {
-    Write-Host "Interactive mode - skipping Ninja-Property-Set calls"
-    Write-Host "Would have written: $env:CustomFieldGoogleChromeActiveBoolean = $result"
-    Write-Host "Would have updated context field '$env:CustomFieldGoogleChromeContextString' with label 'User' (active = $isActive)"
+    if (Test-Path $stateFile) {
+        try {
+            Remove-Item -Path $stateFile -Force
+            Write-Host "Removed state file: $stateFile (no longer active)"
+        } catch {
+            Write-Host "ERROR: Could not remove state file '$stateFile' - $_"
+        }
+    } else {
+        Write-Host "No state file present (still not active)"
+    }
 }
 
 Stop-Transcript

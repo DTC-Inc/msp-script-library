@@ -1,46 +1,48 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                                  - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description                          - Ticket # or initials for audit trail
-## $env:RMMScriptPath                        - Optional log directory base provided by the RMM
-## $env:CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM boolean (1/0) custom field for THIS script's result (default: "Remote")
-## $env:CustomFieldGoogleChromeContextString - Name of the NinjaRMM text custom field shared with the user-context script (default: "RemoteContext")
+## $env:RMM                                              - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description                                      - Ticket # or initials for audit trail
+## $env:RMMScriptPath                                    - Optional log directory base provided by the RMM
+## $env:CustomFieldGoogleChromeActiveBoolean             - Name of the NinjaRMM boolean (1/0) custom field for the unified result (default: "Remote")
+## $env:CustomFieldGoogleChromeContextString             - Name of the NinjaRMM text custom field for context labels (default: "RemoteContext")
+## $env:GoogleChromeRemoteDesktopStateDir                - Directory shared with the user-context script for per-user state (default: "C:\ProgramData\DTC\google-chrome-remote-desktop-state")
+## $env:GoogleChromeRemoteDesktopStateMaxAgeDays         - Stale state file cutoff in days (default: 90)
 
 # Chrome Remote Desktop Detection Script (SYSTEM context)
 #
 # Detects Chrome Remote Desktop presence from the SYSTEM account.
 # Designed for daily scheduled runs and computer-boot triggers.
+# This script is the SOLE writer to the NinjaRMM custom fields.
 #
-# Checks (all SYSTEM-visible):
+# System-side checks (all SYSTEM-visible):
 #   1. HKLM uninstall registry (system-wide MSI install)
 #   2. Program Files install path (system-wide)
 #   3. The "chromoting" Windows service (Chrome Remote Desktop Service)
 #   4. The remoting_host.exe process
 #
-# This script does NOT check HKCU or %LOCALAPPDATA% because in SYSTEM
-# context those resolve to SYSTEM's profile, which never has CRD. The
-# user-context companion script (chrome-remote-desktop-detect-user.ps1)
-# handles per-user installs at login.
+# User-side aggregation:
+#   5. Reads per-user state files written by the user-context companion
+#      script (chrome-remote-desktop-detect-user.ps1) at user login.
+#      Each file's presence means a user has CRD installed in HKCU or
+#      %LOCALAPPDATA%. File mtime is used to age out stale entries.
+#
+# Why two scripts: Ninja-Property-Get and Ninja-Property-Set only work
+# from SYSTEM context (they shell out to ninjarmm-cli.exe in a
+# SYSTEM-only path). The user-context script can't call them, so it
+# leaves a state file for this script to read.
 #
 # "Installed" counts as "active" for the purposes of this check, per the
 # requirement that any presence of Chrome Remote Desktop should flag the
 # machine.
 #
 # Output:
-#   - Writes 1 (active) or 0 (not active) to a per-script boolean field
-#     (default "Remote" for this script, "RemoteUser" for the companion)
-#   - Updates a SHARED text field (default "RemoteContext") that both
-#     scripts contribute to. The script reads the current value, adds
-#     or removes its own context label ("System"), and writes back.
-#     Possible final values: "", "System", "User", "System, User".
+#   - Writes 1 (active anywhere) or 0 (not active) to a NinjaRMM
+#     boolean field (default "Remote")
+#   - Writes a context string to a NinjaRMM text field (default
+#     "RemoteContext"). Possible values: "", "System", "User",
+#     "System, User".
 #   - Writes a detailed transcript log for troubleshooting
 #   - Exit code 0 = not active, 1 = active
-#
-# Field collision notes:
-#   The boolean fields default to DIFFERENT names so the user-context
-#   script doesn't overwrite the system result on every login. The
-#   shared text field is safe because the read-merge-write logic
-#   preserves the other script's contribution.
 
 $ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
@@ -55,6 +57,12 @@ if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeActiveBoolean)) {
 }
 if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeContextString)) {
     $env:CustomFieldGoogleChromeContextString = "RemoteContext"
+}
+if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopStateDir)) {
+    $env:GoogleChromeRemoteDesktopStateDir = "C:\ProgramData\DTC\google-chrome-remote-desktop-state"
+}
+if ([string]::IsNullOrEmpty($env:GoogleChromeRemoteDesktopStateMaxAgeDays)) {
+    $env:GoogleChromeRemoteDesktopStateMaxAgeDays = "90"
 }
 
 # --- Input handling: RMM vs interactive ----------------------------------
@@ -100,6 +108,8 @@ Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
 Write-Host "Boolean Custom Field: $env:CustomFieldGoogleChromeActiveBoolean"
 Write-Host "Context Custom Field: $env:CustomFieldGoogleChromeContextString"
+Write-Host "State Dir: $env:GoogleChromeRemoteDesktopStateDir"
+Write-Host "State Max Age (days): $env:GoogleChromeRemoteDesktopStateMaxAgeDays"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
@@ -162,12 +172,45 @@ function Test-CRDProcess {
     return $false
 }
 
+# Read per-user state files written by the user-context script.
+# Returns a list of usernames with active (non-stale) state files.
+# Purges stale files (older than $env:GoogleChromeRemoteDesktopStateMaxAgeDays).
+function Get-CRDActiveUsersFromState {
+    $stateDir = $env:GoogleChromeRemoteDesktopStateDir
+    $maxAge   = [int]$env:GoogleChromeRemoteDesktopStateMaxAgeDays
+
+    if (-not (Test-Path $stateDir)) {
+        Write-Host "  [User State] State directory does not exist: $stateDir"
+        return @()
+    }
+
+    $cutoff = (Get-Date).AddDays(-$maxAge)
+    $files = Get-ChildItem -Path $stateDir -File -ErrorAction SilentlyContinue
+    $activeUsers = @()
+
+    foreach ($file in $files) {
+        if ($file.LastWriteTime -lt $cutoff) {
+            Write-Host "  [User State] Stale ($($file.LastWriteTime.ToString('yyyy-MM-dd'))): $($file.Name) - removing"
+            try {
+                Remove-Item -Path $file.FullName -Force
+            } catch {
+                Write-Host "  [User State] Could not remove stale file: $_"
+            }
+        } else {
+            $username = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            Write-Host "  [User State] Active ($($file.LastWriteTime.ToString('yyyy-MM-dd'))): $username"
+            $activeUsers += $username
+        }
+    }
+    return $activeUsers
+}
+
 # --- Run detection -------------------------------------------------------
 
-Write-Host "Running detection checks..."
+Write-Host "Running system-side detection checks..."
 Write-Host ""
 
-$checks = [ordered]@{
+$systemChecks = [ordered]@{
     "HKLM Uninstall Registry" = Test-CRDInstalledHKLM
     "Program Files Install"   = Test-CRDInstallPath
     "Chromoting Service"      = Test-CRDService
@@ -175,67 +218,53 @@ $checks = [ordered]@{
 }
 
 Write-Host ""
+Write-Host "Reading per-user state files..."
+Write-Host ""
+$activeUsers = Get-CRDActiveUsersFromState
+
+Write-Host ""
 Write-Host "Detection summary:"
-foreach ($check in $checks.GetEnumerator()) {
+foreach ($check in $systemChecks.GetEnumerator()) {
     $marker = if ($check.Value) { "[FOUND]" } else { "[----]" }
     Write-Host "  $marker $($check.Key)"
 }
+$userMarker = if ($activeUsers.Count -gt 0) { "[FOUND]" } else { "[----]" }
+Write-Host "  $userMarker User State Files ($($activeUsers.Count) active)"
 Write-Host ""
 
-# Active if any check returned true
-$isActive = $checks.Values -contains $true
-$result = if ($isActive) { 1 } else { 0 }
+# Compute final state
+$systemActive = $systemChecks.Values -contains $true
+$userActive   = $activeUsers.Count -gt 0
+$anyActive    = $systemActive -or $userActive
+$result       = if ($anyActive) { 1 } else { 0 }
+
+# Build context string from the contexts that fired
+$contexts = @()
+if ($systemActive) { $contexts += "System" }
+if ($userActive)   { $contexts += "User" }
+$contextString = ($contexts | Sort-Object) -join ', '
 
 Write-Host "============================================"
-Write-Host "RESULT: Chrome Remote Desktop Active = $result"
+Write-Host "RESULT"
+Write-Host "============================================"
+Write-Host "Active: $result"
+Write-Host "Context: '$contextString'"
+if ($userActive) {
+    Write-Host "Active users: $($activeUsers -join ', ')"
+}
 Write-Host "============================================"
 Write-Host ""
 
 # --- Write to NinjaRMM custom fields -------------------------------------
 
-# Read-merge-write helper for the shared context field. Reads the
-# current value, adds or removes this script's context label, and
-# writes the merged result back. Preserves the other context script's
-# contribution.
-function Update-CRDContextField {
-    param(
-        [string]$FieldName,
-        [string]$ThisContext,  # "System" or "User"
-        [bool]$IsActive
-    )
+# Detect whether we are actually running as SYSTEM. The Ninja cmdlets
+# only work from SYSTEM context, so if this script is somehow run
+# interactively or scheduled in a user context, skip the writes rather
+# than logging a "Failed to start ninjarmm-cli" error message into a
+# custom field.
+$isSystemAccount = ([System.Security.Principal.WindowsIdentity]::GetCurrent()).IsSystem
 
-    $current = ""
-    try {
-        $current = Ninja-Property-Get -Name $FieldName
-        if ($null -eq $current) { $current = "" }
-    } catch {
-        Write-Host "  Could not read existing context field (treating as empty): $_"
-        $current = ""
-    }
-
-    # Parse current value into a set, drop our own label so we can re-add it
-    $contexts = @()
-    if (-not [string]::IsNullOrWhiteSpace($current)) {
-        $contexts = $current -split ',\s*' | Where-Object { $_ -and $_ -ne $ThisContext }
-    }
-    if ($IsActive) {
-        $contexts += $ThisContext
-    }
-
-    # Sort alphabetically for deterministic output
-    $newValue = ($contexts | Sort-Object -Unique) -join ', '
-
-    try {
-        Ninja-Property-Set -Name $FieldName -Value $newValue
-        Write-Host "Updated NinjaRMM context field '$FieldName': '$current' -> '$newValue'"
-    } catch {
-        Write-Host "ERROR: Failed to write context field '$FieldName' - $_"
-    }
-}
-
-# Only attempt the Ninja-Property-Set calls when running from the RMM,
-# since the cmdlets only exist inside the NinjaRMM agent context.
-if ($env:RMM -eq "1") {
+if ($env:RMM -eq "1" -and $isSystemAccount) {
     try {
         Ninja-Property-Set -Name $env:CustomFieldGoogleChromeActiveBoolean -Value $result
         Write-Host "Wrote $result to NinjaRMM boolean field '$env:CustomFieldGoogleChromeActiveBoolean'"
@@ -243,11 +272,20 @@ if ($env:RMM -eq "1") {
         Write-Host "ERROR: Failed to write boolean field '$env:CustomFieldGoogleChromeActiveBoolean' - $_"
     }
 
-    Update-CRDContextField -FieldName $env:CustomFieldGoogleChromeContextString -ThisContext "System" -IsActive ([bool]$isActive)
+    try {
+        Ninja-Property-Set -Name $env:CustomFieldGoogleChromeContextString -Value $contextString
+        Write-Host "Wrote '$contextString' to NinjaRMM context field '$env:CustomFieldGoogleChromeContextString'"
+    } catch {
+        Write-Host "ERROR: Failed to write context field '$env:CustomFieldGoogleChromeContextString' - $_"
+    }
 } else {
-    Write-Host "Interactive mode - skipping Ninja-Property-Set calls"
+    if (-not $isSystemAccount) {
+        Write-Host "Not running as SYSTEM (account: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)) - skipping Ninja-Property-Set calls"
+    } else {
+        Write-Host "Interactive mode - skipping Ninja-Property-Set calls"
+    }
     Write-Host "Would have written: $env:CustomFieldGoogleChromeActiveBoolean = $result"
-    Write-Host "Would have updated context field '$env:CustomFieldGoogleChromeContextString' with label 'System' (active = $isActive)"
+    Write-Host "Would have written: $env:CustomFieldGoogleChromeContextString = '$contextString'"
 }
 
 Stop-Transcript
