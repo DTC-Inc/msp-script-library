@@ -5,16 +5,23 @@
 # Chrome Remote Desktop Detection Script
 #
 # Detects whether Chrome Remote Desktop is installed or actively running on
-# the endpoint. Chrome Remote Desktop installs into multiple locations
-# depending on whether it was installed system-wide or per-user via the
-# Chrome browser, so this script checks all of them:
+# the endpoint. Designed to run in three contexts:
+#   - Daily from SYSTEM
+#   - At computer boot (SYSTEM)
+#   - At user login (current user context)
 #
+# Checks:
 #   1. HKLM uninstall registry (system-wide MSI install)
-#   2. HKCU uninstall registry for every loaded user hive (per-user install)
+#   2. HKCU uninstall registry for the running user (per-user install)
 #   3. Program Files install path (system-wide)
-#   4. %LOCALAPPDATA%\Google\Chrome Remote Desktop for every user profile
+#   4. %LOCALAPPDATA%\Google\Chrome Remote Desktop for the running user
 #   5. The "chromoting" Windows service (Chrome Remote Desktop Service)
 #   6. The remoting_host.exe process
+#
+# Per-user install detection (HKCU and %LOCALAPPDATA%) only fires when the
+# script runs in the user's context. SYSTEM-context runs catch system-wide
+# installs and any active service/process; the user-login run is what
+# catches per-user Chrome installs.
 #
 # "Installed" counts as "active" for the purposes of this check, per the
 # requirement that any presence of Chrome Remote Desktop should flag the
@@ -100,41 +107,29 @@ function Test-CRDInstalledHKLM {
     return $false
 }
 
-# Check HKCU uninstall keys for every loaded user hive
+# Check HKCU uninstall keys for the running user
 # Chrome Remote Desktop is commonly installed per-user via the Chrome
-# browser and lives only in HKCU, so HKLM-only checks miss it.
+# browser and lives only in HKCU, so HKLM-only checks miss it. Only
+# meaningful when this script runs in user context (login trigger);
+# SYSTEM runs will see SYSTEM's HKCU and find nothing here.
 function Test-CRDInstalledHKCU {
-    $found = $false
+    $registryPaths = @(
+        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
 
-    # Make sure HKU is mounted (it always is, but be defensive)
-    if (-not (Get-PSDrive -Name HKU -ErrorAction SilentlyContinue)) {
-        New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS -ErrorAction SilentlyContinue | Out-Null
-    }
-
-    # Iterate every loaded user hive (skip _Classes and well-known SIDs)
-    $userHives = Get-ChildItem -Path "HKU:\" -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -notmatch "_Classes$" -and
-        $_.PSChildName -notin @(".DEFAULT", "S-1-5-18", "S-1-5-19", "S-1-5-20")
-    }
-
-    foreach ($hive in $userHives) {
-        $uninstallPaths = @(
-            "HKU:\$($hive.PSChildName)\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKU:\$($hive.PSChildName)\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        )
-        foreach ($path in $uninstallPaths) {
-            $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
-                $_.DisplayName -like "*Chrome Remote Desktop*"
+    foreach ($path in $registryPaths) {
+        $apps = Get-ItemProperty $path -ErrorAction SilentlyContinue | Where-Object {
+            $_.DisplayName -like "*Chrome Remote Desktop*"
+        }
+        if ($apps) {
+            foreach ($app in $apps) {
+                Write-Host "  [HKCU] Found: $($app.DisplayName) ($($app.DisplayVersion))"
             }
-            if ($apps) {
-                foreach ($app in $apps) {
-                    Write-Host "  [HKU\$($hive.PSChildName)] Found: $($app.DisplayName) ($($app.DisplayVersion))"
-                }
-                $found = $true
-            }
+            return $true
         }
     }
-    return $found
+    return $false
 }
 
 # Check the system-wide install path under Program Files
@@ -152,21 +147,15 @@ function Test-CRDInstallPath {
     return $false
 }
 
-# Check %LOCALAPPDATA% for every user profile on the box
+# Check %LOCALAPPDATA% for the running user
+# Like the HKCU check, this is only meaningful in user context.
 function Test-CRDUserAppData {
-    $found = $false
-    $userProfiles = Get-ChildItem "C:\Users" -Directory -ErrorAction SilentlyContinue | Where-Object {
-        $_.Name -notin @('Public', 'Default', 'Default User', 'All Users')
+    $crdPath = Join-Path $env:LOCALAPPDATA "Google\Chrome Remote Desktop"
+    if (Test-Path $crdPath) {
+        Write-Host "  [LocalAppData] Found: $crdPath"
+        return $true
     }
-
-    foreach ($userProfile in $userProfiles) {
-        $crdPath = Join-Path $userProfile.FullName "AppData\Local\Google\Chrome Remote Desktop"
-        if (Test-Path $crdPath) {
-            Write-Host "  [Profile] Found in $($userProfile.Name): $crdPath"
-            $found = $true
-        }
-    }
-    return $found
+    return $false
 }
 
 # Check the chromoting Windows service
