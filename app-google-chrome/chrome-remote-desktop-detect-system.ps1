@@ -1,6 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## $Description                          - Ticket # or initials for audit trail
-## $CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM custom field to write the result to (default: "Remote")
+## $CustomFieldGoogleChromeActiveBoolean - Name of the NinjaRMM boolean (1/0) custom field for THIS script's result (default: "Remote")
+## $CustomFieldGoogleChromeContextString - Name of the NinjaRMM text custom field shared with the user-context script (default: "RemoteContext")
 
 # Chrome Remote Desktop Detection Script (SYSTEM context)
 #
@@ -23,15 +24,20 @@
 # machine.
 #
 # Output:
-#   - Writes 1 (active) or 0 (not active) to a NinjaRMM custom field
+#   - Writes 1 (active) or 0 (not active) to a per-script boolean field
+#     (default "Remote" for this script, "RemoteUser" for the companion)
+#   - Updates a SHARED text field (default "RemoteContext") that both
+#     scripts contribute to. The script reads the current value, adds
+#     or removes its own context label ("System"), and writes back.
+#     Possible final values: "", "System", "User", "System, User".
 #   - Writes a detailed transcript log for troubleshooting
 #   - Exit code 0 = not active, 1 = active
 #
-# Field collision warning:
-#   This script and the user-context companion default to DIFFERENT
-#   custom field names ("Remote" vs "RemoteUser") so they don't
-#   overwrite each other. OR them together in NinjaRMM dashboards or
-#   conditions to get a single "CRD anywhere" signal.
+# Field collision notes:
+#   The boolean fields default to DIFFERENT names so the user-context
+#   script doesn't overwrite the system result on every login. The
+#   shared text field is safe because the read-merge-write logic
+#   preserves the other script's contribution.
 
 $ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
@@ -60,9 +66,12 @@ if ($RMM -ne 1) {
     }
 }
 
-# Default custom field name if not provided by RMM
+# Default custom field names if not provided by RMM
 if ([string]::IsNullOrEmpty($CustomFieldGoogleChromeActiveBoolean)) {
     $CustomFieldGoogleChromeActiveBoolean = "Remote"
+}
+if ([string]::IsNullOrEmpty($CustomFieldGoogleChromeContextString)) {
+    $CustomFieldGoogleChromeContextString = "RemoteContext"
 }
 
 # Ensure log directory exists before starting transcript
@@ -81,7 +90,8 @@ Write-Host ""
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
-Write-Host "Custom Field: $CustomFieldGoogleChromeActiveBoolean"
+Write-Host "Boolean Custom Field: $CustomFieldGoogleChromeActiveBoolean"
+Write-Host "Context Custom Field: $CustomFieldGoogleChromeContextString"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"
 Write-Host "Scan Time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
 Write-Host ""
@@ -173,20 +183,63 @@ Write-Host "RESULT: Chrome Remote Desktop Active = $result"
 Write-Host "============================================"
 Write-Host ""
 
-# --- Write to NinjaRMM custom field --------------------------------------
+# --- Write to NinjaRMM custom fields -------------------------------------
 
-# Only attempt the Ninja-Property-Set call when running from the RMM, since
-# the cmdlet only exists inside the NinjaRMM agent context.
+# Read-merge-write helper for the shared context field. Reads the
+# current value, adds or removes this script's context label, and
+# writes the merged result back. Preserves the other context script's
+# contribution.
+function Update-CRDContextField {
+    param(
+        [string]$FieldName,
+        [string]$ThisContext,  # "System" or "User"
+        [bool]$IsActive
+    )
+
+    $current = ""
+    try {
+        $current = Ninja-Property-Get -Name $FieldName
+        if ($null -eq $current) { $current = "" }
+    } catch {
+        Write-Host "  Could not read existing context field (treating as empty): $_"
+        $current = ""
+    }
+
+    # Parse current value into a set, drop our own label so we can re-add it
+    $contexts = @()
+    if (-not [string]::IsNullOrWhiteSpace($current)) {
+        $contexts = $current -split ',\s*' | Where-Object { $_ -and $_ -ne $ThisContext }
+    }
+    if ($IsActive) {
+        $contexts += $ThisContext
+    }
+
+    # Sort alphabetically for deterministic output
+    $newValue = ($contexts | Sort-Object -Unique) -join ', '
+
+    try {
+        Ninja-Property-Set -Name $FieldName -Value $newValue
+        Write-Host "Updated NinjaRMM context field '$FieldName': '$current' -> '$newValue'"
+    } catch {
+        Write-Host "ERROR: Failed to write context field '$FieldName' - $_"
+    }
+}
+
+# Only attempt the Ninja-Property-Set calls when running from the RMM,
+# since the cmdlets only exist inside the NinjaRMM agent context.
 if ($RMM -eq 1) {
     try {
         Ninja-Property-Set -Name $CustomFieldGoogleChromeActiveBoolean -Value $result
-        Write-Host "Wrote $result to NinjaRMM custom field '$CustomFieldGoogleChromeActiveBoolean'"
+        Write-Host "Wrote $result to NinjaRMM boolean field '$CustomFieldGoogleChromeActiveBoolean'"
     } catch {
-        Write-Host "ERROR: Failed to write to NinjaRMM custom field '$CustomFieldGoogleChromeActiveBoolean' - $_"
+        Write-Host "ERROR: Failed to write boolean field '$CustomFieldGoogleChromeActiveBoolean' - $_"
     }
+
+    Update-CRDContextField -FieldName $CustomFieldGoogleChromeContextString -ThisContext "System" -IsActive ([bool]$isActive)
 } else {
-    Write-Host "Interactive mode - skipping Ninja-Property-Set call"
-    Write-Host "Would have written: Ninja-Property-Set -Name '$CustomFieldGoogleChromeActiveBoolean' -Value $result"
+    Write-Host "Interactive mode - skipping Ninja-Property-Set calls"
+    Write-Host "Would have written: $CustomFieldGoogleChromeActiveBoolean = $result"
+    Write-Host "Would have updated context field '$CustomFieldGoogleChromeContextString' with label 'System' (active = $isActive)"
 }
 
 Stop-Transcript
