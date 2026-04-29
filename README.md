@@ -8,6 +8,15 @@ This library contains scripts that any MSP should be able to deploy. Every scrip
 
 For deep architectural detail, see [`CLAUDE.md`](CLAUDE.md). For PR workflow and branch conventions, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+## Naming Conventions
+
+Two axes, don't conflate them:
+
+- **Code identifiers** (variables, functions, parameters): camelCase by default unless the language specifies otherwise. PowerShell uses PascalCase for functions and camelCase for variables; Python uses snake_case.
+- **Filesystem and URLs** (file names, folder names, log names, paths, slugs): kebab-case. This includes script files, log files, and any artifact written to disk or referenced by URL.
+
+Folders follow `category-vendor` or `category-app` (kebab-case throughout). File names are lowercase with hyphens (e.g., `chrome-remote-desktop-detect-system.ps1`). Kebab-case is shell-friendly (no quoting), URL-safe, and forces a clean split between "this is a path/slug" vs "this is a code identifier."
+
 ## Quick Start
 
 **Run a script interactively** (for testing or one-off use):
@@ -47,7 +56,7 @@ Scripts are organized by category prefix:
 | `sec-*` | Security tools (Huntress, CrowdStrike Falcon, Cynet) |
 | `s3-api-lib/` | Reusable S3 API function library |
 
-Folder names follow `category-vendor` or `category-app` (e.g., `app-google-chrome`, `bdr-veeam`). File names are lowercase with hyphens (e.g., `chrome-remote-desktop-detect-system.ps1`).
+See [Naming Conventions](#naming-conventions) above for folder and file naming rules.
 
 ## Script Conventions
 
