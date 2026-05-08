@@ -105,61 +105,92 @@ $now          = Get-Date
 $startTime    = $now.AddDays(-[int]$DaysBack)
 $timestamp    = $now.ToString("yyyyMMdd-HHmmss")
 
-# Fail fast if the LSM log is missing/disabled (e.g. running on a non-RDS host).
-$lsmLogName = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
-$lsmLog = Get-WinEvent -ListLog $lsmLogName -ErrorAction SilentlyContinue
-if (-not $lsmLog) {
-    Write-Host "ERROR: Event log '$lsmLogName' not present on $computerName. Is RDS Session Host installed?"
-    if ($transcriptStarted) { Stop-Transcript }
-    exit 1
+$securityLogName = 'Security'
+# -ListLog needs admin / Event Log Readers; if that fails it is not a hard error,
+# the real test is the FilterXPath query below.
+$securityLog = Get-WinEvent -ListLog $securityLogName -ErrorAction SilentlyContinue
+if ($securityLog) {
+    Write-Host "Security log: enabled=$($securityLog.IsEnabled) records=$($securityLog.RecordCount) sizeBytes=$($securityLog.FileSize)"
+} else {
+    Write-Host "Note: could not enumerate '$securityLogName' (likely permissions). Continuing to query."
 }
-Write-Host "LSM log: enabled=$($lsmLog.IsEnabled) records=$($lsmLog.RecordCount) sizeBytes=$($lsmLog.FileSize)"
 
 Write-Host "Querying RDS logon events since $startTime on $computerName"
 
-# Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
-#   21 = Remote Desktop Services: Session logon succeeded
-#   25 = Remote Desktop Services: Session reconnection succeeded
-$filter = @{
-    LogName   = $lsmLogName
-    Id        = 21, 25
-    StartTime = $startTime
+# Security log:
+#   4624 LogonType=10 = RemoteInteractive (RDP authentication succeeded)
+#   4778               = Session was reconnected to a Window Station
+# Push filters down to the event log API via XPath so we don't drag the
+# entire Security log into memory on busy hosts.
+$startIso  = $startTime.ToUniversalTime().ToString('o')
+$xpath4624 = "*[System[EventID=4624 and TimeCreated[@SystemTime>='$startIso']]] and *[EventData[Data[@Name='LogonType']='10']]"
+$xpath4778 = "*[System[EventID=4778 and TimeCreated[@SystemTime>='$startIso']]]"
+
+function Get-FilteredEvents {
+    param([string]$LogName, [string]$XPath, [string]$Label)
+    try {
+        return @(Get-WinEvent -LogName $LogName -FilterXPath $XPath -ErrorAction Stop)
+    } catch {
+        if ($_.Exception.Message -match 'No events were found') {
+            Write-Host "No $Label events in window."
+            return @()
+        }
+        throw
+    }
 }
 
 try {
-    $events = Get-WinEvent -FilterHashtable $filter -ErrorAction Stop
+    $logonEvents     = Get-FilteredEvents -LogName $securityLogName -XPath $xpath4624 -Label '4624 (LogonType=10)'
+    $reconnectEvents = Get-FilteredEvents -LogName $securityLogName -XPath $xpath4778 -Label '4778 (reconnect)'
 } catch {
-    if ($_.Exception.Message -match 'No events were found') {
-        Write-Host "No RDS logon events found in the last $DaysBack days."
-        $events = @()
-    } else {
-        Write-Host "Failed to query event log: $($_.Exception.Message)"
-        if ($transcriptStarted) { Stop-Transcript }
-        exit 1
+    $msg = $_.Exception.Message
+    Write-Host "Failed to query Security log: $msg"
+    if ($msg -match 'Attempted to perform an unauthorized operation|access is denied') {
+        Write-Host "Hint: reading the Security log requires Administrator or membership in the 'Event Log Readers' group. NinjaOne running as SYSTEM has access."
     }
+    if ($transcriptStarted) { Stop-Transcript }
+    exit 1
 }
 
-Write-Host "Found $($events.Count) events. Parsing..."
+$events = @($logonEvents) + @($reconnectEvents)
+Write-Host "Found $($logonEvents.Count) logon (4624 LT=10) and $($reconnectEvents.Count) reconnect (4778) events. Parsing..."
 
 $results = foreach ($event in $events) {
-    # The LSM events store User / SessionID / Address inside UserData/EventXML.
+    # Both 4624 and 4778 store fields in EventData/Data nodes keyed by Name attribute.
     $xml = [xml]$event.ToXml()
-    $data = $xml.Event.UserData.EventXML
-
-    $eventType = switch ($event.Id) {
-        21 { 'Logon' }
-        25 { 'Reconnect' }
-        default { "Id$($event.Id)" }
+    $dataNodes = @{}
+    foreach ($d in $xml.Event.EventData.Data) {
+        if ($d.Name) { $dataNodes[$d.Name] = $d.'#text' }
     }
+
+    if ($event.Id -eq 4624) {
+        $eventType = 'Logon'
+        $domain    = $dataNodes['TargetDomainName']
+        $userName  = $dataNodes['TargetUserName']
+        $sessionId = $dataNodes['LogonId']
+        $sourceIp  = $dataNodes['IpAddress']
+    } else {
+        $eventType = 'Reconnect'
+        $domain    = $dataNodes['AccountDomain']
+        $userName  = $dataNodes['AccountName']
+        $sessionId = $dataNodes['SessionName']
+        $sourceIp  = $dataNodes['ClientAddress']
+    }
+
+    # Skip machine accounts and well-known system principals.
+    if ($userName -match '\$$') { continue }
+    if ($userName -in @('SYSTEM', 'ANONYMOUS LOGON', 'LOCAL SERVICE', 'NETWORK SERVICE', 'DWM-1', 'UMFD-0', 'UMFD-1')) { continue }
+
+    $userField = if ($domain) { "$domain\$userName" } else { $userName }
 
     [pscustomobject]@{
         TimeCreated = $event.TimeCreated
         Computer    = $computerName
         EventId     = $event.Id
         EventType   = $eventType
-        User        = $data.User
-        SessionID   = $data.SessionID
-        SourceIP    = $data.Address
+        User        = $userField
+        SessionID   = $sessionId
+        SourceIP    = $sourceIp
     }
 }
 
