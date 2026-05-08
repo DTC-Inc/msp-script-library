@@ -20,7 +20,8 @@ if ($RMM -ne 1) {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 
 } else {
-    if ($null -eq $RMMScriptPath) {
+    # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back to WINDIR.
+    if ($RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
     } else {
         $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
@@ -36,20 +37,52 @@ if ($RMM -ne 1) {
 if (-not $DaysBack)     { $DaysBack = 90 }
 if (-not $OutputFolder) { $OutputFolder = "C:\temp" }
 
-# Start the script logic here.
-
-Start-Transcript -Path $LogPath
-
+# Emit progress to stdout BEFORE the transcript starts, so even if Start-Transcript
+# fails (no log dir, locked file, etc.) the RMM still captures something useful.
+Write-Host "msft-windows-rds-logon-report.ps1 starting"
 Write-Host "Description: $Description"
-Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 Write-Host "DaysBack: $DaysBack"
 Write-Host "OutputFolder: $OutputFolder"
+Write-Host "Computer: $env:COMPUTERNAME"
+Write-Host "User context: $env:USERNAME"
+Write-Host "PowerShell: $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"
+
+# Pre-create the transcript directory so Start-Transcript can't fail on a missing folder.
+$logDir = Split-Path -Path $LogPath -Parent
+if ($logDir -and -not (Test-Path -Path $logDir)) {
+    try {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+        Write-Host "Created log directory: $logDir"
+    } catch {
+        Write-Host "Warning: could not create log directory ${logDir}: $($_.Exception.Message)"
+    }
+}
+
+# Start the script logic here. Wrap Start-Transcript so a transcript failure
+# (e.g. ErrorActionPreference=Stop in the RMM runner) cannot kill the script.
+$transcriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop | Out-Null
+    $transcriptStarted = $true
+    Write-Host "Transcript started: $LogPath"
+} catch {
+    Write-Host "Warning: Start-Transcript failed for ${LogPath}: $($_.Exception.Message)"
+    Write-Host "Continuing without transcript."
+}
+
+Write-Host "Log path: $LogPath"
 
 # Ensure output folder exists.
 if (-not (Test-Path -Path $OutputFolder)) {
     Write-Host "Creating output folder $OutputFolder"
-    New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
+    try {
+        New-Item -Path $OutputFolder -ItemType Directory -Force | Out-Null
+    } catch {
+        Write-Host "ERROR: could not create output folder ${OutputFolder}: $($_.Exception.Message)"
+        if ($transcriptStarted) { Stop-Transcript }
+        exit 1
+    }
 }
 
 $computerName = $env:COMPUTERNAME
@@ -57,13 +90,23 @@ $startTime    = (Get-Date).AddDays(-[int]$DaysBack)
 $timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
 $csvPath      = Join-Path $OutputFolder ("rds-logons-{0}-{1}days-{2}.csv" -f $computerName, $DaysBack, $timestamp)
 
+# Fail fast if the LSM log is missing/disabled (e.g. running on a non-RDS host).
+$lsmLogName = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
+$lsmLog = Get-WinEvent -ListLog $lsmLogName -ErrorAction SilentlyContinue
+if (-not $lsmLog) {
+    Write-Host "ERROR: Event log '$lsmLogName' not present on $computerName. Is RDS Session Host installed?"
+    if ($transcriptStarted) { Stop-Transcript }
+    exit 1
+}
+Write-Host "LSM log: enabled=$($lsmLog.IsEnabled) records=$($lsmLog.RecordCount) sizeBytes=$($lsmLog.FileSize)"
+
 Write-Host "Querying RDS logon events since $startTime on $computerName"
 
 # Microsoft-Windows-TerminalServices-LocalSessionManager/Operational
 #   21 = Remote Desktop Services: Session logon succeeded
 #   25 = Remote Desktop Services: Session reconnection succeeded
 $filter = @{
-    LogName   = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
+    LogName   = $lsmLogName
     Id        = 21, 25
     StartTime = $startTime
 }
@@ -76,7 +119,7 @@ try {
         $events = @()
     } else {
         Write-Host "Failed to query event log: $($_.Exception.Message)"
-        Stop-Transcript
+        if ($transcriptStarted) { Stop-Transcript }
         exit 1
     }
 }
@@ -105,9 +148,9 @@ $results = foreach ($event in $events) {
     }
 }
 
-$results = $results | Sort-Object TimeCreated -Descending
+$results = @($results | Sort-Object TimeCreated -Descending)
 
-if ($results) {
+if ($results.Count -gt 0) {
     $results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
     Write-Host "Wrote $($results.Count) rows to $csvPath"
 } else {
@@ -126,4 +169,5 @@ if ($results) {
     Write-Host "No events to export. Empty CSV written to $csvPath"
 }
 
-Stop-Transcript
+Write-Host "msft-windows-rds-logon-report.ps1 completed"
+if ($transcriptStarted) { Stop-Transcript }
