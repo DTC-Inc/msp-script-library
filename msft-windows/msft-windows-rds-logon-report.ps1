@@ -7,6 +7,21 @@
 
 $ScriptLogName = "msft-windows-rds-logon-report.log"
 
+# Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
+# When -NonInteractive is on the command line, Read-Host throws and would kill the
+# script, so treat that as RMM mode even if $RMM was not explicitly passed.
+try {
+    $cmdLineArgs = [Environment]::GetCommandLineArgs()
+    if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
+        if ($RMM -ne 1) {
+            Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
+            $RMM = 1
+        }
+    }
+} catch {
+    # If detection itself fails, leave $RMM as-is and proceed.
+}
+
 if ($RMM -ne 1) {
     $ValidInput = 0
     while ($ValidInput -ne 1) {
