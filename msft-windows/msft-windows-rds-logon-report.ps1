@@ -101,9 +101,9 @@ if (-not (Test-Path -Path $OutputFolder)) {
 }
 
 $computerName = $env:COMPUTERNAME
-$startTime    = (Get-Date).AddDays(-[int]$DaysBack)
-$timestamp    = Get-Date -Format "yyyyMMdd-HHmmss"
-$csvPath      = Join-Path $OutputFolder ("rds-logons-{0}-{1}days-{2}.csv" -f $computerName, $DaysBack, $timestamp)
+$now          = Get-Date
+$startTime    = $now.AddDays(-[int]$DaysBack)
+$timestamp    = $now.ToString("yyyyMMdd-HHmmss")
 
 # Fail fast if the LSM log is missing/disabled (e.g. running on a non-RDS host).
 $lsmLogName = 'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational'
@@ -165,21 +165,23 @@ $results = foreach ($event in $events) {
 
 $results = @($results | Sort-Object TimeCreated -Descending)
 
+# Name the CSV based on the actual span of data retrieved, not the requested $DaysBack.
+# Example: requested 90 days, LSM log only retained 14 -> filename shows "14days".
+if ($results.Count -gt 0) {
+    $oldestEvent = ($results | Select-Object -Last 1).TimeCreated
+    $actualDays  = [int][math]::Ceiling(($now - $oldestEvent).TotalDays)
+    if ($actualDays -lt 1) { $actualDays = 1 }
+} else {
+    $actualDays = 0
+}
+$csvPath = Join-Path $OutputFolder ("rds-logons-{0}-{1}days-{2}.csv" -f $computerName, $actualDays, $timestamp)
+Write-Host "Requested $DaysBack days, retrieved $actualDays days of data; CSV: $csvPath"
+
 if ($results.Count -gt 0) {
     $results | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
     Write-Host "Wrote $($results.Count) rows to $csvPath"
 } else {
     # Still produce an empty CSV with headers so the artifact exists.
-    [pscustomobject]@{
-        TimeCreated = $null
-        Computer    = $computerName
-        EventId     = $null
-        EventType   = $null
-        User        = $null
-        SessionID   = $null
-        SourceIP    = $null
-    } | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8
-    # Re-write without the placeholder row.
     "TimeCreated,Computer,EventId,EventType,User,SessionID,SourceIP" | Set-Content -Path $csvPath -Encoding UTF8
     Write-Host "No events to export. Empty CSV written to $csvPath"
 }
