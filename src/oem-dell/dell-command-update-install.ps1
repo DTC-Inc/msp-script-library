@@ -8,8 +8,8 @@
 ## $env:DCUTargetVersion          - Minimum acceptable DCU version (default: "5.7.0")
 ## $env:DCUInstallerURL           - Override the Dell-hosted installer URL (see TODO below)
 
-# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
-# %INCLUDE src/oem-dell/lib/dell-detection.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/dell-detection.ps1
 
 $ScriptLogName = "dell-command-update-install.log"
 

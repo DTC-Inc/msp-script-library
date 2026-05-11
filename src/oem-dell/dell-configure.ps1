@@ -15,9 +15,9 @@
 ## $env:BIOS_WakeOnLAN            - "Enabled" / "Disabled" / "LANOnly" / "LANWLAN"
 ## $env:BIOS_BootMode             - "UEFI" / "Legacy"
 
-# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
-# %INCLUDE src/oem-dell/lib/dell-detection.ps1
-# %INCLUDE src/oem-dell/lib/dell-bios-translation.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/dell-detection.ps1
+# %INCLUDE src/lib/dell-bios-translation.ps1
 
 $ScriptLogName = "dell-configure.log"
 

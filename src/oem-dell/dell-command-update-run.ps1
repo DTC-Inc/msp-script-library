@@ -7,8 +7,8 @@
 ## Per-script variables:
 ## $env:DCUScanOnly               - "1" to scan but not apply updates (default: "0")
 
-# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
-# %INCLUDE src/oem-dell/lib/dell-detection.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/dell-detection.ps1
 
 $ScriptLogName = "dell-command-update-run.log"
 

@@ -4,7 +4,7 @@
 ## $env:Description               - Ticket # or initials for audit trail
 ## $env:RMMScriptPath             - Optional log directory base provided by the RMM
 
-# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
 
 $ScriptLogName = "dell-debloat.log"
 
