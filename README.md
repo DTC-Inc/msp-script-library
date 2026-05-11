@@ -39,6 +39,43 @@ $env:OrgName = "DTC"
 3. Add any per-script variables (custom field names, paths, etc.) listed in the script's header comment block
 4. Schedule or run on demand
 
+## Script Delivery
+
+Scripts are authored as modular source under `src/` and CI assembles them into self-contained "fat" scripts on a separate `published` branch. RMM endpoints download the fat scripts from jsDelivr ... no runtime lib fetch, no hash placeholders, no invisible failures when an endpoint can't reach the lib server.
+
+```
+src/                          (authored, lives on development + main)
+  oem-shared/lib/oem-manufacturer-detect.ps1
+  oem-dell/dell-configure.ps1
+  oem-dell/lib/dell-detection.ps1
+        |
+        |  CI: .github/workflows/build-fat-scripts.yml
+        v
+published/                    (CI output, lives on the `published` branch)
+  oem-dell/dell-configure.ps1   <- fat, self-contained, served via jsDelivr
+```
+
+**`# %INCLUDE` marker syntax** ... leaf scripts pull shared lib code with a comment marker:
+
+```powershell
+# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/oem-dell/lib/dell-detection.ps1
+```
+
+Build inlines each marker with the referenced file's content. Recursive includes are not supported in V1 (lib files cannot themselves contain `# %INCLUDE` markers). See `src/README.md`.
+
+**Canonical NinjaRMM script URL:**
+
+```
+https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@release/<path>
+```
+
+- `@release` ... production tag on `published`, advanced on each push to `main`.
+- `@dev` ... staging tag on `published`, advanced on each push to `development`.
+- `@<commit-sha>` ... immutable per-build pin, recommended for anything customer-facing.
+
+The `published` branch is read-only build output ... never authored by hand. For deeper docs see `src/README.md` and the "Source vs Published" section of [`CLAUDE.md`](CLAUDE.md).
+
 ## Repository Structure
 
 Scripts are organized by category prefix:

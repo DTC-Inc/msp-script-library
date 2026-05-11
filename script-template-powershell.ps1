@@ -28,6 +28,18 @@
 # detection patterns, NinjaRMM custom field types, and the cross-context
 # detection pattern (user + system split with shared JSON state).
 
+# --- Shared lib includes (optional) --------------------------------------
+# If this script needs helpers from oem-shared/lib/ or any other lib folder,
+# author the script under src/<category-vendor>/ and add `# %INCLUDE` marker
+# lines below ... the CI build inlines the referenced files into the fat
+# script that ships to RMM endpoints. The marker path is relative to the
+# repo root. Recursive includes are NOT supported (lib files cannot
+# themselves contain `# %INCLUDE` markers). See src/README.md.
+#
+# Example:
+# # %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
+# # %INCLUDE src/oem-dell/lib/dell-detection.ps1
+
 $ScriptLogName = "EnterLogNameHere.log"
 
 # --- Default optional RMM environment variables --------------------------
@@ -86,6 +98,29 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
+
+# --- Internet check (optional) -------------------------------------------
+# Uncomment if this script needs internet for a vendor download (e.g. an
+# OEM tooling installer like DCU, HPIA, LSU). Configure / BIOS / debloat
+# leaves that operate on already-installed tooling should NOT include this
+# check. Skip cleanly on offline so RMM doesn't flag a hard failure when
+# the endpoint just doesn't have a route to the vendor.
+#
+# function Test-InternetAvailable {
+#     try {
+#         $resp = Invoke-WebRequest -Uri 'https://www.msftconnecttest.com/connecttest.txt' `
+#             -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+#         return ($resp.StatusCode -eq 200)
+#     } catch {
+#         return $false
+#     }
+# }
+#
+# if (-not (Test-InternetAvailable)) {
+#     Write-Host "No internet connectivity detected ... skipping vendor download. Exit 0."
+#     Stop-Transcript
+#     exit 0
+# }
 
 # Your script logic goes here.
 

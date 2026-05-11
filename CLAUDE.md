@@ -6,6 +6,53 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is an MSP (Managed Service Provider) script library containing PowerShell scripts for automation, deployment, configuration, and management tasks across various platforms and vendors. Scripts are designed to be executed both interactively and via RMM (Remote Monitoring and Management) platforms.
 
+## Source vs Published
+
+Scripts in this library are authored as **modular source** under `src/` and CI assembles them into **self-contained fat scripts** on the `published` branch for delivery to RMM endpoints. Two distinct trees, one direction of flow.
+
+```
+src/                        (authored by humans, lives on development + main)
+  oem-shared/lib/oem-manufacturer-detect.ps1
+  oem-dell/dell-configure.ps1
+  oem-dell/lib/dell-detection.ps1
+        |
+        |  .github/workflows/build-fat-scripts.yml on push
+        v
+published/                  (CI output, lives on the `published` branch)
+  oem-dell/dell-configure.ps1   <- fat, self-contained, served via jsDelivr
+```
+
+**`# %INCLUDE` marker syntax.** Leaf scripts pull in shared lib code by adding a comment marker on its own line:
+
+```powershell
+# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/oem-dell/lib/dell-detection.ps1
+```
+
+Rules:
+- Path is **relative to the repo root**.
+- Build inlines the marker line with the referenced file's content, framed by `# === inlined from <path> ===` / `# === end inline ===`.
+- **Recursive includes are not supported in V1.** Lib files cannot themselves contain `# %INCLUDE` markers. Build will fail loudly if it sees one.
+- Each include is per-occurrence ... two leaves that both include the same lib each get their own inlined copy. That's the point.
+
+**Why fat scripts, not runtime fetch.** Endpoints don't dot-source from the internet at runtime ... no hash placeholders, no fetch-and-verify dance, no invisible failure when a customer endpoint loses its route to jsDelivr. NinjaRMM downloads exactly one fat script, runs it, done.
+
+**Build triggers.** The GHA workflow at `.github/workflows/build-fat-scripts.yml` runs on push to `development` and `main`. It writes fat scripts to the matching relative path on the `published` branch (the leading `src/` is stripped, so `src/oem-dell/dell-configure.ps1` becomes `oem-dell/dell-configure.ps1` on `published`). Commit message names the source short SHA and subject (`build: from <source-sha-short> "<source commit subject>"`). On push to `main` the `release` tag is moved to the new published commit; on push to `development` the `dev` tag is moved.
+
+**Canonical script URL convention.** NinjaRMM script presets reference scripts on `published` via jsDelivr:
+
+```
+https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@release/<path>
+```
+
+- `@release` ... production-pinned tag on `published`. Moves on each push to `main`.
+- `@dev` ... staging tag on `published`. Moves on each push to `development`.
+- `@<commit-sha>` ... immutable per-build pin. Recommended for anything customer-facing where you want to lock the exact build at deploy time.
+
+The `published` branch is never authored by hand. Treat it as read-only build output.
+
+See `src/README.md` for the source-tree layout and full marker rules.
+
 ## Code Architecture
 
 ### Script Structure Standard
@@ -511,6 +558,111 @@ if ($veeamVersion -ge $requiredVersion) {
     # Use legacy command syntax
 }
 ```
+
+## OEM Vendor Scripts
+
+OEM scripts (`oem-dell/`, `oem-hp/`, `oem-lenovo/`, and the shared `oem-shared/`) follow patterns specific to the hardware-vendor space. The conventions below are canonical ... every OEM script in the library follows them.
+
+### Internet check at the install step only
+
+The internet check belongs **only** on leaves that pull a vendor binary from the internet (DCU install, HPIA install, LSU install). Configure / BIOS / debloat leaves operate on already-installed tooling and don't need a route to the vendor ... they should never gate on internet, because the configure step should still run on an endpoint that's offline at the moment but already has the OEM tooling installed.
+
+When you do need it, the check skips cleanly on offline so RMM doesn't log a hard failure for what is genuinely a no-op:
+
+```powershell
+function Test-InternetAvailable {
+    try {
+        $resp = Invoke-WebRequest -Uri 'https://www.msftconnecttest.com/connecttest.txt' `
+            -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return ($resp.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+if (-not (Test-InternetAvailable)) {
+    Write-Host "No internet connectivity detected ... skipping vendor download. Exit 0."
+    Stop-Transcript
+    exit 0
+}
+```
+
+The Microsoft connect-test endpoint (`msftconnecttest.com`) is the same one Windows uses for its own connectivity probe; it's reachable from anywhere a modern Windows endpoint can reach the internet at all, and a captive-portal redirect will fail the status-code check so it doesn't fool the probe.
+
+### `configure` not `baseline`
+
+OEM scripts that apply BIOS settings, drive debloat, or otherwise set desired state are named `<oem>-configure.ps1`, not `<oem>-baseline.ps1`.
+
+**Why:** "baseline" implied static, repo-side configuration ... a single fixed policy file checked in for everyone. The actual model is the opposite: the RMM operator's env-var set is the desired state, per-customer and per-endpoint. There is no canonical policy file in the repo. Calling it `configure` makes that explicit; calling it `baseline` led people to look for the missing policy file.
+
+| Old name | New name |
+|---|---|
+| `dell-baseline.ps1` | `dell-configure.ps1` |
+| `hp-baseline.ps1` | `hp-configure.ps1` |
+| `lenovo-baseline.ps1` | `lenovo-configure.ps1` |
+
+### BIOS settings ... `$env:BIOS_*` translation table
+
+BIOS configuration is **operator-set via RMM env vars**, not a static `.cctk` / `.repset` / WMI policy file in the repo. Each setting is its own variable; a shared translation table maps the canonical name to the OEM-native syntax that the OEM's BIOS tool expects.
+
+**Required `$env:BIOS_*` variables (canonical names):**
+
+| Variable | Type | Meaning |
+|---|---|---|
+| `$env:BIOS_AdminPassword` | string | Current BIOS admin password. Required to apply settings on most platforms. Empty string means none set. |
+| `$env:BIOS_AdminPasswordNew` | string | Set/change admin password. Empty string means "don't touch". |
+| `$env:BIOS_TPMEnabled` | `Enabled` / `Disabled` | TPM module state. |
+| `$env:BIOS_TPMActivation` | `Activated` / `Deactivated` | TPM activation state. |
+| `$env:BIOS_SecureBoot` | `Enabled` / `Disabled` | UEFI Secure Boot. |
+| `$env:BIOS_VirtualizationCPU` | `Enabled` / `Disabled` | CPU virtualization extensions (VT-x / AMD-V). |
+| `$env:BIOS_VirtualizationIOMMU` | `Enabled` / `Disabled` | IOMMU (VT-d / AMD-Vi). |
+| `$env:BIOS_WakeOnLAN` | `Enabled` / `Disabled` / `LANOnly` / `LANWLAN` | WoL behavior. Not every OEM supports every value. |
+| `$env:BIOS_BootMode` | `UEFI` / `Legacy` | Boot mode. |
+
+**Translation table layout.** Each OEM's lib carries the mapping from canonical name to native syntax. The table is a hashtable keyed by canonical name; the value is a record that describes how to render the setting for that OEM's tooling:
+
+```powershell
+# In src/oem-dell/lib/dell-bios-translation.ps1 (illustrative):
+$Script:BiosSettingsMap = @{
+    BIOS_TPMEnabled = @{
+        Native  = 'tpm'
+        Values  = @{ Enabled = 'on'; Disabled = 'off' }
+    }
+    BIOS_SecureBoot = @{
+        Native  = 'secureboot'
+        Values  = @{ Enabled = 'enabled'; Disabled = 'disabled' }
+    }
+    # ... etc
+}
+```
+
+The `<oem>-configure.ps1` leaf iterates `$env:BIOS_*` variables, looks each up in the map, skips ones the platform doesn't support (with a log line), and emits the OEM-native command (e.g. `cctk --tpm=on` for Dell). Unrecognized canonical settings log a warning and continue ... a missing translation entry is not fatal because operators may set vars the script doesn't know about yet.
+
+**Why this shape:**
+- No static policy files in the repo ... per-customer / per-endpoint config is operator-set, which matches how the RMM is actually used.
+- Same canonical variable name across OEMs ... operators don't relearn the matrix per vendor.
+- Translation tables are small, lib-local, and easy to extend. Adding a new setting is "add a row to each OEM's map".
+- A setting that only exists on one OEM is supported by having an entry in only that OEM's map ... unsupported elsewhere falls through and logs.
+
+### OEM script layout
+
+Standard layout for each vendor:
+
+```
+src/oem-shared/
+  lib/oem-manufacturer-detect.ps1    # Get-OEMManufacturer
+src/oem-dell/
+  dell-configure.ps1                 # BIOS + other configure
+  dell-command-update-install.ps1    # idempotent install (needs internet check)
+  dell-command-update-run.ps1        # DCU scan + apply
+  dell-debloat.ps1                   # remove Dell consumer software
+  lib/dell-detection.ps1
+  lib/dell-bios-translation.ps1
+src/oem-hp/   (parallel)
+src/oem-lenovo/ (parallel)
+```
+
+Every OEM leaf starts with `# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1` and exits cleanly (`exit 0`) on a non-matching manufacturer, so the same scripts can be deployed fleet-wide and self-skip on the wrong hardware.
 
 ## Testing Scripts
 
