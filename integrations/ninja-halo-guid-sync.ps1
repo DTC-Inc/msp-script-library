@@ -1,26 +1,34 @@
 # NinjaRMM to Halo PSA GUID Sync
+# Documentation: BookStack page 1908
+# Schedule: Weekly (Sundays 2:00 AM EDT)
 #
-# SYNOPSIS
-#   Syncs the DTC Org GUID from NinjaRMM organizations to the DTC Client GUID
-#   custom field in Halo PSA.
+# Client IDs are not secrets and are hardcoded below.
+# Client secrets are injected at runtime via NinjaRMM Script Variables:
+#   haloclientsecret  — set in Library > Automation > Halo GUID Sync > Script Variables
+#   ninjaclientsecret — set in Library > Automation > Halo GUID Sync > Script Variables
 #
-# NOTES
-#   Documentation: BookStack page 1908
-#   Schedule:      Weekly (Sundays 2:00 AM EDT) via NinjaRMM Scheduled Tasks
-#
-#   Replace all placeholder values below with real credentials before deploying.
-#   Store credentials in 1Password under: Halo/NinjaRMM API - GUID Sync Secret
-#   Never commit real credentials to this repository.
+# Credentials stored in 1Password: Halo/NinjaRMM API - GUID Sync Secret
+# Never commit real secrets to this repository.
 
 # --- CONFIGURATION ---
-$HaloClientId      = "YOUR_HALO_CLIENT_ID"
-$HaloClientSecret  = "YOUR_HALO_CLIENT_SECRET"
+$HaloClientId      = "25542a6d-2d0e-4093-bf82-e11edc64faf6"
+$HaloClientSecret  = $env:haloclientsecret
 $HaloBaseUrl       = "https://psa.dtctoday.com"
 $HaloScope         = "read:customers edit:customers"
 
-$NinjaClientId     = "YOUR_NINJA_CLIENT_ID"
-$NinjaClientSecret = "YOUR_NINJA_CLIENT_SECRET"
+$NinjaClientId     = "0S1xEjce1FQp7Rbn_GJTrSWTp64"
+$NinjaClientSecret = $env:ninjaclientsecret
 $NinjaBaseUrl      = "https://app.ninjarmm.com"
+
+# --- VALIDATE ---
+$missing = @()
+if ([string]::IsNullOrWhiteSpace($HaloClientSecret))  { $missing += "haloclientsecret" }
+if ([string]::IsNullOrWhiteSpace($NinjaClientSecret)) { $missing += "ninjaclientsecret" }
+
+if ($missing.Count -gt 0) {
+    Write-Error "Missing NinjaRMM Script Variables: $($missing -join ", "). Set default values in Library > Automation > Halo GUID Sync > Script Variables."
+    exit 1
+}
 
 # --- AUTHENTICATE: HALO ---
 try {
@@ -94,6 +102,8 @@ foreach ($org in $orgs) {
         continue
     }
 
+    # Body must be a JSON array per Halo API requirements
+    # PowerShell 5 unwraps single-item @() on ConvertTo-Json so we manually wrap
     $clientUpdate = @{
         id           = $haloClient.id
         customfields = @(
