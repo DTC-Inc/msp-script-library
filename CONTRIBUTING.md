@@ -23,7 +23,7 @@ Thank you for contributing! This repository uses branch protection to ensure all
    ```
 
 4. **Create a Pull Request:**
-   - Go to https://github.com/DTC-Inc/msp-script-library
+   - Go to https://github.com/dtc-inc/msp-script-library
    - Click "Pull requests" → "New pull request"
    - Select your branch and create the PR
    - Nate (@Gumbees) will automatically be assigned for review
