@@ -512,6 +512,88 @@ if ($veeamVersion -ge $requiredVersion) {
 }
 ```
 
+### OEM Vendor Scripts
+
+OEM scripts (`oem-dell/`, `oem-hp/`, `oem-lenovo/`) deploy and operate the vendor lifecycle tools for endpoint hardware ... BIOS configuration, driver/firmware updates, and consumer-software debloat. Each OEM follows the same four-leaf shape and the same patterns.
+
+#### The four-leaf shape
+
+Every OEM lives at the repo root under `oem-<vendor>/` and ships exactly four scripts, each independently runnable from RMM. RMM presets compose them per device-class:
+
+| Leaf | Purpose | Internet check? |
+|---|---|---|
+| `<oem>-configure.ps1` | Apply BIOS settings from `$env:BIOS_*` env vars. Operates on already-installed Command Configure / equivalent tooling. | No |
+| `<oem>-command-update-install.ps1` | Install or upgrade the vendor update tool (Dell Command Update, HP Image Assistant, Lenovo System Update). | Yes |
+| `<oem>-command-update-run.ps1` | Scan + apply driver/firmware updates via the vendor CLI. Operates on already-installed tooling. | No |
+| `<oem>-debloat.ps1` | Uninstall the vendor's consumer software (e.g. SupportAssist, MyDell). Keeps the lifecycle tools. | No |
+
+Each leaf is self-contained: its OEM detection, vendor-tool detection, and translation tables are inlined directly in the file. No `lib/` subfolder, no `src/`, no build system. Helpers that multiple leaves need get duplicated across those leaves.
+
+#### `configure` not `baseline`
+
+The leaf is named `<oem>-configure.ps1`, not `<oem>-baseline.ps1`. The RMM operator's env-var set is the desired state. There is no static policy file in the repo. The naming is explicit so contributors don't go looking for a `.cctk` / `.repset` / WMI policy that doesn't exist.
+
+#### `$env:BIOS_*` canonical settings table
+
+Settings are operator-set via canonical environment variables. Each `<oem>-configure.ps1` carries its own per-OEM translation map inline that maps canonical names to vendor-native syntax. Unknown canonical names or unsupported values are logged and skipped so forward-looking presets don't break the run.
+
+| Canonical variable | Type / allowed values | Dell | HP | Lenovo |
+|---|---|---|---|---|
+| `$env:BIOS_AdminPassword` | string (current admin pw, required to apply settings) | yes | yes | yes |
+| `$env:BIOS_AdminPasswordNew` | string (new admin pw to set; empty = no change) | yes | yes | yes |
+| `$env:BIOS_TPMEnabled` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_TPMActivation` | `Activated` / `Deactivated` | yes | n/a (HP couples activation with enable) | yes |
+| `$env:BIOS_SecureBoot` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_VirtualizationCPU` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_VirtualizationIOMMU` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_WakeOnLAN` | `Enabled` / `Disabled` / `LANOnly` / `LANWLAN` | yes (Dell maps `Enabled` -> `lan`) | yes | yes |
+| `$env:BIOS_BootMode` | `UEFI` / `Legacy` | yes | yes | yes |
+
+Operators set the vars they want to apply; leave the rest blank. Each `<oem>-configure.ps1` iterates the canonical names, looks each up in its inline translation table, and emits the vendor-native call.
+
+#### Internet check pattern (install leaves only)
+
+`*-command-update-install.ps1` is the only leaf that needs vendor download connectivity. It checks before pulling the installer and skips cleanly when offline:
+
+```powershell
+function Test-InternetAvailable {
+    try {
+        $resp = Invoke-WebRequest -Uri 'https://www.msftconnecttest.com/connecttest.txt' `
+            -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return ($resp.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+if (-not (Test-InternetAvailable)) {
+    Write-Host "No internet connectivity detected ... skipping vendor install. Exit 0."
+    if ($TranscriptStarted) { Stop-Transcript }
+    exit 0
+}
+```
+
+The other three leaves (`*-configure`, `*-command-update-run`, `*-debloat`) operate on already-installed tooling and intentionally do **not** include the internet check. They should still run on an endpoint that's momentarily offline.
+
+#### Self-contained guidance
+
+Each OEM leaf is independently runnable from RMM and inlines its own helpers (manufacturer check, vendor-tool detection, BIOS translation table, internet check where needed). The trade-off versus a shared `lib/` is intentional:
+
+- Duplicated helpers across Dell + HP + Lenovo land in the 30-50 line range.
+- Reading any one script tells you exactly what it does without grepping for includes or fat-script build output.
+- No build system to operate, no `published/` branch, no marker syntax to learn.
+
+If you find yourself wanting to share a helper across many scripts, copy it. Sweep drift via a Pester test or a periodic refactor PR ... not a build pipeline.
+
+The standard gate sequence after the RMM-vs-interactive section:
+
+1. Manufacturer check ... `if (-not (Test-DellHardware)) { Write-Host "Not a Dell endpoint. Skipping."; exit 0 }`
+2. (Install leaves only) `if (-not (Test-InternetAvailable)) { Write-Host "Offline. Skipping vendor install."; exit 0 }`
+3. Vendor-tool presence check where required (e.g. `Test-DCUInstalled` for `dell-command-update-run`).
+4. Do the actual work.
+
+Canonical example: `oem-dell/dell-configure.ps1`, `oem-dell/dell-command-update-install.ps1`, `oem-dell/dell-command-update-run.ps1`, `oem-dell/dell-debloat.ps1`.
+
 ## Testing Scripts
 
 - **Interactive Testing**: Run script directly in PowerShell without setting `$env:RMM`. The script will prompt for `$env:Description` via `Read-Host`.
