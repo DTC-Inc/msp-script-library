@@ -1,50 +1,92 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
+## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description   - Ticket # or initials for audit trail
+## $env:RMMScriptPath - Optional log directory base provided by the RMM
+##
+## Add per-script variables below this line, e.g.:
+## $env:CustomFieldFooDetected - Boolean (1/0) field name (default: "fooDetected")
+##
+## For cross-context scripts that share state with a user-context companion, also require:
+## $env:OrgName       - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
 
-# Getting input from user if not running from RMM else set variables from RMM.
+# Standard DTC PowerShell Script Template
+#
+# Every script in this library follows the three-part structure below:
+#   1. RMM Variable Declaration  - the comment block above this header
+#   2. Input Handling             - RMM vs interactive detection, log path setup
+#   3. Script Logic               - your actual automation, wrapped in Start-Transcript
+#
+# IMPORTANT: All RMM-supplied variables come via environment variables.
+# Read them via $env:VarName at every use site. Bare $RMM / $Description /
+# $RMMScriptPath references resolve to $null in true RMM mode and silently
+# fall through to the interactive branch.
+#
+# Environment variables are always strings, so compare $env:RMM to "1" not 1.
+#
+# See CLAUDE.md for the full pattern documentation including application
+# detection patterns, NinjaRMM custom field types, and the cross-context
+# detection pattern (user + system split with shared JSON state).
 
 $ScriptLogName = "EnterLogNameHere.log"
 
-if ($RMM -ne 1) {
+# --- Default optional RMM environment variables --------------------------
+# Set defaults for any optional variables here by writing back to $env: so
+# the rest of the script can keep referencing $env:VarName consistently.
+# Example:
+#
+# if ([string]::IsNullOrEmpty($env:CustomFieldFooDetected)) {
+#     $env:CustomFieldFooDetected = "fooDetected"
+# }
+
+# --- Input handling: RMM vs interactive ----------------------------------
+
+if ($env:RMM -ne "1") {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
         # Ask for input here. This is the interactive area for getting variable information.
         # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
+        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
+        if ($env:Description) {
             $ValidInput = 1
         } else {
             Write-Host "Invalid input. Please try again."
         }
     }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+} else {
+    # RMM mode: store logs under $env:RMMScriptPath if the RMM provided one,
+    # otherwise fall back to the standard Windows logs directory.
+    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
     } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
+        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
     }
 
-    if ($null -eq $Description) {
+    if ([string]::IsNullOrEmpty($env:Description)) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
+        $env:Description = "No Description"
+    }
 }
 
-# Start the script logic here. This is the part that actually gets done what you need done.
+# Ensure log directory exists before starting the transcript
+$logDir = Split-Path -Path $LogPath -Parent
+if (-not (Test-Path -Path $logDir)) {
+    Write-Host "Creating log directory: $logDir"
+    New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+}
+
+# --- Script logic --------------------------------------------------------
+# Wrap everything below in Start-Transcript / Stop-Transcript for full
+# logging. Replace the placeholder Write-Host lines with your automation.
 
 Start-Transcript -Path $LogPath
 
-Write-Host "Description: $Description"
+Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
+Write-Host "RMM: $env:RMM"
+
+# Your script logic goes here.
 
 Stop-Transcript
