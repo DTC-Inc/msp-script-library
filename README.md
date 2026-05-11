@@ -47,6 +47,7 @@ Scripts are organized by category prefix:
 |---|---|
 | `app-*` | Application-specific scripts (Adobe, Chrome, Eaglesoft, Duo, etc.) |
 | `bdr-*` | Backup and Disaster Recovery (Veeam, MSP360) |
+| `db-*` | Database scripts (MySQL, etc.) |
 | `iaas-*` | Infrastructure as a Service (Azure, Backblaze, Dynu) |
 | `mw-*` | Middleware / Microsoft 365 |
 | `msft-*` | Microsoft Windows system scripts |

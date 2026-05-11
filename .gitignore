@@ -82,3 +82,6 @@ secrets.*
 # *.tar
 # *.gz
 .claude/settings.local.json
+
+# Vendor binaries - download at runtime, never commit
+*.exe
