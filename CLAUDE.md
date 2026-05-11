@@ -49,6 +49,7 @@ All scripts follow a consistent three-part structure defined in `script-template
 Scripts are organized by category prefixes:
 - `app-*`: Application-specific scripts (Duo, Adobe, Teramind, etc.)
 - `bdr-*`: Backup and Disaster Recovery (Veeam, MSP360)
+- `db-*`: Database engines (MySQL, etc.)
 - `iaas-*`: Infrastructure as a Service (Azure, Backblaze, Dynu)
 - `mw-*`: Middleware/Microsoft 365 scripts
 - `msft-*`: Microsoft Windows system scripts
@@ -533,13 +534,99 @@ if ($veeamVersion -ge $requiredVersion) {
 
 ## Git Workflow
 
-**Branching Model:**
-* `development` — default branch (HEAD), active work lands here
-* `release` — stable/production branch, merged from development when ready
-* `enhancement/{name}` — branched from development for new functionality
-* `problem/{name}` — branched from development for bug fixes and issue resolution
-* No `main` or `master` branches
+See [DTC KB ... Change Taxonomy](https://kb.dtctoday.com/books/developer-operations-devops/page/change-taxonomy) for the canonical reference. This file mirrors the rules; the KB is authoritative.
 
-**GitHub Issues & Labels:**
-* New functionality uses the **enhancement** label, not "feature"
-* Configure repository labels accordingly
+**Branching Model:**
+* `main` ... default branch and release branch. Production code deployed to customer environments lives here.
+* This repo has no `development` branch. Feature/fix PRs target `main` directly.
+* All changes go through a typed branch and a pull request ... no direct commits to `main` (exception: minor `CLAUDE.md` / `README.md` doc updates that do not affect script functionality).
+
+**CRITICAL: All changes must be made in a typed branch, never directly to `main`.**
+
+### Change Taxonomy (two-tier ... Halo / GitHub / branch)
+
+Every change to this repo falls into one of four types. The type is picked before you branch ... it drives the branch prefix, the GitHub labels, and the default semver bump (future-state: this repo has no semver versioning today, but the bump column is recorded for when it does).
+
+| Halo Type | Halo Category | GitHub labels | Branch prefix | Default semver |
+|---|---|---|---|---|
+| `Problem` | `Bug` | `type:problem` + `category:bug` | `bug/{name}` | Patch |
+| `Problem` | `Refactor` | `type:problem` + `category:refactor` | `refactor/{name}` | Patch (or minor if external behavior changes) |
+| `Enhancement` | `Improvement` | `type:enhancement` + `category:improvement` | `improvement/{name}` | Minor |
+| `Enhancement` | `Feature` | `type:enhancement` + `category:feature` | `feature/{name}` | Minor |
+
+How to pick:
+- **Bug** ... the script doesn't do what it was designed to do. Null check missing, wrong path, broken regex, off-by-one.
+- **Refactor** ... the design itself was wrong. Restructuring a script's shape, not fixing a specific mistake.
+- **Improvement** ... an existing capability done better. Hardening, polish, clearer error output, integrity checks added to existing downloads.
+- **Feature** ... net-new capability. A new script, new delivery mechanism, new integration target.
+
+**`BREAKING:` PR title prefix** forces a major version bump regardless of category. (Future-state: applies once this repo carries a semver version.)
+
+**Name branches after the change, not the fix.** Good: `bug/iso-dismount-fails-on-server-2022`, `feature/jsdelivr-script-delivery`. Bad: `bug/my-fix`, `feature/wip`.
+
+**`dependabot/*` branches** ... categorize by the upstream change. CVE or upstream defect → `bug`. Major-version bump that takes new capability → `improvement` or `feature`.
+
+**Legacy prefixes:** `enhancement/` and `problem/` are deprecated by this taxonomy. Existing branches with these prefixes are accepted as-is and can merge under their original names; new work uses the four-prefix model above (`bug/`, `refactor/`, `improvement/`, `feature/`).
+
+### GitHub Labels
+
+Two-tier label set, one of each per PR:
+
+**Type labels:** `type:problem`, `type:enhancement`
+
+**Category labels:** `category:bug`, `category:refactor`, `category:improvement`, `category:feature`
+
+The legacy single-tier labels (`bug`, `enhancement`, `feature`) remain on the repo for issues opened under the old convention. New issues and PRs use the two-tier labels.
+
+### Workflow for All Changes
+
+1. **Create a typed branch off `main`**
+   ```bash
+   git checkout main
+   git pull
+   git checkout -b feature/descriptive-name
+   # or bug/, refactor/, improvement/ per the taxonomy above
+   ```
+
+   Examples:
+   - `feature/jsdelivr-script-delivery`
+   - `improvement/vendor-download-integrity`
+   - `bug/iso-dismount-error`
+   - `refactor/rmm-input-handler-shared-helper`
+
+2. **Make changes on the branch**
+   - Make all code modifications on the typed branch
+   - Commit changes with descriptive messages
+   - Test thoroughly in both interactive and RMM modes
+
+3. **Push branch**
+   ```bash
+   git push -u origin feature/descriptive-name
+   ```
+
+4. **Create pull request**
+   - Open PR from your branch to `main`
+   - Apply the two labels from the taxonomy table (one `type:*` + one `category:*`)
+   - Include description of changes, testing performed, and RMM compatibility
+   - Wait for review and approval before merging
+
+5. **Merge to `main`**
+   - Only merge after testing and approval
+   - Delete the branch after successful merge
+
+### If Changes Are Accidentally Committed to Main
+
+```bash
+# Revert the commit from main
+git revert <commit-hash> --no-edit
+git push
+
+# Create the typed branch and restore the changes
+git checkout -b feature/descriptive-name
+git cherry-pick <commit-hash>
+git push -u origin feature/descriptive-name
+```
+
+### Exception: Documentation Updates
+
+Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `main` if they do not affect script functionality.
