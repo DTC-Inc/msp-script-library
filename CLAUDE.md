@@ -12,9 +12,9 @@ Scripts in this library are authored as **modular source** under `src/` and CI a
 
 ```
 src/                        (authored by humans, lives on development + main)
-  oem-shared/lib/oem-manufacturer-detect.ps1
+  lib/oem-manufacturer-detect.ps1
+  lib/dell-detection.ps1
   oem-dell/dell-configure.ps1
-  oem-dell/lib/dell-detection.ps1
         |
         |  .github/workflows/build-fat-scripts.yml on push
         v
@@ -25,8 +25,8 @@ published/                  (CI output, lives on the `published` branch)
 **`# %INCLUDE` marker syntax.** Leaf scripts pull in shared lib code by adding a comment marker on its own line:
 
 ```powershell
-# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1
-# %INCLUDE src/oem-dell/lib/dell-detection.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/dell-detection.ps1
 ```
 
 Rules:
@@ -622,7 +622,7 @@ BIOS configuration is **operator-set via RMM env vars**, not a static `.cctk` / 
 **Translation table layout.** Each OEM's lib carries the mapping from canonical name to native syntax. The table is a hashtable keyed by canonical name; the value is a record that describes how to render the setting for that OEM's tooling:
 
 ```powershell
-# In src/oem-dell/lib/dell-bios-translation.ps1 (illustrative):
+# In src/lib/dell-bios-translation.ps1 (illustrative):
 $Script:BiosSettingsMap = @{
     BIOS_TPMEnabled = @{
         Native  = 'tpm'
@@ -646,23 +646,27 @@ The `<oem>-configure.ps1` leaf iterates `$env:BIOS_*` variables, looks each up i
 
 ### OEM script layout
 
-Standard layout for each vendor:
+Standard layout for each vendor. Libs live in flat `src/lib/`, not in per-vendor `lib/` subfolders:
 
 ```
-src/oem-shared/
-  lib/oem-manufacturer-detect.ps1    # Get-OEMManufacturer
+src/lib/
+  oem-manufacturer-detect.ps1        # Get-OEMManufacturer
+  dell-detection.ps1                 # Dell-specific helpers
+  dell-bios-translation.ps1
+  hp-detection.ps1                   (future)
+  lenovo-detection.ps1               (future)
 src/oem-dell/
   dell-configure.ps1                 # BIOS + other configure
   dell-command-update-install.ps1    # idempotent install (needs internet check)
   dell-command-update-run.ps1        # DCU scan + apply
   dell-debloat.ps1                   # remove Dell consumer software
-  lib/dell-detection.ps1
-  lib/dell-bios-translation.ps1
-src/oem-hp/   (parallel)
-src/oem-lenovo/ (parallel)
+src/oem-hp/   (future, parallel)
+src/oem-lenovo/ (future, parallel)
 ```
 
-Every OEM leaf starts with `# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1` and exits cleanly (`exit 0`) on a non-matching manufacturer, so the same scripts can be deployed fleet-wide and self-skip on the wrong hardware.
+Naming in `src/lib/` carries scope: `dell-*` is Dell-specific, no-prefix names like `oem-manufacturer-detect` are cross-cutting. Domain sub-folders (`lib/oem/`, `lib/m365/`) only when `lib/` grows enough to need them.
+
+Every OEM leaf starts with `# %INCLUDE src/lib/oem-manufacturer-detect.ps1` and exits cleanly (`exit 0`) on a non-matching manufacturer, so the same scripts can be deployed fleet-wide and self-skip on the wrong hardware.
 
 ## Testing Scripts
 

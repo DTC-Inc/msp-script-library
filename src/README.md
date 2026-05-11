@@ -10,9 +10,9 @@ So we author small, focused, reusable source files here under `src/`, and a CI j
 
 ```
 src/                          (you author here)
-  oem-shared/lib/oem-manufacturer-detect.ps1
+  lib/oem-manufacturer-detect.ps1
+  lib/dell-detection.ps1
   oem-dell/dell-configure.ps1
-  oem-dell/lib/dell-detection.ps1
        |
        |  GHA workflow: push to development or main
        v
@@ -27,13 +27,13 @@ The `published` branch is never authored by hand. Treat it as read-only build ou
 A leaf script pulls in shared lib code by adding a comment marker on its own line:
 
 ```powershell
-# %INCLUDE oem-shared/lib/oem-manufacturer-detect.ps1
-# %INCLUDE oem-dell/lib/dell-detection.ps1
+# %INCLUDE src/lib/oem-manufacturer-detect.ps1
+# %INCLUDE src/lib/dell-detection.ps1
 ```
 
 Rules:
 
-- The path is **relative to the repo root** (not relative to `src/`). Example: `# %INCLUDE oem-shared/lib/oem-manufacturer-detect.ps1` resolves to `<repo-root>/oem-shared/lib/oem-manufacturer-detect.ps1` ... but in practice all lib sources live under `src/`, so the include path will start with `src/` for in-source libs (e.g. `# %INCLUDE src/oem-shared/lib/oem-manufacturer-detect.ps1`).
+- The path is **relative to the repo root** (not relative to `src/`). All lib sources live under `src/lib/`, so include paths start with `src/lib/` (e.g. `# %INCLUDE src/lib/oem-manufacturer-detect.ps1`).
 - The match is strict: the line must begin with optional whitespace, then `#`, then optional whitespace, then `%INCLUDE`, then whitespace, then the path. Anything else is left alone.
 - The marker line is replaced at build time by the included file's content, framed with `# === inlined from <path> ===` / `# === end inline ===` so the fat output is greppable when something breaks.
 - **Recursive includes are not supported in V1.** Lib files cannot themselves contain `# %INCLUDE` markers. The build will fail loudly if it sees one. If you want a lib to depend on another lib, the leaf should `# %INCLUDE` both, in dependency order.
@@ -53,17 +53,16 @@ The workflow at `.github/workflows/build-fat-scripts.yml` triggers on push to `d
 
 ## Layout convention
 
-Same `category-vendor` / `category-app` folder convention as the rest of the repo, just nested under `src/`:
-
 ```
-src/oem-shared/lib/
-src/oem-dell/
-src/oem-dell/lib/
-src/oem-hp/
-src/oem-hp/lib/
+src/lib/                      one flat directory for ALL shared helpers
+src/oem-dell/                 leaf scripts per category (no lib/ subfolder)
+src/oem-hp/                   (future)
+src/oem-lenovo/               (future)
 ```
 
-Lib files conventionally live in a `lib/` subfolder. Leaf scripts (the ones RMM actually invokes) live one level up. Same kebab-case file naming as the rest of the repo.
+**Lib files all live in `src/lib/`**, flat. Naming carries scope: `dell-detection.ps1` is Dell-specific, `oem-manufacturer-detect.ps1` is cross-OEM, `m365-graph-auth.ps1` would be M365-specific. Domain sub-folders (`lib/oem/`, `lib/m365/`) only when `lib/` grows enough to need them ... don't add hierarchy ahead of need.
+
+Leaf scripts (the ones RMM actually invokes) live in category folders without `lib/` subfolders. Same `category-vendor` / `category-app` folder convention as the rest of the repo, just nested under `src/`.
 
 ## Source vs Published, at a glance
 
