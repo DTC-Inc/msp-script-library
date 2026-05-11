@@ -545,18 +545,19 @@ See [DTC KB ... Change Taxonomy](https://kb.dtctoday.com/books/developer-operati
 
 ### Change Taxonomy (two-tier ... Halo / GitHub / branch)
 
-Every change to this repo falls into one of four types. The type is picked before you branch ... it drives the branch prefix, the GitHub labels, and the default semver bump (future-state: this repo has no semver versioning today, but the bump column is recorded for when it does).
+Every change to this repo maps to one of four categories under two parent types. The category drives the branch prefix, the GitHub labels, and the default semver bump (future-state: this repo has no semver versioning today, but the bump column is recorded for when it does). `Refactor` spans both parent types ... see the table.
 
 | Halo Type | Halo Category | GitHub labels | Branch prefix | Default semver |
 |---|---|---|---|---|
 | `Problem` | `Bug` | `type:problem` + `category:bug` | `bug/{name}` | Patch |
-| `Problem` | `Refactor` | `type:problem` + `category:refactor` | `refactor/{name}` | Patch (or minor if external behavior changes) |
-| `Enhancement` | `Improvement` | `type:enhancement` + `category:improvement` | `improvement/{name}` | Minor |
+| `Problem` | `Refactor` | `type:problem` + `category:refactor` | `refactor/{name}` | Patch |
 | `Enhancement` | `Feature` | `type:enhancement` + `category:feature` | `feature/{name}` | Minor |
+| `Enhancement` | `Improvement` | `type:enhancement` + `category:improvement` | `improvement/{name}` | Minor |
+| `Enhancement` | `Refactor` | `type:enhancement` + `category:refactor` | `refactor/{name}` | Minor |
 
 How to pick:
 - **Bug** ... the script doesn't do what it was designed to do. Null check missing, wrong path, broken regex, off-by-one.
-- **Refactor** ... the design itself was wrong. Restructuring a script's shape, not fixing a specific mistake.
+- **Refactor** ... a redesign of how something is shaped. Spans both parent types ... `Problem/Refactor` when the original design was wrong (broken-shape redo, patch bump); `Enhancement/Refactor` when the original design works but is clunky (working-but-clunky redo, minor bump). Same branch prefix and same `category:refactor` label either way; the parent type column disambiguates motivation and semver.
 - **Improvement** ... an existing capability done better. Hardening, polish, clearer error output, integrity checks added to existing downloads.
 - **Feature** ... net-new capability. A new script, new delivery mechanism, new integration target.
 
