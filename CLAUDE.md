@@ -114,6 +114,47 @@ Invoke-WebRequest -Uri $downloadURL -OutFile $output
 Start-Process -FilePath $output -Args "/S" -Wait -NoNewWindow
 ```
 
+### Lib Bootstrap Pattern (Shared Helper Fetch)
+
+When a leaf script needs shared helpers from `oem-shared/lib/`, `s3-api-lib/`, or any other reusable library in this repo, fetch them at runtime from jsDelivr pinned to a git tag, verify the SHA256, then dot-source. This keeps the leaf script self-contained for RMM delivery while still letting library code live in one place.
+
+**The bootstrap block** (also lives commented-out at the top of `script-template-powershell.ps1`):
+
+```powershell
+$libs = @(
+    @{ Url = "https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@release/oem-shared/lib/oem-detection.ps1"
+       Sha256 = "REPLACE_WITH_REAL_HASH" }
+)
+foreach ($lib in $libs) {
+    $path = Join-Path $env:TEMP ([System.IO.Path]::GetFileName($lib.Url))
+    Invoke-WebRequest -Uri $lib.Url -OutFile $path -UseBasicParsing -ErrorAction Stop
+    $actual = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+    if ($actual -ne $lib.Sha256) { throw "Lib SHA256 mismatch for $($lib.Url). Expected $($lib.Sha256), got $actual." }
+    . $path
+}
+```
+
+**When to use it.** Any script that depends on a shared helper file in this repo:
+- `oem-shared/lib/*.ps1`
+- `s3-api-lib/*.ps1`
+- Any future shared-helper folder
+
+If your script is fully self-contained, leave the bootstrap block commented out in the template and ignore the section.
+
+**jsDelivr URL convention.** All lib URLs follow this pattern:
+
+```
+https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@<tag>/<path>
+```
+
+- `@release` is the **moving production tag** that jsDelivr serves. It advances with each `development -> main` promotion. RMM presets and runtime bootstrap blocks point here.
+- `@vX.Y.Z` (when a release is cut as immutable) is the **immutable pin** for a specific point-in-time. Use it when you need byte-exact reproducibility across a fleet.
+- Bare branch refs (`@main`, `@development`) are not canonical for production. Use tags.
+
+**SHA256 verification is mandatory.** Every lib URL in a bootstrap block must carry a `Sha256` pin. Never load a bare URL without a hash check ... it's the only thing standing between a CDN compromise and arbitrary code execution as SYSTEM on every endpoint. Compute the hash with `Get-FileHash -Algorithm SHA256` against the exact file content jsDelivr serves at the pinned tag.
+
+**Future state (Phase 2).** A CI build step may concatenate libs into "fat" leaf scripts at release time so the bootstrap becomes a no-op (the helpers are inlined). Until that lands, runtime fetch is the canonical pattern. The bootstrap block is designed to be easy to remove once fat-script CI ships.
+
 ### Application Detection Patterns
 
 When detecting whether an application is installed or active, **check every install vector** — applications can land in many places depending on how they were installed. A check that only looks at HKLM uninstall keys will miss per-user Chrome extensions, sideloaded installers, Microsoft Store apps, and anything that shipped via `%LOCALAPPDATA%`.
@@ -534,14 +575,16 @@ if ($veeamVersion -ge $requiredVersion) {
 
 ## Git Workflow
 
-See [DTC KB ... Change Taxonomy](https://kb.dtctoday.com/books/developer-operations-devops/page/change-taxonomy) for the canonical reference. This file mirrors the rules; the KB is authoritative.
+The canonical taxonomy lives at [Change Taxonomy](https://kb.dtctoday.com/books/developer-operations-devops/page/change-taxonomy) and [Branching Strategy](https://kb.dtctoday.com/books/developer-operations-devops/page/branching-strategy). This section captures the repo-specific shape; consult the KB pages for the full canon.
 
-**Branching Model:**
-* `main` ... default branch and release branch. Production code deployed to customer environments lives here.
-* This repo has no `development` branch. Feature/fix PRs target `main` directly.
-* All changes go through a typed branch and a pull request ... no direct commits to `main` (exception: minor `CLAUDE.md` / `README.md` doc updates that do not affect script functionality).
+**CRITICAL: All changes must be made in a typed branch, never directly to `development` or `main`** (exception: minor `CLAUDE.md` / `README.md` doc updates that do not affect script functionality may land directly on `development`).
 
-**CRITICAL: All changes must be made in a typed branch, never directly to `main`.**
+### Branching Model
+
+* `development` — **default branch.** All work branches target this. CI gates land here. New PRs open against `development`.
+* `main` — **production branch.** RMM endpoints pull script content from `main` (directly via raw URL, or indirectly via jsDelivr's `@release` tag which is advanced on each `development -> main` promotion). Only `development -> main` promotion PRs and hotfixes land on `main`.
+* Work branches use the four-prefix taxonomy: `bug/{name}`, `refactor/{name}`, `improvement/{name}`, `feature/{name}`. Legacy `enhancement/` and `problem/` prefixes on existing branches are accepted; new work uses the four-prefix model.
+* Hotfix flow: branch a `bug/` off `main`, merge-commit it back into `main`, then merge-commit `main -> development` so `development` carries the hotfix and the next promotion isn't trying to undo it.
 
 ### Change Taxonomy (two-tier ... Halo / GitHub / branch)
 
@@ -569,9 +612,20 @@ How to pick:
 
 **Legacy prefixes:** `enhancement/` and `problem/` are deprecated by this taxonomy. Existing branches with these prefixes are accepted as-is and can merge under their original names; new work uses the four-prefix model above (`bug/`, `refactor/`, `improvement/`, `feature/`).
 
+### Merge Methods
+
+The merge method depends on what the PR is targeting. Getting this wrong on a long-lived branch transition breaks the ancestor relationship between `development` and `main`. See [PR Merge Strategy](https://kb.dtctoday.com/books/developer-operations-devops/page/pr-merge-strategy) for the full rationale.
+
+| Target | Method | GitHub UI option |
+|---|---|---|
+| `development` (any work branch) | **Squash merge** | "Squash and merge" |
+| `main` (`development` -> `main` promotion) | **Merge commit** | "Create a merge commit" |
+| `main` (hotfix `bug/*` branched directly from `main`) | **Merge commit** | "Create a merge commit" |
+| Back-merge `main` -> `development` after a hotfix | **Merge commit** | "Create a merge commit" |
+
 ### GitHub Labels
 
-Two-tier label set, one of each per PR:
+Two-tier label set per the canonical taxonomy, one of each per PR:
 
 **Type labels:** `type:problem`, `type:enhancement`
 
@@ -581,9 +635,9 @@ The legacy single-tier labels (`bug`, `enhancement`, `feature`) remain on the re
 
 ### Workflow for All Changes
 
-1. **Create a typed branch off `main`**
+1. **Create a typed branch off `development`**
    ```bash
-   git checkout main
+   git checkout development
    git pull
    git checkout -b feature/descriptive-name
    # or bug/, refactor/, improvement/ per the taxonomy above
@@ -606,19 +660,21 @@ The legacy single-tier labels (`bug`, `enhancement`, `feature`) remain on the re
    ```
 
 4. **Create pull request**
-   - Open PR from your branch to `main`
+   - Open PR from your branch to `development`
    - Apply the two labels from the taxonomy table (one `type:*` + one `category:*`)
    - Include description of changes, testing performed, and RMM compatibility
    - Wait for review and approval before merging
+   - Use the merge method from the table above (squash to `development`, merge-commit to `main`)
 
-5. **Merge to `main`**
+5. **Merge to `development`**
    - Only merge after testing and approval
    - Delete the branch after successful merge
+   - Promotion to `main` happens later via a separate `development -> main` merge-commit PR
 
-### If Changes Are Accidentally Committed to Main
+### If Changes Are Accidentally Committed to a Long-Lived Branch
 
 ```bash
-# Revert the commit from main
+# Revert the commit from development (or main)
 git revert <commit-hash> --no-edit
 git push
 
@@ -630,4 +686,4 @@ git push -u origin feature/descriptive-name
 
 ### Exception: Documentation Updates
 
-Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `main` if they do not affect script functionality.
+Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `development` if they do not affect script functionality. Never commit directly to `main`.

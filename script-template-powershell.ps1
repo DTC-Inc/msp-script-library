@@ -10,6 +10,22 @@
 ## For cross-context scripts that share state with a user-context companion, also require:
 ## $env:OrgName       - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
 
+# === LIB BOOTSTRAP (optional) ===
+# Uncomment if this script depends on shared helpers from oem-shared/lib/, s3-api-lib/, etc.
+# Fetches each lib from jsDelivr at a pinned release tag, verifies SHA256, dot-sources.
+#
+# $libs = @(
+#     @{ Url = "https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@release/oem-shared/lib/oem-detection.ps1"
+#        Sha256 = "REPLACE_WITH_REAL_HASH" }
+# )
+# foreach ($lib in $libs) {
+#     $path = Join-Path $env:TEMP ([System.IO.Path]::GetFileName($lib.Url))
+#     Invoke-WebRequest -Uri $lib.Url -OutFile $path -UseBasicParsing -ErrorAction Stop
+#     $actual = (Get-FileHash -Path $path -Algorithm SHA256).Hash
+#     if ($actual -ne $lib.Sha256) { throw "Lib SHA256 mismatch for $($lib.Url). Expected $($lib.Sha256), got $actual." }
+#     . $path
+# }
+
 # Standard DTC PowerShell Script Template
 #
 # Every script in this library follows the three-part structure below:

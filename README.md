@@ -39,6 +39,32 @@ $env:OrgName = "DTC"
 3. Add any per-script variables (custom field names, paths, etc.) listed in the script's header comment block
 4. Schedule or run on demand
 
+## Script Delivery (jsDelivr)
+
+For RMM presets that fetch script content at runtime, or for leaf scripts that need to pull a shared helper from this repo, use the **jsDelivr CDN** rather than `raw.githubusercontent.com`. jsDelivr caches, is faster from most endpoint geographies, and supports tag-pinning.
+
+URL pattern:
+
+```
+https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@<tag>/<path>
+```
+
+Tag conventions:
+
+| Tag | What it points at | When to use |
+|---|---|---|
+| `@release` | The moving production tag, advanced on each `development -> main` promotion | Default for RMM presets and runtime lib fetches |
+| `@vX.Y.Z` | Immutable tag at a specific point-in-time release | When byte-exact reproducibility matters |
+| `@main`, `@development` | Bare branch refs | Not for production; testing only |
+
+Example ... fetch the OEM detection helper into a leaf script:
+
+```powershell
+https://cdn.jsdelivr.net/gh/dtc-inc/msp-script-library@release/oem-shared/lib/oem-detection.ps1
+```
+
+Any runtime fetch of a shared helper **must** also verify the SHA256 of the downloaded content. See `CLAUDE.md` -> "Lib Bootstrap Pattern" for the canonical bootstrap block.
+
 ## Repository Structure
 
 Scripts are organized by category prefix:
