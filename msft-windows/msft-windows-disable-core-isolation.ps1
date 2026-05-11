@@ -48,7 +48,13 @@ if (!(Test-Path $logDir)) {
     New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 }
 
-Start-Transcript -Path $LogPath
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop
+    $TranscriptStarted = $true
+} catch {
+    Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
+}
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
@@ -65,7 +71,7 @@ try {
 
     if (-not $isAdmin) {
         Write-Error "This script must be run as Administrator to modify system security settings."
-        Stop-Transcript
+        if ($TranscriptStarted) { Stop-Transcript }
         exit 1
     }
 
@@ -77,7 +83,6 @@ try {
     $vbsSuccess = $false
     $credGuardSuccess = $false
     $dmaSuccess = $false
-    $vsmSuccess = $false
 
     # Step 1: Check current Core Isolation status
     Write-Host "Step 1: Checking current Core Isolation status..." -ForegroundColor Yellow
@@ -207,33 +212,30 @@ try {
 
     Write-Host ""
 
-    # Step 7: Remove UEFI lock if present (requires bcdedit)
-    Write-Host "Step 7: Removing UEFI lock on VBS..." -ForegroundColor Yellow
+    # Step 7: Ensure hypervisor is enabled (some GPU drivers depend on it)
+    Write-Host "Step 7: Ensuring hypervisor is enabled (for GPU driver compatibility)..." -ForegroundColor Yellow
 
+    $hypervisorRestored = $false
     try {
-        # Disable Secure Launch
-        $result = bcdedit /set "{current}" vsmlaunchtype Off 2>&1
+        $result = bcdedit /set "{current}" hypervisorlaunchtype Auto 2>&1
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "  VSM Launch Type set to Off" -ForegroundColor Green
-            $vsmSuccess = $true
-        } else {
-            Write-Host "  VSM Launch Type: $result" -ForegroundColor Gray
-        }
-    } catch {
-        Write-Host "  Could not modify VSM launch type" -ForegroundColor Gray
-    }
-
-    try {
-        # Disable Hypervisor launch
-        $result = bcdedit /set "{current}" hypervisorlaunchtype Off 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  Hypervisor Launch Type set to Off" -ForegroundColor Green
-            Write-Host "  WARNING: This will disable Hyper-V, WSL2, and Windows Sandbox!" -ForegroundColor Yellow
+            Write-Host "  Hypervisor Launch Type set to Auto" -ForegroundColor Green
+            $hypervisorRestored = $true
         } else {
             Write-Host "  Hypervisor setting: $result" -ForegroundColor Gray
         }
     } catch {
         Write-Host "  Could not modify hypervisor launch type" -ForegroundColor Gray
+    }
+
+    try {
+        # Remove vsmlaunchtype if it was previously set to Off
+        $result = bcdedit /deletevalue "{current}" vsmlaunchtype 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  VSM Launch Type reset to default" -ForegroundColor Green
+        }
+    } catch {
+        # Ignore - may not exist
     }
 
     Write-Host ""
@@ -260,10 +262,10 @@ try {
     } else {
         Write-Host "Kernel DMA Protection: Failed to configure" -ForegroundColor Yellow
     }
-    if ($vsmSuccess) {
-        Write-Host "VSM/Hypervisor: Set to Off" -ForegroundColor Green
+    if ($hypervisorRestored) {
+        Write-Host "Hypervisor: Enabled (for GPU driver compatibility)" -ForegroundColor Green
     } else {
-        Write-Host "VSM/Hypervisor: Could not modify (may require manual BIOS change)" -ForegroundColor Yellow
+        Write-Host "Hypervisor: Could not verify (check manually if issues occur)" -ForegroundColor Yellow
     }
     Write-Host "===============================" -ForegroundColor Cyan
     Write-Host ""
@@ -284,14 +286,14 @@ try {
     Write-Host "IMPORTANT NOTES:" -ForegroundColor Yellow
     Write-Host "  - A system restart is REQUIRED for changes to take effect" -ForegroundColor Yellow
     Write-Host "  - If UEFI locked, may require BIOS changes to fully disable" -ForegroundColor Yellow
-    Write-Host "  - Hyper-V, WSL2, and Windows Sandbox will be disabled" -ForegroundColor Yellow
+    Write-Host "  - Hyper-V, WSL2, and Windows Sandbox will still work" -ForegroundColor Green
     Write-Host "  - This reduces security - only use on systems that need it" -ForegroundColor Yellow
 
 } catch {
     Write-Error "An error occurred: $($_.Exception.Message)"
     Write-Host "Error details: $($_.Exception)" -ForegroundColor Red
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     exit 1
 }
 
-Stop-Transcript
+if ($TranscriptStarted) { Stop-Transcript }
