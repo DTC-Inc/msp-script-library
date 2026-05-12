@@ -1,16 +1,26 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 ##
 ## *** THIS SCRIPT MUST RUN IN THE LOGGED-ON USER'S CONTEXT, NOT AS SYSTEM. ***
-## PuTTY stores per-user settings under HKCU; running as SYSTEM will write into
-## the SYSTEM hive and have no effect on the engineer's PuTTY profile.
+## PuTTY stores per-user settings under HKCU; running as SYSTEM writes into the
+## SYSTEM hive and has no effect on the engineer's PuTTY profile.
 ##
-## $EngineerName  - (optional) Folder name to use under "Engineer Session Logs".
-##                  Defaults to $env:USERNAME.
-## $LogRoot       - (optional) Override the base path. Defaults to
-##                  "G:\Shared drives\Engineer Session Logs".
-## $LogType       - (optional) PuTTY LogType. Defaults to 2 (all session output).
-##                  0=none, 1=printable, 2=all, 3=SSH packets, 4=SSH packets+raw
+## Framing: this is a SANE DEFAULT, not a compliance enforcement control.
+## Engineers can override per-session in PuTTY's Logging panel or clear the
+## HKCU values directly. Treat it as "logs are on unless someone goes out of
+## their way" -- not "logging is enforced." Audit/retention/ACL of the log
+## destination is handled outside this script.
+##
+## $env:RMM            - "1" to skip the interactive Read-Host prompt
+## $env:Description    - Ticket # / initials for the transcript audit trail
+## $env:RMMScriptPath  - Optional transcript root. Falls back to LOCALAPPDATA\dtc-logs
+## $env:EngineerName   - Folder under $LogRoot. Default: $env:USERNAME
+## $env:LogRoot        - Base path. Default: "G:\Shared drives\Engineer Session Logs"
+## $env:LogFilePattern - PuTTY filename template. Default: "&h-&Y&M&D-&T.log"
+## $env:LogType        - 0=none 1=printable 2=all 3=SSH-pkt 4=SSH-pkt+raw. Default: 1
+##                       (1 = printable; safer than 2 because raw input bytes that
+##                       can include pasted credentials are not written to disk)
+## $env:LogFileClash   - 0=overwrite, 1=append, -1=ask. Default: 1
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -18,25 +28,22 @@ $ScriptLogName = "putty-configure-logging.log"
 
 # Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
 # When -NonInteractive is on the command line, Read-Host throws and would kill the
-# script, so treat that as RMM mode even if $RMM was not explicitly passed.
+# script, so treat that as RMM mode even if $env:RMM was not explicitly passed.
 try {
     $cmdLineArgs = [Environment]::GetCommandLineArgs()
     if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
-        if ($RMM -ne 1) {
+        if ($env:RMM -ne "1") {
             Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
-            $RMM = 1
+            $env:RMM = "1"
         }
     }
 } catch {
-    # If detection itself fails, leave $RMM as-is and proceed.
+    # If detection itself fails, leave $env:RMM as-is and proceed.
 }
 
-if ($RMM -ne 1) {
+if ($env:RMM -ne "1") {
     $ValidInput = 0
-    # Checking for valid input.
     while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
         $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
         if ($Description) {
             $ValidInput = 1
@@ -45,31 +52,45 @@ if ($RMM -ne 1) {
         }
     }
     # User-context script: write logs to LOCALAPPDATA so non-admin users can run it.
-    $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'DTC\logs') $ScriptLogName
+    $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'dtc-logs') $ScriptLogName
 
 } else {
     # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back
     # to LOCALAPPDATA so the user-context script can write its transcript without admin.
-    if ($RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+    if ($env:RMMScriptPath) {
+        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
     } else {
-        $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'DTC\logs') $ScriptLogName
+        $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'dtc-logs') $ScriptLogName
     }
 
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    if ([string]::IsNullOrWhiteSpace($env:Description)) {
+        Write-Host "Description is empty/null. This was most likely run automatically from the RMM and no information was passed."
         $Description = "No Description"
+    } else {
+        $Description = $env:Description
     }
 }
+
+# Resolve effective values from env vars with sane defaults.
+$EngineerName   = if ([string]::IsNullOrWhiteSpace($env:EngineerName))   { $env:USERNAME }                          else { $env:EngineerName }
+$LogRoot        = if ([string]::IsNullOrWhiteSpace($env:LogRoot))        { 'G:\Shared drives\Engineer Session Logs' } else { $env:LogRoot }
+$LogFilePattern = if ([string]::IsNullOrWhiteSpace($env:LogFilePattern)) { '&h-&Y&M&D-&T.log' }                       else { $env:LogFilePattern }
+$LogType        = if ([string]::IsNullOrWhiteSpace($env:LogType))        { 1 }                                       else { [int]$env:LogType }
+$LogFileClash   = if ([string]::IsNullOrWhiteSpace($env:LogFileClash))   { 1 }                                       else { [int]$env:LogFileClash }
 
 # Emit progress to stdout BEFORE the transcript starts, so even if Start-Transcript
 # fails (no log dir, locked file, etc.) the RMM still captures something useful.
 Write-Host "putty-configure-logging.ps1 starting"
-Write-Host "Description: $Description"
-Write-Host "RMM: $RMM"
-Write-Host "Computer: $env:COMPUTERNAME"
-Write-Host "User context: $env:USERNAME"
-Write-Host "PowerShell: $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"
+Write-Host "Description    : $Description"
+Write-Host "RMM            : $env:RMM"
+Write-Host "Computer       : $env:COMPUTERNAME"
+Write-Host "User context   : $env:USERNAME"
+Write-Host "PowerShell     : $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"
+Write-Host "EngineerName   : $EngineerName"
+Write-Host "LogRoot        : $LogRoot"
+Write-Host "LogFilePattern : $LogFilePattern"
+Write-Host "LogType        : $LogType"
+Write-Host "LogFileClash   : $LogFileClash"
 
 # Pre-create the transcript directory so Start-Transcript can't fail on a missing folder.
 $logDir = Split-Path -Path $LogPath -Parent
@@ -96,94 +117,97 @@ try {
 
 Write-Host "Log path: $LogPath"
 
-# --- Guard: must run in user context, not SYSTEM ---
-$current = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-Write-Host "Running as: $current"
-if ($current -match '\\SYSTEM$' -or $current -eq 'NT AUTHORITY\SYSTEM') {
-    Write-Host "[ERROR] This script is running as SYSTEM. PuTTY config must be applied per-user."
-    Write-Host "        Re-run from the engineer's logged-on session (RMM 'Run As: Logged-On User')."
-    if ($transcriptStarted) { Stop-Transcript }
-    exit 1
-}
+# Main body wrapped in try/finally so any unhandled throw still stops the transcript
+# cleanly and returns a real exit code to the RMM.
+$exitCode = 0
 
-# --- Defaults ---
-if ([string]::IsNullOrWhiteSpace($EngineerName)) { $EngineerName = $env:USERNAME }
-if ([string]::IsNullOrWhiteSpace($LogRoot))      { $LogRoot      = 'G:\Shared drives\Engineer Session Logs' }
-if (-not $PSBoundParameters.ContainsKey('LogType') -and ($null -eq $LogType -or $LogType -eq '')) {
-    $LogType = 2
-}
+try {
+    # --- Guard: must run in user context, not SYSTEM ---
+    $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-Host "Running as: $currentUser"
+    if ($currentUser -match '\\SYSTEM$' -or $currentUser -eq 'NT AUTHORITY\SYSTEM') {
+        throw "This script is running as SYSTEM. PuTTY config must be applied per-user. Re-run from the engineer's logged-on session (NinjaRMM 'Run As: Logged-On User')."
+    }
 
-$engineerFolder = Join-Path $LogRoot $EngineerName
-$logFileName    = Join-Path $engineerFolder '&h-&Y&M&D-&T.log'
+    # --- Build paths ---
+    $engineerFolder  = Join-Path $LogRoot $EngineerName
+    $fullLogFileName = Join-Path $engineerFolder $LogFilePattern
 
-Write-Host "EngineerName : $EngineerName"
-Write-Host "LogRoot      : $LogRoot"
-Write-Host "Engineer dir : $engineerFolder"
-Write-Host "PuTTY pattern: $logFileName"
+    Write-Host "Engineer dir   : $engineerFolder"
+    Write-Host "PuTTY log path : $fullLogFileName"
 
-# --- Make sure the engineer's folder exists if the drive is mounted ---
-if (Test-Path -Path $LogRoot) {
-    if (-not (Test-Path -Path $engineerFolder)) {
-        try {
-            New-Item -ItemType Directory -Path $engineerFolder -Force | Out-Null
-            Write-Host "Created engineer log folder: $engineerFolder"
-        } catch {
-            Write-Host "[WARNING] Could not create $engineerFolder. PuTTY may fail to write logs until the folder exists. Error: $_"
+    # --- Make sure the engineer's folder exists if the drive is mounted ---
+    if (Test-Path -Path $LogRoot) {
+        if (-not (Test-Path -Path $engineerFolder)) {
+            try {
+                New-Item -ItemType Directory -Path $engineerFolder -Force | Out-Null
+                Write-Host "Created engineer log folder: $engineerFolder"
+            } catch {
+                Write-Host "[WARNING] Could not create $engineerFolder. PuTTY may fail to write logs until the folder exists. Error: $($_.Exception.Message)"
+            }
+        } else {
+            Write-Host "Engineer log folder already exists."
         }
     } else {
-        Write-Host "Engineer log folder already exists."
+        Write-Host "[WARNING] $LogRoot is not currently accessible (Google Drive may not be mounted yet)."
+        Write-Host "          Registry settings will still be written; logging will start once the drive is available."
     }
-} else {
-    Write-Host "[WARNING] $LogRoot is not currently accessible (Google Drive may not be mounted yet)."
-    Write-Host "          Registry settings will still be written; logging will start once the drive is available."
-}
 
-# --- Write PuTTY Default Settings under HKCU ---
-# PuTTY URL-encodes the space in the key name as %20.
-$puttyDefaultsKey = 'HKCU:\Software\SimonTatham\PuTTY\Sessions\Default%20Settings'
+    # --- Write PuTTY Default Settings under HKCU ---
+    # PuTTY URL-encodes the space in the key name as %20.
+    $puttyDefaultsKey = 'HKCU:\Software\SimonTatham\PuTTY\Sessions\Default%20Settings'
 
-if (-not (Test-Path $puttyDefaultsKey)) {
-    Write-Host "Creating PuTTY Default Settings registry key."
-    New-Item -Path $puttyDefaultsKey -Force | Out-Null
-}
+    if (-not (Test-Path $puttyDefaultsKey)) {
+        Write-Host "Creating PuTTY Default Settings registry key."
+        New-Item -Path $puttyDefaultsKey -Force | Out-Null
+    }
 
-# LogType: 2 = all session output
-# LogFileName: full path with PuTTY substitution tokens
-# LogFileClash: 1 = always append (no prompt)
-# LogFlush: 1 = flush log on every write
-# LogHeader: 1 = write a header banner at the start of each log
-$values = @{
-    'LogType'      = [int]$LogType
-    'LogFileName'  = [string]$logFileName
-    'LogFileClash' = 1
-    'LogFlush'     = 1
-    'LogHeader'    = 1
-}
+    # LogType=1 (printable) by default: safer than 2 because raw input bytes that
+    # can include pasted credentials are NOT written to disk.
+    # SSHLogOmitPasswords=1: don't log SSH password-auth prompt data.
+    # SSHLogOmitData=1: don't log session data in SSH packet logs (defense in depth
+    #                   for LogType 3/4; no effect on LogType 1/2 but explicit is better).
+    $values = @{
+        'LogType'             = [int]$LogType
+        'LogFileName'         = [string]$fullLogFileName
+        'LogFileClash'        = [int]$LogFileClash
+        'LogFlush'            = 1
+        'LogHeader'           = 1
+        'SSHLogOmitPasswords' = 1
+        'SSHLogOmitData'      = 1
+    }
 
-foreach ($name in $values.Keys) {
-    $val  = $values[$name]
-    $type = if ($val -is [int]) { 'DWord' } else { 'String' }
-    Set-ItemProperty -Path $puttyDefaultsKey -Name $name -Value $val -Type $type -Force
-    Write-Host "Set $name ($type) = $val"
-}
+    foreach ($name in $values.Keys) {
+        $val  = $values[$name]
+        $type = if ($val -is [int]) { 'DWord' } else { 'String' }
+        Set-ItemProperty -Path $puttyDefaultsKey -Name $name -Value $val -Type $type -Force
+        Write-Host "Set $name ($type) = $val"
+    }
 
-# --- Verify ---
-$verify = Get-ItemProperty -Path $puttyDefaultsKey
-Write-Host ""
-Write-Host "Verification:"
-Write-Host "  LogType      = $($verify.LogType)"
-Write-Host "  LogFileName  = $($verify.LogFileName)"
-Write-Host "  LogFileClash = $($verify.LogFileClash)"
-Write-Host "  LogFlush     = $($verify.LogFlush)"
-Write-Host "  LogHeader    = $($verify.LogHeader)"
+    # --- Verify ---
+    $verify = Get-ItemProperty -Path $puttyDefaultsKey
+    Write-Host ""
+    Write-Host "Verification:"
+    Write-Host "  LogType             = $($verify.LogType)"
+    Write-Host "  LogFileName         = $($verify.LogFileName)"
+    Write-Host "  LogFileClash        = $($verify.LogFileClash)"
+    Write-Host "  LogFlush            = $($verify.LogFlush)"
+    Write-Host "  LogHeader           = $($verify.LogHeader)"
+    Write-Host "  SSHLogOmitPasswords = $($verify.SSHLogOmitPasswords)"
+    Write-Host "  SSHLogOmitData      = $($verify.SSHLogOmitData)"
 
-if ($verify.LogFileName -eq $logFileName -and [int]$verify.LogType -eq [int]$LogType) {
+    if ($verify.LogFileName -ne $fullLogFileName -or [int]$verify.LogType -ne [int]$LogType) {
+        throw "Verification mismatch. Expected LogFileName=$fullLogFileName / LogType=$LogType. See HKCU values above."
+    }
+
     Write-Host "[SUCCESS] PuTTY default logging configured for $EngineerName."
-    Write-Host "putty-configure-logging.ps1 completed"
+} catch {
+    Write-Host "[FAILURE] $($_.Exception.Message)"
+    Write-Host $_.ScriptStackTrace
+    $exitCode = 1
+} finally {
+    Write-Host "putty-configure-logging.ps1 completed (exit $exitCode)"
     if ($transcriptStarted) { Stop-Transcript }
-    exit 0
-} else {
-    Write-Host "[FAILURE] Verification mismatch. Inspect HKCU registry values above."
-    if ($transcriptStarted) { Stop-Transcript }
-    exit 1
 }
+
+exit $exitCode
