@@ -16,6 +16,21 @@
 
 $ScriptLogName = "putty-configure-logging.log"
 
+# Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
+# When -NonInteractive is on the command line, Read-Host throws and would kill the
+# script, so treat that as RMM mode even if $RMM was not explicitly passed.
+try {
+    $cmdLineArgs = [Environment]::GetCommandLineArgs()
+    if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
+        if ($RMM -ne 1) {
+            Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
+            $RMM = 1
+        }
+    }
+} catch {
+    # If detection itself fails, leave $RMM as-is and proceed.
+}
+
 if ($RMM -ne 1) {
     $ValidInput = 0
     # Checking for valid input.
@@ -30,38 +45,56 @@ if ($RMM -ne 1) {
         }
     }
     # User-context script: write logs to LOCALAPPDATA so non-admin users can run it.
-    $LogDir = Join-Path $env:LOCALAPPDATA 'DTC\logs'
-    if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-    $LogPath = Join-Path $LogDir $ScriptLogName
+    $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'DTC\logs') $ScriptLogName
 
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
+    # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back
+    # to LOCALAPPDATA so the user-context script can write its transcript without admin.
+    if ($RMMScriptPath) {
         $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-
     } else {
-        $LogDir = Join-Path $env:LOCALAPPDATA 'DTC\logs'
-        if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
-        $LogPath = Join-Path $LogDir $ScriptLogName
-
+        $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'DTC\logs') $ScriptLogName
     }
 
     if ($null -eq $Description) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
         $Description = "No Description"
     }
-
-
-
 }
 
-# Start the script logic here. This is the part that actually gets done what you need done.
-
-Start-Transcript -Path $LogPath
-
+# Emit progress to stdout BEFORE the transcript starts, so even if Start-Transcript
+# fails (no log dir, locked file, etc.) the RMM still captures something useful.
+Write-Host "putty-configure-logging.ps1 starting"
 Write-Host "Description: $Description"
-Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
+Write-Host "Computer: $env:COMPUTERNAME"
+Write-Host "User context: $env:USERNAME"
+Write-Host "PowerShell: $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"
+
+# Pre-create the transcript directory so Start-Transcript can't fail on a missing folder.
+$logDir = Split-Path -Path $LogPath -Parent
+if ($logDir -and -not (Test-Path -Path $logDir)) {
+    try {
+        New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+        Write-Host "Created log directory: $logDir"
+    } catch {
+        Write-Host "Warning: could not create log directory ${logDir}: $($_.Exception.Message)"
+    }
+}
+
+# Wrap Start-Transcript so a transcript failure (e.g. ErrorActionPreference=Stop in
+# the RMM runner) cannot kill the script.
+$transcriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop | Out-Null
+    $transcriptStarted = $true
+    Write-Host "Transcript started: $LogPath"
+} catch {
+    Write-Host "Warning: Start-Transcript failed for ${LogPath}: $($_.Exception.Message)"
+    Write-Host "Continuing without transcript."
+}
+
+Write-Host "Log path: $LogPath"
 
 # --- Guard: must run in user context, not SYSTEM ---
 $current = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -69,7 +102,7 @@ Write-Host "Running as: $current"
 if ($current -match '\\SYSTEM$' -or $current -eq 'NT AUTHORITY\SYSTEM') {
     Write-Host "[ERROR] This script is running as SYSTEM. PuTTY config must be applied per-user."
     Write-Host "        Re-run from the engineer's logged-on session (RMM 'Run As: Logged-On User')."
-    Stop-Transcript
+    if ($transcriptStarted) { Stop-Transcript }
     exit 1
 }
 
@@ -146,10 +179,11 @@ Write-Host "  LogHeader    = $($verify.LogHeader)"
 
 if ($verify.LogFileName -eq $logFileName -and [int]$verify.LogType -eq [int]$LogType) {
     Write-Host "[SUCCESS] PuTTY default logging configured for $EngineerName."
-    Stop-Transcript
+    Write-Host "putty-configure-logging.ps1 completed"
+    if ($transcriptStarted) { Stop-Transcript }
     exit 0
 } else {
     Write-Host "[FAILURE] Verification mismatch. Inspect HKCU registry values above."
-    Stop-Transcript
+    if ($transcriptStarted) { Stop-Transcript }
     exit 1
 }
