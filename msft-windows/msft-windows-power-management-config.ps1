@@ -27,6 +27,15 @@
 # 15. Sets the Balanced power plan as the active scheme after per-scheme config (if present).
 # 16. Sets power button action to shutdown (laptops only, AC + DC)
 # 17. Enables Energy Saver auto-on at 20% battery (laptops only, DC; aggressive policy)
+#
+# Exit codes:
+#   0 - normal: all settings applied, Balanced power plan present and set active
+#   1 - failure: caught exception, not-admin, or any [FAIL] path. Investigate the
+#       transcript at %WINDIR%\logs\msft-windows-power-management-config.log
+#   2 - Balanced power plan missing: settings still applied to whatever schemes the host
+#       has (custom/OEM scheme set); active scheme unchanged. Flag for inventory; no
+#       immediate action required. RMM operators can aggregate this code to count hosts
+#       shipping without Balanced.
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -158,7 +167,13 @@ Write-Host ""
 
 # Main body wrapped in try/catch/finally so any unhandled throw still stops the
 # transcript cleanly and returns a real exit code to the RMM.
+# Exit codes:
+#   0 = clean success
+#   1 = real failure (caught exception, not-admin, any FAIL path)
+#   2 = otherwise-clean run but Balanced power plan was missing on this host
+# Priority: 1 wins over 2 wins over 0.
 $exitCode = 0
+$missingBalanced = $false
 
 try {
     # Check if running as administrator
@@ -344,7 +359,12 @@ try {
         powercfg /setactive $balancedGuid | Out-Null
         Write-Host "[OK] Balanced plan ('$($balancedScheme.Name)') is now active" -ForegroundColor Green
     } else {
-        Write-Host "[WARN] Balanced power plan ($balancedGuid) not found on this host. Active scheme left as configured by the per-scheme loop." -ForegroundColor Yellow
+        # Telemetry signal: NinjaOne / HaloPSA can aggregate exit code 2 across the fleet
+        # to count hosts that ship with custom OEM scheme sets and no Balanced plan.
+        # No destructive recovery (e.g. powercfg /restoredefaultschemes); the settings
+        # already applied to the per-scheme loop above stay in place.
+        Write-Host "[WARN] Balanced power plan not found; active scheme unchanged" -ForegroundColor Yellow
+        $missingBalanced = $true
     }
     Write-Host ""
 
@@ -566,6 +586,9 @@ try {
     Write-Host $_.ScriptStackTrace
     $exitCode = 1
 } finally {
+    # Promote a clean run to code 2 when Balanced was missing, so RMM can count
+    # those hosts. Real failures (exitCode=1) win over the missing-Balanced signal.
+    if ($exitCode -eq 0 -and $missingBalanced) { $exitCode = 2 }
     Write-Host "msft-windows-power-management-config.ps1 completed (exit $exitCode)"
     if ($transcriptStarted) { Stop-Transcript }
 }
