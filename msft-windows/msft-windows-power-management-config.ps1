@@ -13,7 +13,8 @@
 #    on resume from hibernation due to stale network state; Fast Startup amplifies it)
 # 4. Stops hard disks from turning off on all plans
 # 5. Disables sleeping completely across all plans
-# 6. Sets the lid close action to sleep across all plans (laptops only; harmless on desktops)
+# 6. Sets lid close action (laptops only): AC = do nothing (docked / external monitor stays
+#    awake); DC = sleep
 # 7. Sets critical battery action to shutdown (3) across all chassis, AC and DC
 # 8. Disables USB selective suspend across all plans
 # 9. Disables PCIE Link State Power Management across all plans
@@ -24,6 +25,8 @@
 # 14. Sets monitor (display) idle timeout from $env:ScreenTimeoutSeconds (default 900s)
 #     across all plans, AC+DC. 0 = never turn off.
 # 15. Sets the Balanced power plan as the active scheme after per-scheme config (if present).
+# 16. Sets power button action to shutdown (laptops only, AC + DC)
+# 17. Enables Energy Saver auto-on at 20% battery (laptops only, DC; aggressive policy)
 
 # Getting input from user if not running from RMM else set variables from RMM.
 
@@ -186,7 +189,10 @@ try {
 
     # Get all power schemes
     Write-Host "Step 1: Getting all power schemes..." -ForegroundColor Yellow
-    $powerSchemes = powercfg /list | Where-Object { $_ -match "GUID: ([a-f0-9\-]+)" } | ForEach-Object {
+    # @(...) forces array semantics so single-scheme hosts (e.g. one Balanced plan only)
+    # still render $powerSchemes.Count correctly; PS 5.1 doesn't auto-array-wrap a pipeline
+    # that yields exactly one PSCustomObject.
+    $powerSchemes = @(powercfg /list | Where-Object { $_ -match "GUID: ([a-f0-9\-]+)" } | ForEach-Object {
         if ($_ -match "GUID: ([a-f0-9\-]+)\s+\((.+?)\)(?:\s+\*)?") {
             [PSCustomObject]@{
                 GUID = $matches[1]
@@ -194,7 +200,7 @@ try {
                 IsActive = $_ -match "\*$"
             }
         }
-    }
+    })
 
     Write-Host "Found $($powerSchemes.Count) power scheme(s):" -ForegroundColor White
     foreach ($scheme in $powerSchemes) {
@@ -283,11 +289,24 @@ try {
             powercfg /setacvalueindex $($scheme.GUID) 238C9FA8-0AAD-41ED-83F4-97BE242C8F20 29f6c1db-86da-48c5-9fdb-f2b67b1f44da 0 | Out-Null
             powercfg /setdcvalueindex $($scheme.GUID) 238C9FA8-0AAD-41ED-83F4-97BE242C8F20 29f6c1db-86da-48c5-9fdb-f2b67b1f44da 0 | Out-Null
 
-            # 4d. Configure lid close action to sleep (only meaningful on laptops; harmless on desktops)
-            Write-Host "  - Setting lid close action to sleep..." -ForegroundColor White
-            # Lid close actions: 0=Do nothing, 1=Sleep, 2=Hibernate, 3=Shut down
-            powercfg /setacvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 5CA83367-6E45-459F-A27B-476B1D01C936 1 | Out-Null
-            powercfg /setdcvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 5CA83367-6E45-459F-A27B-476B1D01C936 1 | Out-Null
+            # 4d. Chassis-scoped: lid close action and power button action only apply on laptops.
+            # Desktops don't have a lid, and we don't want to override desktop power-button behavior.
+            if ($IsLaptop) {
+                # Lid close actions: 0=Do nothing, 1=Sleep, 2=Hibernate, 3=Shut down
+                # AC = 0 (do nothing) so docked / external-monitor workflows keep the laptop awake.
+                # DC = 1 (sleep) so closing the lid on battery still saves power.
+                Write-Host "  - Setting lid close action (AC=do nothing, DC=sleep) [laptop]..." -ForegroundColor White
+                powercfg /setacvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 5CA83367-6E45-459F-A27B-476B1D01C936 0 | Out-Null
+                powercfg /setdcvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 5CA83367-6E45-459F-A27B-476B1D01C936 1 | Out-Null
+
+                # Power button action: 3 = Shut down. AC + DC. Laptops only.
+                # PBUTTONACTION GUID: 7648efa3-dd9c-4e3e-b566-50f929386280
+                Write-Host "  - Setting power button action to shutdown (AC + DC) [laptop]..." -ForegroundColor White
+                powercfg /setacvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 7648EFA3-DD9C-4E3E-B566-50F929386280 3 | Out-Null
+                powercfg /setdcvalueindex $($scheme.GUID) 4F971E89-EEBD-4455-A8DE-9E59040E7347 7648EFA3-DD9C-4E3E-B566-50F929386280 3 | Out-Null
+            } else {
+                Write-Host "  - Skipping lid + power-button settings (desktop)" -ForegroundColor Gray
+            }
 
             # 4e. Set critical battery action to shutdown across all chassis.
             # Critical battery actions: 0=Do nothing, 1=Sleep, 2=Hibernate, 3=Shut down
@@ -413,20 +432,48 @@ try {
     } catch {
         Write-Host "[WARN] Multimedia settings may not have been configured" -ForegroundColor Yellow
     }
+
+    # Chassis-scoped: Energy Saver auto-on at 20% battery, aggressive policy. Laptops only, DC only.
+    # Energy Saver doesn't apply on AC; setting AC values is a no-op but we skip them for clarity.
+    # SUB_ENERGYSAVER  = de830923-a562-41af-a086-e3a2c6bad2da
+    # ESBATTTHRESHOLD  = e69653ca-cf7f-4f05-aa73-cb833fa90ad4  (Charge level percent, 0..100)
+    # ESPOLICY         = 5c5bb349-ad29-4ee2-9d0b-2b25270f7a81  (0=User, 1=Aggressive)
+    if ($IsLaptop) {
+        try {
+            foreach ($scheme in $powerSchemes) {
+                Write-Host "  - Configuring Energy Saver (DC, threshold=20%, aggressive) for '$($scheme.Name)' [laptop]..." -ForegroundColor White
+                powercfg /setdcvalueindex $($scheme.GUID) de830923-a562-41af-a086-e3a2c6bad2da e69653ca-cf7f-4f05-aa73-cb833fa90ad4 20 | Out-Null
+                powercfg /setdcvalueindex $($scheme.GUID) de830923-a562-41af-a086-e3a2c6bad2da 5c5bb349-ad29-4ee2-9d0b-2b25270f7a81 1  | Out-Null
+            }
+            Write-Host "[OK] Energy Saver auto-on at 20% battery (aggressive) configured for all schemes" -ForegroundColor Green
+        } catch {
+            Write-Host "[WARN] Energy Saver settings may not have been configured" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host "  - Skipping Energy Saver settings (desktop)" -ForegroundColor Gray
+    }
     Write-Host ""
 
-    # Step 6: Verify hibernation status
+    # Step 6: Verify hibernation status.
+    # `powercfg /availablesleepstates` prints TWO sections: "available" and "not available".
+    # A naive substring match on "Hibernate" false-positives because the word appears under
+    # "not available: Hibernate / Hibernation has not been enabled." Parse the available
+    # section only.
     Write-Host "Step 6: Verifying hibernation status..." -ForegroundColor Yellow
     try {
-        $hibernationStatus = powercfg /availablesleepstates 2>&1
-        if ($hibernationStatus -like "*Hibernate*") {
-            Write-Host "[WARN] Hibernation may still be available" -ForegroundColor Yellow
-            Write-Host "Hibernation status: $hibernationStatus" -ForegroundColor Gray
+        $sleepRaw = (powercfg /availablesleepstates 2>&1 | Out-String)
+        # Split on the "not available" delimiter. The first chunk is the available list.
+        $parts = [regex]::Split($sleepRaw, '(?im)^\s*The following sleep states are not available')
+        $availableSection = $parts[0]
+        if ($availableSection -match '(?im)^\s*Hibernate\s*$') {
+            Write-Host "[WARN] Hibernation is still listed as an available sleep state" -ForegroundColor Yellow
+            Write-Host "Available states:" -ForegroundColor Gray
+            Write-Host $availableSection -ForegroundColor Gray
         } else {
-            Write-Host "[OK] Hibernation is properly disabled" -ForegroundColor Green
+            Write-Host "[OK] Hibernation is properly disabled (not in available sleep states)" -ForegroundColor Green
         }
     } catch {
-        Write-Host "Could not verify hibernation status" -ForegroundColor Yellow
+        Write-Host "Could not verify hibernation status: $($_.Exception.Message)" -ForegroundColor Yellow
     }
     Write-Host ""
 
@@ -484,7 +531,13 @@ try {
     Write-Host "[OK] Hibernation disabled" -ForegroundColor Green
     Write-Host "[OK] Hard disk turn off disabled on all plans" -ForegroundColor Green
     Write-Host "[OK] Automatic sleep disabled across all plans" -ForegroundColor Green
-    Write-Host "[OK] Lid close action set to sleep" -ForegroundColor Green
+    if ($IsLaptop) {
+        Write-Host "[OK] Lid close action: AC = do nothing, DC = sleep (laptop)" -ForegroundColor Green
+        Write-Host "[OK] Power button action: shutdown (AC + DC, laptop)" -ForegroundColor Green
+        Write-Host "[OK] Energy Saver auto-on at 20% battery, aggressive (laptop, DC)" -ForegroundColor Green
+    } else {
+        Write-Host "[--] Lid / power-button / Energy Saver: skipped (desktop)" -ForegroundColor Gray
+    }
     Write-Host "[OK] Critical battery action set to shutdown (AC + DC, all schemes)" -ForegroundColor Green
     Write-Host "[OK] USB selective suspend disabled for stability" -ForegroundColor Green
     Write-Host "[OK] PCIE Link State Power Management disabled for stability" -ForegroundColor Green
