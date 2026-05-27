@@ -311,15 +311,28 @@ function Get-LocalUserProfileSummary {
 
         $totalBytes = 0
         $extCounts = @{}
-        $dirs = @('Desktop','Documents','Pictures','Videos','Downloads')
+        # AppData\Local\Microsoft\Outlook is the default location for PSTs
+        # and OSTs -- a workstation with an archive PST there would be
+        # invisible to a Documents-only sweep.
+        $dirs = @(
+            'Desktop','Documents','Pictures','Videos','Downloads',
+            'AppData\Local\Microsoft\Outlook'
+        )
         foreach ($d in $dirs) {
             $path = Join-Path $p.LocalPath $d
             if (-not (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue)) { continue }
             try {
                 $files = Get-ChildItem -LiteralPath $path -File -Recurse -Force -ErrorAction SilentlyContinue
                 foreach ($f in $files) {
-                    $totalBytes += $f.Length
                     $ext = $f.Extension.ToLowerInvariant()
+                    # OST is an Outlook cache of a server-side mailbox.
+                    # Keep its presence in the extension count as a
+                    # "user has email" signal, but don't include its
+                    # size in the footprint -- OSTs run 20+ GB and
+                    # would false-positive the AI's ~5 GB threshold.
+                    if ($ext -ne '.ost') {
+                        $totalBytes += $f.Length
+                    }
                     if ($soft_DataExtensions -contains $ext) {
                         if (-not $extCounts.ContainsKey($ext)) { $extCounts[$ext] = 0 }
                         $extCounts[$ext] += 1
@@ -453,8 +466,11 @@ workstation holds *unreplaceable* user data that warrants a backup.
 Decision rules:
 - Backup IS needed when any of the following are clearly true:
   * Active user profile(s) with non-trivial counts of documents,
-    spreadsheets, presentations, PDFs, PSTs, OneNote, or designer
-    files (.psd, .ai, .indd, .dwg, .cad, .qbw/.qbb, .accdb, .mdb).
+    spreadsheets, presentations, PDFs, OneNote, or designer files
+    (.psd, .ai, .indd, .dwg, .cad, .qbw/.qbb, .accdb, .mdb).
+  * Any .pst file present -- Outlook PSTs are user-created archives
+    that exist ONLY on this endpoint. Strong YES signal even on a
+    single small PST.
   * Virtual-disk files present (.vhd, .vhdx, .vmdk, .vdi, .qcow2,
     .ova, .ovf) -- local VMs almost always hold business data and
     are unreplaceable. Treat as a strong YES signal even with small
@@ -473,6 +489,10 @@ Decision rules:
   * The only files are obviously replaceable: OS, application data,
     media collections that aren't business-relevant, downloads of
     public installers.
+  * The only "email" signal is .ost (Outlook offline cache) with no
+    .pst -- .ost is a re-downloadable cache of an Exchange/M365
+    mailbox, not an unreplaceable archive. Treat .ost alone as
+    "user has email" presence, not as backup-needed.
 
 Be decisive. If you genuinely cannot decide, default to NEEDED -- the
 cost of a missed backup is much higher than the cost of an extra
