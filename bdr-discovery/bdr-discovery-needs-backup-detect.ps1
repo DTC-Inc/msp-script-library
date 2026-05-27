@@ -283,8 +283,10 @@ $soft_DataExtensions = @(
     '.pptx','.ppt','.pptm','.potx','.potm',
     # Office -- OneNote / generic text / PDFs
     '.one','.onepkg','.pdf','.csv','.tsv','.txt','.rtf','.md',
-    # Email stores + saved messages
-    '.pst','.ost','.eml','.msg','.mbox',
+    # Email stores + saved messages (OST omitted -- it's an offline
+    # cache of an Exchange/M365 mailbox and the cloud is the source
+    # of truth; mailbox is already backed up online.)
+    '.pst','.eml','.msg','.mbox',
     # Microsoft Access / generic local databases / dumps + backups
     '.accdb','.mdb','.db','.sqlite','.sqlite3','.dbf','.sql','.bak',
     # QuickBooks / accounting
@@ -311,28 +313,19 @@ function Get-LocalUserProfileSummary {
 
         $totalBytes = 0
         $extCounts = @{}
-        # AppData\Local\Microsoft\Outlook is the default location for PSTs
-        # and OSTs -- a workstation with an archive PST there would be
-        # invisible to a Documents-only sweep.
-        $dirs = @(
-            'Desktop','Documents','Pictures','Videos','Downloads',
-            'AppData\Local\Microsoft\Outlook'
-        )
+        # PSTs / VHDs / QuickBooks files etc. can live anywhere on disk
+        # and are caught by the cross-drive Find-CriticalFiles scan
+        # below. This per-profile sweep only estimates user-data
+        # footprint inside the well-known user folders.
+        $dirs = @('Desktop','Documents','Pictures','Videos','Downloads')
         foreach ($d in $dirs) {
             $path = Join-Path $p.LocalPath $d
             if (-not (Test-Path -LiteralPath $path -ErrorAction SilentlyContinue)) { continue }
             try {
                 $files = Get-ChildItem -LiteralPath $path -File -Recurse -Force -ErrorAction SilentlyContinue
                 foreach ($f in $files) {
+                    $totalBytes += $f.Length
                     $ext = $f.Extension.ToLowerInvariant()
-                    # OST is an Outlook cache of a server-side mailbox.
-                    # Keep its presence in the extension count as a
-                    # "user has email" signal, but don't include its
-                    # size in the footprint -- OSTs run 20+ GB and
-                    # would false-positive the AI's ~5 GB threshold.
-                    if ($ext -ne '.ost') {
-                        $totalBytes += $f.Length
-                    }
                     if ($soft_DataExtensions -contains $ext) {
                         if (-not $extCounts.ContainsKey($ext)) { $extCounts[$ext] = 0 }
                         $extCounts[$ext] += 1
@@ -394,6 +387,75 @@ function Get-NonAdminShareSummary {
 }
 
 # =====================================================================
+# Cross-drive scan for high-signal file types that often live OUTSIDE
+# the well-known user folders and SMB shares: PSTs on D:\, VHDs in
+# C:\Hyper-V\, QuickBooks files on a custom drive, etc. We walk every
+# fixed drive once, skipping the dirs that never contain user data.
+# =====================================================================
+
+function Find-CriticalFiles {
+    $criticalExt = @{
+        '.pst'   = 'Outlook archive'
+        '.vhd'   = 'Virtual disk'
+        '.vhdx'  = 'Virtual disk'
+        '.vmdk'  = 'VMware disk'
+        '.vdi'   = 'VirtualBox disk'
+        '.qcow2' = 'QEMU disk'
+        '.ova'   = 'VM appliance'
+        '.ovf'   = 'VM appliance'
+        '.qbw'   = 'QuickBooks data'
+        '.qbb'   = 'QuickBooks backup'
+        '.qbm'   = 'QuickBooks portable'
+        '.qba'   = 'QuickBooks accountant'
+        '.accdb' = 'Access database'
+        '.mdb'   = 'Access database (legacy)'
+        '.dcm'   = 'DICOM image'
+        '.dicom' = 'DICOM image'
+    }
+    $skipDirNames = @('Windows','$Recycle.Bin','System Volume Information','PerfLogs')
+
+    $drives = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
+    $result = @()
+
+    foreach ($drive in $drives) {
+        $root = "$($drive.DeviceID)\"
+        Write-Host "  Scanning $root for unreplaceable file types..."
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+        $candidates = @()
+        try {
+            $candidates += Get-ChildItem -LiteralPath $root -File -Force -ErrorAction SilentlyContinue
+        } catch {
+            Write-Host "    Could not enumerate root $($root): $_"
+        }
+
+        $topDirs = Get-ChildItem -LiteralPath $root -Directory -Force -ErrorAction SilentlyContinue |
+            Where-Object { $skipDirNames -notcontains $_.Name }
+        foreach ($d in $topDirs) {
+            try {
+                $candidates += Get-ChildItem -LiteralPath $d.FullName -File -Recurse -Force -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "    Could not enumerate $($d.FullName): $_"
+            }
+        }
+
+        foreach ($f in $candidates) {
+            $ext = $f.Extension.ToLowerInvariant()
+            if (-not $criticalExt.ContainsKey($ext)) { continue }
+            $result += [pscustomobject]@{
+                Path      = $f.FullName
+                Extension = $ext
+                Kind      = $criticalExt[$ext]
+                SizeMB    = [math]::Round($f.Length / 1MB, 1)
+                Modified  = $f.LastWriteTime.ToString("o")
+            }
+        }
+        Write-Host ("  {0} done in {1}s" -f $root, [math]::Round($sw.Elapsed.TotalSeconds, 1))
+    }
+    return ,$result
+}
+
+# =====================================================================
 # Run backup-specific discovery
 # =====================================================================
 
@@ -401,9 +463,11 @@ Write-Host "Running database-service detection..."
 $db = Test-HasDatabase
 
 Write-Host ""
-Write-Host "Running soft-signal checks (may take a minute on large profiles/shares)..."
-$profiles = Get-LocalUserProfileSummary
-$shares   = Get-NonAdminShareSummary
+Write-Host "Running soft-signal checks (may take a few minutes on large drives)..."
+$profiles      = Get-LocalUserProfileSummary
+$shares        = Get-NonAdminShareSummary
+$criticalFiles = Find-CriticalFiles
+Write-Host ("Cross-drive scan found {0} unreplaceable file(s)." -f $criticalFiles.Count)
 
 # =====================================================================
 # Decision rule -- hard signals
@@ -463,36 +527,33 @@ database) have already been evaluated. You only see workstations the
 hard signals could not decide on. Your job is to decide if this
 workstation holds *unreplaceable* user data that warrants a backup.
 
+You will receive an inventory JSON with three soft-signal blocks:
+`user_profiles` (data footprint in well-known user folders),
+`file_shares` (non-admin SMB shares), and `critical_files` (a
+cross-drive scan that lists every unreplaceable file type
+*anywhere* on the machine: .pst, .vhd/.vhdx/.vmdk/.vdi/.qcow2/.ova,
+.qbw/.qbb/.qbm/.qba, .accdb/.mdb, .dcm/.dicom). OST files are
+deliberately NOT scanned -- they are offline caches of an
+Exchange/M365 mailbox and the cloud is the source of truth.
+
 Decision rules:
 - Backup IS needed when any of the following are clearly true:
+  * The `critical_files` list is non-empty. Every entry there is a
+    file type that exists ONLY on this endpoint and cannot be
+    re-derived. A single PST or VHDX is enough.
   * Active user profile(s) with non-trivial counts of documents,
     spreadsheets, presentations, PDFs, OneNote, or designer files
-    (.psd, .ai, .indd, .dwg, .cad, .qbw/.qbb, .accdb, .mdb).
-  * Any .pst file present -- Outlook PSTs are user-created archives
-    that exist ONLY on this endpoint. Strong YES signal even on a
-    single small PST.
-  * Virtual-disk files present (.vhd, .vhdx, .vmdk, .vdi, .qcow2,
-    .ova, .ovf) -- local VMs almost always hold business data and
-    are unreplaceable. Treat as a strong YES signal even with small
-    counts.
-  * DICOM / dental-imaging files present (.dcm, .dicom) -- patient
-    records are PHI under HIPAA, strong YES signal.
-  * Local database files present (.sqlite, .sqlite3, .db, .dbf,
-    .sql, .bak) outside of obvious app caches.
+    (.psd, .ai, .indd, .dwg, .cad).
   * Non-admin SMB file share whose contents look like business data
     (not a re-installable software cache or a media-only library).
   * Combined business-data footprint over ~5 GB across profiles or
     shares.
 - Backup is NOT needed when:
-  * All profiles are stale (empty or never-logged-in placeholder
-    accounts) AND no business shares.
+  * `critical_files` is empty AND all profiles are stale (empty or
+    never-logged-in placeholder accounts) AND no business shares.
   * The only files are obviously replaceable: OS, application data,
     media collections that aren't business-relevant, downloads of
     public installers.
-  * The only "email" signal is .ost (Outlook offline cache) with no
-    .pst -- .ost is a re-downloadable cache of an Exchange/M365
-    mailbox, not an unreplaceable archive. Treat .ost alone as
-    "user has email" presence, not as backup-needed.
 
 Be decisive. If you genuinely cannot decide, default to NEEDED -- the
 cost of a missed backup is much higher than the cost of an extra
@@ -672,8 +733,9 @@ if ($null -eq $decision) {
             database_services   = $db.services
         }
         soft_signals   = [pscustomobject]@{
-            user_profiles = $profiles
-            file_shares   = $shares
+            user_profiles  = $profiles
+            file_shares    = $shares
+            critical_files = $criticalFiles
         }
     } | ConvertTo-Json -Depth 8 -Compress
 
@@ -803,6 +865,18 @@ if ($db.matched) {
 [void]$htmlBuilder.Append("</td></tr>")
 [void]$htmlBuilder.Append("<tr><td>Local User Profiles</td><td>$($profiles.Count)</td></tr>")
 [void]$htmlBuilder.Append("<tr><td>Non-admin File Shares</td><td>$($shares.Count)</td></tr>")
+[void]$htmlBuilder.Append("<tr><td>Unreplaceable Files (cross-drive)</td><td>$(New-StatusPill -On:($criticalFiles.Count -gt 0) -OnText:"$($criticalFiles.Count) found" -OffText:'0')")
+if ($criticalFiles.Count -gt 0) {
+    [void]$htmlBuilder.Append("<ul style='margin-top:4px;'>")
+    foreach ($cf in ($criticalFiles | Sort-Object -Property SizeMB -Descending | Select-Object -First 25)) {
+        [void]$htmlBuilder.Append("<li><code>$($cf.Path)</code> -- <em>$($cf.Kind)</em>, $($cf.SizeMB) MB</li>")
+    }
+    if ($criticalFiles.Count -gt 25) {
+        [void]$htmlBuilder.Append("<li>... and $($criticalFiles.Count - 25) more (see AI payload)</li>")
+    }
+    [void]$htmlBuilder.Append("</ul>")
+}
+[void]$htmlBuilder.Append("</td></tr>")
 [void]$htmlBuilder.Append('</tbody></table>')
 
 $detailsHtml = $htmlBuilder.ToString()
@@ -847,8 +921,9 @@ $aiPayload = [pscustomobject]@{
     }
     claude_verdict    = $claudeVerdictBlock
     soft_signals      = [pscustomobject]@{
-        user_profiles = $profiles
-        file_shares   = $shares
+        user_profiles  = $profiles
+        file_shares    = $shares
+        critical_files = $criticalFiles
     }
 }
 $aiPayloadJson = $aiPayload | ConvertTo-Json -Depth 10 -Compress
