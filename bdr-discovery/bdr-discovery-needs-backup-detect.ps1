@@ -11,6 +11,10 @@
 ##
 ## Anthropic API (REQUIRED only when hard signals come back PENDING):
 ## $env:anthropicApiKey                              - Anthropic API key. Set in the RMM script preset (or Read-Host in interactive mode).
+## $env:ClaudeJitterMaxSeconds                       - Fleet jitter. Max random delay (seconds) before the Claude call so a
+##                                                     mass RMM run doesn't hit the API all at once. Default 600 (10 min).
+##                                                     10 min ONLY fits Tier 2+ (1000 RPM); at Tier 1 (50 RPM) ~8000 endpoints
+##                                                     need ~5 hours (~18000s). Set 0 to disable.
 ##
 ## Backup-discovery fields WRITTEN by this script --------------------------
 ## $env:CustomFieldBackupDiscoveryHasDatabase        - Boolean (1/0)  default: "backupDiscoveryHasDatabase"
@@ -220,17 +224,49 @@ Write-Host ""
 function Test-HasDatabase {
     $details = [ordered]@{ matched = $false; matchedNonEmbedded = $false; services = @() }
 
-    $dbPatterns = @(
-        'MSSQL*','SQLAgent*','SQLBrowser','SQLWriter',
-        'MySQL*','MariaDB*',
-        'postgresql*','postgres-*',
-        'OracleService*',
-        'MongoDB','Redis'
+    # Database engine catalog. Each engine matches on service Name and/or
+    # DisplayName (dental engines register under names that don't look like
+    # "SQL" at all, so DisplayName matching is required -- the old Name-only
+    # filter missed every proprietary dental engine). CustomerData=$true means
+    # the engine, when present, IS by definition the practice's live data
+    # (dental PMS, QuickBooks company file). Those never store mere app
+    # telemetry, so they force a hard YES regardless of install path. The
+    # enterprise SQL engines (CustomerData=$false) stay subject to the
+    # embedded-host-app path check below, because RMM/AV/backup products
+    # routinely bundle SQL Express to hold only their own state.
+    $engines = @(
+        # --- Enterprise SQL engines (path-checked for embedded host apps) ---
+        @{ Label='Microsoft SQL Server'; Customer=$false; Name=@('MSSQL*');                  Display=@('*SQL Server (*') },
+        @{ Label='MySQL / MariaDB';      Customer=$false; Name=@('MySQL*','MariaDB*');        Display=@('*MySQL*','*MariaDB*') },
+        @{ Label='PostgreSQL';           Customer=$false; Name=@('postgresql*','postgres-*'); Display=@('*PostgreSQL*') },
+        @{ Label='Oracle';               Customer=$false; Name=@('OracleService*');           Display=@('*OracleService*') },
+        @{ Label='MongoDB';              Customer=$false; Name=@('MongoDB');                   Display=@('*MongoDB*') },
+        @{ Label='Redis';                Customer=$false; Name=@('Redis');                     Display=@('*Redis*') },
+        # --- Dental PMS + QuickBooks engines (always customer data -> hard YES) ---
+        # SQL Anywhere is the general Eaglesoft/Sybase engine (service SQLANYs_*).
+        @{ Label='SAP SQL Anywhere (Eaglesoft / Sybase)'; Customer=$true; Name=@('SQLANYs_*'); Display=@('*SQL Anywhere*','*Sybase*') },
+        # Eaglesoft server-side service (Patterson DB engine) as a belt-and-suspenders label.
+        @{ Label='Eaglesoft (Patterson) database';        Customer=$true; Name=@();            Display=@('*Patterson*Database*','*Eaglesoft*Database*') },
+        # Dentrix G5/G6/early-G7 engine.
+        @{ Label='Pervasive / Actian PSQL (Dentrix)';     Customer=$true; Name=@('Pervasive*','psqlWGE','psqlSRV'); Display=@('*Pervasive*','*Actian*') },
+        # Oldest Dentrix engine: FairCom c-tree behind the "Dentrix Ace Server" service.
+        @{ Label='Dentrix Ace Server / FairCom c-tree';   Customer=$true; Name=@('DentrixAceServer','FairCom*'); Display=@('*Dentrix Ace Server*','*FairCom*','*c-tree*') },
+        # DEXIS / DTX Studio proprietary core (imaging + patient DB).
+        @{ Label='DTX Studio Core (DEXIS)';               Customer=$true; Name=@();            Display=@('*DTX Studio Core*') },
+        # QuickBooks multi-user host (company file).
+        @{ Label='QuickBooks Database Server';            Customer=$true; Name=@('QuickBooksDB*'); Display=@('*QuickBooks*Database*') }
     )
 
-    # Path patterns for KNOWN-embedded DBs -- service ImagePath under one of
-    # these means the DB stores app/state, not customer data. Be generous;
-    # AI evaluator can override.
+    # Companion / helper services -- recorded for context but NEVER a trigger on
+    # their own. SQLWriter (VSS writer), SQLBrowser (UDP name resolution),
+    # SQLAgent (job scheduler), QBCFMonitorService (QB file monitor) and the
+    # full-text/telemetry helpers all install alongside an engine and can be
+    # present with no customer database on THIS box, so they must not flip the
+    # backup decision by themselves -- the real engine service does that.
+    $companionPatterns = @('SQLWriter','SQLBrowser','SQLAgent*','QBCFMonitorService','MSSQLFDLauncher*','SQLTELEMETRY*')
+
+    # Path patterns for KNOWN-embedded DBs -- a CustomerData=$false engine whose
+    # ImagePath sits under one of these stores app/state, not customer data.
     $embeddedHostApps = @(
         'Veeam','NinjaRMM','NinjaOne','Acronis','Sophos','Huntress',
         'ManageEngine','ConnectWise','LabTech','Automate','Kaseya','Datto',
@@ -239,33 +275,114 @@ function Test-HasDatabase {
         'PrintAudit','PaperCut'
     )
 
-    foreach ($pat in $dbPatterns) {
-        $svcs = Get-CimInstance -ClassName Win32_Service -Filter "Name LIKE '$($pat.Replace('*','%'))'" -ErrorAction SilentlyContinue
-        foreach ($s in $svcs) {
-            $imagePath = "$($s.PathName)".Trim('"').Trim()
-            $isEmbedded = $false
-            $hostApp = ""
-            foreach ($app in $embeddedHostApps) {
-                if ($imagePath -like "*$app*") {
-                    $isEmbedded = $true
-                    $hostApp = $app
-                    break
-                }
-            }
-            $details.matched = $true
-            if (-not $isEmbedded) { $details.matchedNonEmbedded = $true }
+    $allSvcs = Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue
+    foreach ($s in $allSvcs) {
+        $name = "$($s.Name)"
+        $disp = "$($s.DisplayName)"
+
+        # Does this service match a catalog engine (by Name OR DisplayName)?
+        $engine = $null
+        foreach ($e in $engines) {
+            $hit = $false
+            foreach ($p in $e.Name)    { if ($name -like $p) { $hit = $true; break } }
+            if (-not $hit) { foreach ($p in $e.Display) { if ($disp -like $p) { $hit = $true; break } } }
+            if ($hit) { $engine = $e; break }
+        }
+
+        # Is it a companion/helper (checked independently -- a companion never
+        # triggers, even if its name also matches an engine pattern e.g. MSSQLFDLauncher)?
+        $isCompanion = $false
+        foreach ($c in $companionPatterns) { if ($name -like $c) { $isCompanion = $true; break } }
+
+        if (-not $engine -and -not $isCompanion) { continue }
+
+        $imagePath = "$($s.PathName)".Trim('"').Trim()
+
+        if ($isCompanion) {
             $details.services += [pscustomobject]@{
-                Name      = $s.Name
-                State     = $s.State
-                StartMode = $s.StartMode
-                Account   = $s.StartName
-                Path      = $imagePath
-                Embedded  = $isEmbedded
-                HostApp   = $hostApp
+                Name=$name; DisplayName=$disp; State=$s.State; StartMode=$s.StartMode
+                Account=$s.StartName; Path=$imagePath
+                Engine=$(if ($engine) { $engine.Label } else { 'SQL companion service' })
+                Embedded=$false; HostApp=''; Companion=$true; CustomerData=$false
             }
+            continue
+        }
+
+        # Real engine. Embedded check applies only to enterprise SQL.
+        $isEmbedded = $false
+        $hostApp = ''
+        if (-not $engine.Customer) {
+            foreach ($app in $embeddedHostApps) {
+                if ($imagePath -like "*$app*") { $isEmbedded = $true; $hostApp = $app; break }
+            }
+        }
+
+        $details.matched = $true
+        if (-not $isEmbedded) { $details.matchedNonEmbedded = $true }
+        $details.services += [pscustomobject]@{
+            Name=$name; DisplayName=$disp; State=$s.State; StartMode=$s.StartMode
+            Account=$s.StartName; Path=$imagePath
+            Engine=$engine.Label
+            Embedded=$isEmbedded; HostApp=$hostApp; Companion=$false
+            CustomerData=[bool]$engine.Customer
         }
     }
     return $details
+}
+
+# SoftDent (Carestream; lineage DMD -> PracticeWorks -> Kodak -> Carestream)
+# stores its core PMS data as FairCom c-tree FLAT FILES -- no monitorable
+# service and no distinctive file extension -- so service/extension scans can't
+# find it. Its config lives under HKLM\SOFTWARE\PWInc (PracticeWorks Inc), and
+# the PWSvr (license/data server) component marks the box that hosts the shared
+# data set. That registry hive is the only reliable "this machine IS the
+# SoftDent server" signal. Exact value names vary by version, so we detect the
+# PWInc hive, infer the server role from a PWSvr subkey / PWsvr service-process,
+# and surface any registry value that resolves to an existing directory as the
+# likely data path. Confirm value names against a live SoftDent server.
+function Test-SoftDentServer {
+    $result = [ordered]@{ Installed=$false; IsServer=$false; DataPath=$null; Keys=@() }
+    $roots = @('HKLM:\SOFTWARE\PWInc','HKLM:\SOFTWARE\WOW6432Node\PWInc')
+
+    foreach ($root in $roots) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        $result.Installed = $true
+        $result.Keys += $root
+
+        # Server role: a PWSvr (or *Server*) subkey under PWInc.
+        try {
+            foreach ($sk in (Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+                if ($sk.PSChildName -like 'PWSvr*' -or $sk.PSChildName -like '*Server*') { $result.IsServer = $true }
+            }
+        } catch {}
+
+        # Scan root + one level of subkeys for a value that is an existing dir.
+        $scanKeys = @($root)
+        try { $scanKeys += (Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | Select-Object -ExpandProperty PSPath) } catch {}
+        foreach ($k in $scanKeys) {
+            try {
+                $props = Get-ItemProperty -LiteralPath $k -ErrorAction SilentlyContinue
+                if ($null -eq $props) { continue }
+                foreach ($p in $props.PSObject.Properties) {
+                    if ($p.Name -in @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider')) { continue }
+                    $v = "$($p.Value)"
+                    if ($v -match '^[A-Za-z]:\\' -and (Test-Path -LiteralPath $v -PathType Container -ErrorAction SilentlyContinue)) {
+                        if (-not $result.DataPath) { $result.DataPath = $v }
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    # PWsvr.exe process / service is a strong server-role corroborator.
+    if ($result.Installed -and -not $result.IsServer) {
+        if (Get-Process -Name 'PWsvr' -ErrorAction SilentlyContinue) {
+            $result.IsServer = $true
+        } elseif (Get-CimInstance -ClassName Win32_Service -Filter "Name='PWsvr' OR Name='PWLicenseServer'" -ErrorAction SilentlyContinue) {
+            $result.IsServer = $true
+        }
+    }
+    return $result
 }
 
 # =====================================================================
@@ -295,13 +412,43 @@ $soft_DataExtensions = @(
     '.psd','.ai','.indd','.afdesign','.afphoto','.sketch','.fig',
     # CAD / engineering
     '.dwg','.dxf','.cad','.stp','.step','.iges','.igs','.skp',
-    # Medical / dental imaging (DICOM is industry standard)
-    '.dcm','.dicom',
+    # Medical / dental imaging. DICOM (.dcm/.dicom) is the industry standard
+    # most dental suites export to (Sidexis, CS, Dentrix/Eaglesoft imaging).
+    # .dex is DEXIS's proprietary loose-file X-ray format. All are
+    # unreplaceable patient records and HIPAA-relevant.
+    '.dcm','.dicom','.dex',
     # Virtual disks -- local VMs almost always hold business data
     '.vhd','.vhdx','.vmdk','.vdi','.qcow2','.ova','.ovf',
     # Archives (often contain dumps / exports)
     '.zip','.7z','.rar','.tar','.gz','.tgz','.iso'
 )
+
+# Raster image formats counted in the census SEPARATELY from $soft_DataExtensions
+# because they need a size gate. Windows is full of these as icons, thumbnails,
+# and UI sprites (under AppData / Program Files), which would drown out a real
+# signal. We only count files at or above $ImageCensusFloorBytes so the census
+# reflects actual photos, scans, clinical images, and X-ray exports -- not chrome.
+# (The per-profile sweep already restricts to Desktop/Documents/Pictures/Videos/
+# Downloads, so most icon caches are out of scope before the floor even applies.)
+$soft_ImageExtensions = @(
+    '.png','.jpg','.jpeg','.bmp','.gif','.tif','.tiff','.heic','.heif','.webp'
+)
+
+# Real photos, scanned documents, and dental X-ray image exports are virtually
+# always well over 100 KB; icons, thumbnails, and sprites are well under it.
+# Tune here if a client's real images skew smaller.
+$ImageCensusFloorBytes = 100KB
+
+# Decide whether a file should be counted in the extension census. Image types
+# are gated by size to exclude icons/thumbnails; everything else in the data list
+# counts regardless of size (a 4 KB .accdb stub still signals a local database).
+function Test-CensusCountable {
+    param([string]$Extension, [long]$SizeBytes)
+    if ($soft_ImageExtensions -contains $Extension) {
+        return ($SizeBytes -ge $ImageCensusFloorBytes)
+    }
+    return ($soft_DataExtensions -contains $Extension)
+}
 
 function Get-LocalUserProfileSummary {
     $profiles = Get-CimInstance -ClassName Win32_UserProfile -ErrorAction SilentlyContinue |
@@ -326,7 +473,7 @@ function Get-LocalUserProfileSummary {
                 foreach ($f in $files) {
                     $totalBytes += $f.Length
                     $ext = $f.Extension.ToLowerInvariant()
-                    if ($soft_DataExtensions -contains $ext) {
+                    if (Test-CensusCountable -Extension $ext -SizeBytes $f.Length) {
                         if (-not $extCounts.ContainsKey($ext)) { $extCounts[$ext] = 0 }
                         $extCounts[$ext] += 1
                     }
@@ -367,7 +514,7 @@ function Get-NonAdminShareSummary {
             foreach ($f in $files) {
                 $totalBytes += $f.Length
                 $ext = $f.Extension.ToLowerInvariant()
-                if ($soft_DataExtensions -contains $ext) {
+                if (Test-CensusCountable -Extension $ext -SizeBytes $f.Length) {
                     if (-not $extCounts.ContainsKey($ext)) { $extCounts[$ext] = 0 }
                     $extCounts[$ext] += 1
                 }
@@ -411,6 +558,7 @@ function Find-CriticalFiles {
         '.mdb'   = 'Access database (legacy)'
         '.dcm'   = 'DICOM image'
         '.dicom' = 'DICOM image'
+        '.dex'   = 'DEXIS X-ray image'
     }
     $skipDirNames = @('Windows','$Recycle.Bin','System Volume Information','PerfLogs')
 
@@ -462,6 +610,12 @@ function Find-CriticalFiles {
 Write-Host "Running database-service detection..."
 $db = Test-HasDatabase
 
+Write-Host "Running SoftDent registry detection..."
+$softdent = Test-SoftDentServer
+if ($softdent.Installed) {
+    Write-Host ("  SoftDent present (server: {0}{1})" -f $softdent.IsServer, $(if ($softdent.DataPath) { ", data: $($softdent.DataPath)" } else { "" }))
+}
+
 Write-Host ""
 Write-Host "Running soft-signal checks (may take a few minutes on large drives)..."
 $profiles      = Get-LocalUserProfileSummary
@@ -490,9 +644,14 @@ if ($hyperVHost.Value) {
     $reason   = "Windows Server"
     $decisionSource = "hard-signals"
 } elseif ($db.matchedNonEmbedded) {
-    $nonEmbeddedNames = ($db.services | Where-Object { -not $_.Embedded } | Select-Object -ExpandProperty Name) -join ', '
+    $nonEmbedded = $db.services | Where-Object { -not $_.Embedded -and -not $_.Companion }
+    $nonEmbeddedNames = ($nonEmbedded | ForEach-Object { "$($_.Name) [$($_.Engine)]" }) -join ', '
     $decision = $true
     $reason   = "Non-embedded database service(s) present: $nonEmbeddedNames"
+    $decisionSource = "hard-signals"
+} elseif ($softdent.IsServer) {
+    $decision = $true
+    $reason   = "SoftDent server -- FairCom c-tree data host (registry PWInc/PWSvr)$(if ($softdent.DataPath) { " at $($softdent.DataPath)" })"
     $decisionSource = "hard-signals"
 } else {
     $decision       = $null  # hard signals can't decide; ask Claude below
@@ -523,18 +682,36 @@ function Invoke-ClaudeBackupTriage {
 You are a backup-eligibility triage assistant for an MSP that backs up
 Windows endpoints (HIPAA + CMMC environments). The hard signals
 (Hyper-V host / Windows Server / Domain Controller / non-embedded
-database) have already been evaluated. You only see workstations the
-hard signals could not decide on. Your job is to decide if this
-workstation holds *unreplaceable* user data that warrants a backup.
+database engine -- including dental PMS engines like SQL Anywhere,
+Pervasive/Actian, Dentrix Ace/c-tree, QuickBooks DB Server -- and a
+SoftDent c-tree server detected via registry) have already been
+evaluated. You only see workstations the hard signals could not decide
+on. Your job is to decide if this workstation holds *unreplaceable*
+user data that warrants a backup.
+
+Note on QuickBooks: a QB *Database Server* service is a hard signal
+handled upstream (that box hosts the live company file). Here you may
+still see loose .qbw/.qbb/.qbm/.qba files in `critical_files` -- those
+are scoped as soft signals because they may be copies, but a company
+file (.qbw) that appears to be the only copy still warrants a backup.
 
 You will receive an inventory JSON with three soft-signal blocks:
 `user_profiles` (data footprint in well-known user folders),
 `file_shares` (non-admin SMB shares), and `critical_files` (a
 cross-drive scan that lists every unreplaceable file type
 *anywhere* on the machine: .pst, .vhd/.vhdx/.vmdk/.vdi/.qcow2/.ova,
-.qbw/.qbb/.qbm/.qba, .accdb/.mdb, .dcm/.dicom). OST files are
+.qbw/.qbb/.qbm/.qba, .accdb/.mdb, .dcm/.dicom, .dex). OST files are
 deliberately NOT scanned -- they are offline caches of an
 Exchange/M365 mailbox and the cloud is the source of truth.
+
+The `.dcm`/`.dicom`/`.dex` types are dental/medical patient imaging
+(DICOM exports and DEXIS X-rays) -- HIPAA-relevant and unreplaceable.
+
+The per-extension counts inside `user_profiles` and `file_shares`
+include raster image formats (.png/.jpg/.jpeg/.bmp/.tif/.gif/.heic/
+.webp) only when the file is at least 100 KB, so those counts
+represent ACTUAL photos, scans, and clinical images -- not icons,
+thumbnails, or UI sprites. A large count there is real image data.
 
 Decision rules:
 - Backup IS needed when any of the following are clearly true:
@@ -544,6 +721,10 @@ Decision rules:
   * Active user profile(s) with non-trivial counts of documents,
     spreadsheets, presentations, PDFs, OneNote, or designer files
     (.psd, .ai, .indd, .dwg, .cad).
+  * Non-trivial counts of real images (.png/.jpg/.bmp/.tif, already
+    size-filtered to exclude icons) in a user profile or share -- e.g.
+    clinical/intraoral photos, scanned records, a photographer's
+    library. Treat these as unreplaceable user data.
   * Non-admin SMB file share whose contents look like business data
     (not a re-installable software cache or a media-only library).
   * Combined business-data footprint over ~5 GB across profiles or
@@ -731,6 +912,7 @@ if ($null -eq $decision) {
             has_database        = [bool]$db.matched
             has_non_embedded_db = [bool]$db.matchedNonEmbedded
             database_services   = $db.services
+            softdent            = $softdent
         }
         soft_signals   = [pscustomobject]@{
             user_profiles  = $profiles
@@ -752,6 +934,20 @@ if ($null -eq $decision) {
         $reason            = "Claude triage required but anthropicApiKey is not configured."
         $claudeFailureExit = 2
     } else {
+        # Fleet jitter -- smear the API call across a window so a mass RMM run
+        # of N endpoints doesn't burst the Anthropic rate limit all at once.
+        # Only here (RMM mode, Claude actually needed, key present). At Tier 1
+        # (50 RPM) 600s is far too short for thousands of endpoints; see the
+        # $env:ClaudeJitterMaxSeconds note in the header.
+        if ([string]::IsNullOrEmpty($env:ClaudeJitterMaxSeconds)) { $env:ClaudeJitterMaxSeconds = "600" }
+        $jitterMax = 0
+        if (-not [int]::TryParse($env:ClaudeJitterMaxSeconds, [ref]$jitterMax)) { $jitterMax = 600 }
+        if ($env:RMM -eq "1" -and $jitterMax -gt 0) {
+            $jitter = Get-Random -Minimum 0 -Maximum ($jitterMax + 1)
+            Write-Host "  Fleet jitter: sleeping $jitter s (random 0..$jitterMax) before calling Claude..."
+            Start-Sleep -Seconds $jitter
+        }
+
         $claudeResult = Invoke-ClaudeBackupTriage -ApiKey $env:anthropicApiKey -PayloadJson $claudeInput
         switch ($claudeResult.Outcome) {
             "success" {
@@ -854,13 +1050,24 @@ if ($claudeResult -and $claudeResult.ShortSummary) {
 [void]$htmlBuilder.Append("<tr><td>Windows Server</td><td>$(New-StatusPill -On:$winServer.Value) <small>($($winServer.Source))</small></td></tr>")
 [void]$htmlBuilder.Append("<tr><td>Domain Controller</td><td>$(New-StatusPill -On:$dc.Value) <small>($($dc.Source))</small></td></tr>")
 [void]$htmlBuilder.Append("<tr><td>Database Services</td><td>$(New-StatusPill -On:($db.matched))")
-if ($db.matched) {
+if ($db.services.Count -gt 0) {
     [void]$htmlBuilder.Append("<ul style='margin-top:4px;'>")
     foreach ($s in $db.services) {
-        $tag = if ($s.Embedded) { "<em>embedded ($($s.HostApp))</em>" } else { "<strong>unreplaceable?</strong>" }
-        [void]$htmlBuilder.Append("<li>$($s.Name) ($($s.State)) -- $tag</li>")
+        $tag = if ($s.Companion)        { "<em>companion (informational)</em>" }
+               elseif ($s.Embedded)     { "<em>embedded ($($s.HostApp))</em>" }
+               elseif ($s.CustomerData) { "<strong>customer data</strong>" }
+               else                     { "<strong>unreplaceable?</strong>" }
+        [void]$htmlBuilder.Append("<li>$($s.Name) [$($s.Engine)] ($($s.State)) -- $tag</li>")
     }
     [void]$htmlBuilder.Append("</ul>")
+}
+[void]$htmlBuilder.Append("</td></tr>")
+[void]$htmlBuilder.Append("<tr><td>SoftDent (registry)</td><td>")
+if ($softdent.Installed) {
+    [void]$htmlBuilder.Append("$(New-StatusPill -On:$softdent.IsServer -OnText:'Server (c-tree data host)' -OffText:'client only')")
+    if ($softdent.DataPath) { [void]$htmlBuilder.Append(" <small><code>$($softdent.DataPath)</code></small>") }
+} else {
+    [void]$htmlBuilder.Append("<span style='color:#228b22;'>not present</span>")
 }
 [void]$htmlBuilder.Append("</td></tr>")
 [void]$htmlBuilder.Append("<tr><td>Local User Profiles</td><td>$($profiles.Count)</td></tr>")
@@ -912,6 +1119,7 @@ $aiPayload = [pscustomobject]@{
         has_database        = [bool]$db.matched
         has_non_embedded_db = [bool]$db.matchedNonEmbedded
         database_services   = $db.services
+        softdent            = $softdent
     }
     decision          = [pscustomobject]@{
         needs_backup = if ($null -eq $needsBackup) { $null } else { [bool]$needsBackup }
