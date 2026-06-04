@@ -9,7 +9,22 @@
   (policy 58). Flow: HV0-skip -> CHECK -> DIAGNOSE -> REPAIR (gated) ->
   CONFIRM -> STATE.
 
-  Excluded hosts: any hostname matching ^HV0 (Hyper-V hosts).
+  Excluded hosts: any hostname matching ^HV0 (Hyper-V hosts). Checked at
+  entry point before any file writes, transcript, or mutex creation.
+
+  RMM INTEGRATION (per repo CLAUDE.md):
+    - Execution context detected via $env:RMM ('1' = RMM mode).
+    - NinjaRMM passes script preset variables as ENVIRONMENT variables.
+      Every parameter below can be overridden by a same-named NinjaOne
+      script variable. In particular the NOC checkboxes:
+        ForceDisruptiveRepairs=1  and  ClearStateAndExit=1
+      are read from $env: (CLI switches also work for interactive use).
+    - $env:Description captured for audit trail.
+    - Transcript logging: $env:RMMScriptPath\logs\ in RMM mode (fallback
+      $env:WINDIR\logs\), $env:WINDIR\logs\ interactive. 10MB rotation.
+    - Template deviation (deliberate): no Read-Host prompts. This script
+      is condition-triggered automation and must never block on input;
+      a hung prompt would silence backup remediation fleet-wide.
 
   Device-offline short-circuit (sole reason, no counter increment):
     - Public internet unreachable
@@ -21,7 +36,7 @@
       - ARP cache clear
       - VSS DLL re-registration (escalation)
       - NinjaRMMAgent restart (escalation)
-    Override with -ForceDisruptiveRepairs.
+    Override with -ForceDisruptiveRepairs or env ForceDisruptiveRepairs=1.
 
   Anytime repairs:
     - DNS cache flush
@@ -40,9 +55,13 @@
     - agent.yaml missing or corrupt
     - Disk space critically low post-cleanup
 
-  Counter: auto-reset after 48h gap, no increment on DeviceOffline*,
-  RemediationDeferred, LiveJobSkipped, or AlreadyHealthy. Guardrail at
-  2 consecutive failed attempts.
+  Counter: tracks remediation INTERVENTIONS (successful or not) within the
+  CounterResetHours window. Auto-reset after a 48h gap, or when a run finds
+  everything healthy with no repairs needed (AlreadyHealthy_CounterCleared).
+  No increment on DeviceOffline*, RemediationDeferred, or LiveJobSkipped.
+  Guardrail at MaxConsecutiveAttempts interventions - needing repeated
+  intervention, even successful, indicates a recurring root cause that
+  requires human investigation.
 
   Auto-close: NinjaOne condition clears alert + Halo ticket when next
   scheduled backup succeeds. Script does not touch alert or Halo flow.
@@ -60,12 +79,14 @@
   Default 5.0.
 
 .PARAMETER MaxConsecutiveAttempts
-  Number of consecutive unsuccessful remediations before script stops trying
-  and escalates to NOC. Default 2.
+  Number of consecutive remediation interventions (successful or failed)
+  within the CounterResetHours window before the script stops acting and
+  escalates to NOC. Repeated interventions - even when each one succeeds -
+  indicate a recurring underlying issue. Default 2.
 
 .PARAMETER CounterResetHours
-  Hours of no script execution before consecutive-attempt counter auto-resets.
-  Default 48 (because the condition wouldn't re-fire if backups were working).
+  Hours of no script execution before the intervention counter auto-resets.
+  Default 48 (the condition wouldn't re-fire if backups were working).
 
 .PARAMETER MinFreeSpacePercent
   Minimum system drive free space percentage. Below this triggers temp cleanup
@@ -103,18 +124,23 @@
 
 .PARAMETER ForceDisruptiveRepairs
   Override business-hours gating and allow disruptive repairs immediately.
-  Use for emergency runs from NOC after-hours approval is obtained verbally.
+  RMM: set NinjaOne script variable ForceDisruptiveRepairs (Checkbox) - read
+  via $env:ForceDisruptiveRepairs per repo convention. CLI switch works for
+  interactive runs.
 
 .PARAMETER ClearStateAndExit
   Wipe state file and exit without remediation. Used by NOC after manually
   resolving an underlying issue on a device sitting at MaxAttemptsReached.
+  RMM: set NinjaOne script variable ClearStateAndExit (Checkbox) - read via
+  $env:ClearStateAndExit per repo convention. CLI switch works for
+  interactive runs.
 
 .NOTES
   Author:    Zachary Boogher, DTC
-  Date:      2026-04-23
-  Version:   7.0
+  Date:      2026-06-03
+  Version:   8.0
   Repo:      dtc-inc/msp-script-library
-  Path:      ninjaone/services/lockhart-remediation.ps1
+  Path:      rmm-ninja/lockhart-remediation.ps1
   Target:    PowerShell 5.1 (NinjaOne)
   Requires:  LocalSystem / Administrator privileges
   Runtime:   ~120-180 seconds typical
@@ -122,6 +148,18 @@
              1 = remediation failed or hard blocker
              2 = max attempts reached, NOC must investigate
 #>
+
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## $RMM - Set to 1 when running from RMM (selects RMMScriptPath log location)
+## $Description - Ticket # or initials for audit trail (optional; defaulted if blank)
+## $ForceDisruptiveRepairs - 1 to override business-hours gating (Checkbox)
+## $ClearStateAndExit - 1 to wipe remediation state file and exit (Checkbox)
+## Optional tuning overrides (advanced; same names as parameters):
+## $SampleSeconds, $ActiveIoThresholdMB, $ActiveCpuThresholdSec,
+## $MaxConsecutiveAttempts, $CounterResetHours, $MinFreeSpacePercent,
+## $NetTestTimeoutMs, $DnsTimeoutMs, $TempCleanupMinAgeDays,
+## $MaxRuntimeSeconds, $HistoryRetentionEntries, $TimeSkewToleranceMinutes,
+## $BusinessHoursStartHour, $BusinessHoursEndHour, $MinUptimeMinutes
 
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', '',
     Justification = 'All parameters consumed by Invoke-LockhartRemediation via script-scope variable inheritance; PSScriptAnalyzer does not follow control flow into nested function calls.')]
@@ -149,10 +187,74 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+# ============================================================
+# INPUT HANDLING SECTION (per CLAUDE.md / script-template-powershell.ps1)
+# NinjaRMM passes preset variables as ENVIRONMENT variables. Bare param
+# references do not bind from env vars, so every RMM-suppliable value is
+# resolved here: env var wins when present and valid, else the param/default.
+# NOTE (template deviation, deliberate): no Read-Host. This script is
+# condition-triggered automation and must never block on input - a hung
+# prompt would silence backup remediation fleet-wide if the RMM preset
+# were ever missing. Interactive runs use parameter defaults instead.
+# ============================================================
+function Get-RmmInt {
+    param([string]$Name, [int]$Current)
+    $v = [Environment]::GetEnvironmentVariable($Name)
+    if ($v -match '^\d+$') { return [int]$v }
+    return $Current
+}
+
+function Get-RmmDouble {
+    param([string]$Name, [double]$Current)
+    $v = [Environment]::GetEnvironmentVariable($Name)
+    $out = 0.0
+    if (-not [string]::IsNullOrWhiteSpace($v) -and [double]::TryParse($v, [ref]$out)) { return $out }
+    return $Current
+}
+
+function Test-RmmFlag {
+    param([string]$Name)
+    return ([Environment]::GetEnvironmentVariable($Name) -match '^(?i)(1|true|yes|on)$')
+}
+
+# Numeric tunables: env override -> param -> default
+$SampleSeconds            = Get-RmmInt    'SampleSeconds'            $SampleSeconds
+$ActiveIoThresholdMB      = Get-RmmInt    'ActiveIoThresholdMB'      $ActiveIoThresholdMB
+$ActiveCpuThresholdSec    = Get-RmmDouble 'ActiveCpuThresholdSec'    $ActiveCpuThresholdSec
+$MaxConsecutiveAttempts   = Get-RmmInt    'MaxConsecutiveAttempts'   $MaxConsecutiveAttempts
+$CounterResetHours        = Get-RmmInt    'CounterResetHours'        $CounterResetHours
+$MinFreeSpacePercent      = Get-RmmInt    'MinFreeSpacePercent'      $MinFreeSpacePercent
+$NetTestTimeoutMs         = Get-RmmInt    'NetTestTimeoutMs'         $NetTestTimeoutMs
+$DnsTimeoutMs             = Get-RmmInt    'DnsTimeoutMs'             $DnsTimeoutMs
+$TempCleanupMinAgeDays    = Get-RmmInt    'TempCleanupMinAgeDays'    $TempCleanupMinAgeDays
+$MaxRuntimeSeconds        = Get-RmmInt    'MaxRuntimeSeconds'        $MaxRuntimeSeconds
+$HistoryRetentionEntries  = Get-RmmInt    'HistoryRetentionEntries'  $HistoryRetentionEntries
+$TimeSkewToleranceMinutes = Get-RmmInt    'TimeSkewToleranceMinutes' $TimeSkewToleranceMinutes
+$BusinessHoursStartHour   = Get-RmmInt    'BusinessHoursStartHour'   $BusinessHoursStartHour
+$BusinessHoursEndHour     = Get-RmmInt    'BusinessHoursEndHour'     $BusinessHoursEndHour
+$MinUptimeMinutes         = Get-RmmInt    'MinUptimeMinutes'         $MinUptimeMinutes
+
+# NOC checkboxes: env var (NinjaOne UI path) OR CLI switch (interactive path)
+$script:ForceDisruptiveResolved = $ForceDisruptiveRepairs.IsPresent -or (Test-RmmFlag 'ForceDisruptiveRepairs')
+$script:ClearStateResolved      = $ClearStateAndExit.IsPresent      -or (Test-RmmFlag 'ClearStateAndExit')
+
+# Execution context + audit trail (env vars are strings: compare against '1')
+$script:IsRmmMode   = ($env:RMM -eq '1')
+$script:Description = if (-not [string]::IsNullOrWhiteSpace($env:Description)) { $env:Description }
+                      else { 'No description provided (automated condition trigger)' }
+
+# Transcript log path per CLAUDE.md: SYSTEM-context script
+$script:ScriptLogName = 'lockhart-remediation.log'
+if ($script:IsRmmMode -and -not [string]::IsNullOrWhiteSpace($env:RMMScriptPath)) {
+    $script:LogPath = Join-Path $env:RMMScriptPath "logs\$($script:ScriptLogName)"
+} else {
+    $script:LogPath = Join-Path $env:WINDIR "logs\$($script:ScriptLogName)"
+}
+
 # =================== constants ===================
 $script:ServiceName     = 'Lockhart'
 $script:ParentAgentName = 'NinjaRMMAgent'
-$script:MutexName       = 'Global\DTC_NinjaOneBackup_LockhartRemediation_v7'
+$script:MutexName       = 'Global\DTC_NinjaOneBackup_LockhartRemediation_v8'
 $script:CloudEndpoints  = @(
     @{ Host='app.ninjarmm.com';           Port=443 },
     @{ Host='backup.ninjarmm.com';        Port=443 },
@@ -171,6 +273,26 @@ function Write-DTCLog {
         [string]$Message
     )
     Write-Host "[$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss'))][$Level] $Message"
+}
+
+# =================== transcript ===================
+function Start-RemediationTranscript {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Script runs unattended via NinjaOne; ShouldProcess support is dead code in this runtime.')]
+    [CmdletBinding()]
+    param()
+    try {
+        $dir = Split-Path $script:LogPath -Parent
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        if ((Test-Path $script:LogPath) -and ((Get-Item $script:LogPath).Length -gt 10MB)) {
+            Move-Item -Path $script:LogPath -Destination "$($script:LogPath).old" -Force
+        }
+        Start-Transcript -Path $script:LogPath -Append -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        Write-Verbose "Transcript start failed (continuing without): $_"
+        return $false
+    }
 }
 
 # =================== device class ===================
@@ -195,6 +317,10 @@ function Initialize-Path {
 }
 
 function Move-LegacyStateFile {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '',
+        Justification = 'Script runs unattended via NinjaOne; ShouldProcess support is dead code in this runtime.')]
+    [CmdletBinding()]
+    param()
     if ($script:StateFile -eq $script:OldStateFile) { return }
     if (Test-Path $script:StateFile) { return }
     if (-not (Test-Path $script:OldStateFile)) { return }
@@ -749,12 +875,11 @@ function Invoke-LockhartRemediation {
     param()
 
     $runTs = Get-Date
-    Write-DTCLog INFO "=== NinjaOne Backup - Lockhart Remediation / Repair v7 ==="
+    Write-DTCLog INFO "=== NinjaOne Backup - Lockhart Remediation / Repair v8 ==="
     Write-DTCLog INFO "Host: $env:COMPUTERNAME | PS: $($PSVersionTable.PSVersion) | PID: $PID"
 
-    # ============================================================
-    # ABSOLUTE FIRST CHECK: HV0 host exclusion
-    # ============================================================
+    # Defense-in-depth: entry point already checks ^HV0 before transcript;
+    # this guards direct function invocation in future refactors.
     if ($env:COMPUTERNAME -match '^HV0') {
         Write-DTCLog INFO "Hyper-V host detected ($env:COMPUTERNAME matches ^HV0). Backup remediation does not apply to hypervisors. Skipping."
         Write-DTCLog INFO "=== EXIT: HypervisorSkip ==="
@@ -765,7 +890,7 @@ function Invoke-LockhartRemediation {
     # PHASE 1: CHECK
     # ============================================================
     $inBusinessHours = Test-WithinBusinessHours -StartHour $BusinessHoursStartHour -EndHour $BusinessHoursEndHour
-    $disruptiveAllowed = (-not $inBusinessHours) -or $ForceDisruptiveRepairs.IsPresent
+    $disruptiveAllowed = (-not $inBusinessHours) -or $script:ForceDisruptiveResolved
     Write-DTCLog INFO "Time: $((Get-Date).ToString('HH:mm')) | BusinessHours($BusinessHoursStartHour-$BusinessHoursEndHour): $inBusinessHours | DisruptiveAllowed: $disruptiveAllowed"
 
     $deviceClass = Get-DeviceClass
@@ -773,9 +898,9 @@ function Invoke-LockhartRemediation {
     Move-LegacyStateFile
     Write-DTCLog INFO "DeviceClass: $deviceClass | StateFile: $($script:StateFile)"
 
-    # ClearStateAndExit short-circuit
-    if ($ClearStateAndExit) {
-        Write-DTCLog INFO "ClearStateAndExit flag set"
+    # ClearStateAndExit short-circuit (env var via NinjaOne checkbox, or CLI switch)
+    if ($script:ClearStateResolved) {
+        Write-DTCLog INFO "ClearStateAndExit requested (param=$($ClearStateAndExit.IsPresent), env='$($env:ClearStateAndExit)')"
         if (Test-Path $script:StateFile) {
             try {
                 Remove-Item $script:StateFile -Force -ErrorAction Stop
@@ -838,9 +963,9 @@ function Invoke-LockhartRemediation {
     }
     Write-DTCLog INFO "State: Attempts=$($state.ConsecutiveAttempts) | LastResult=$($state.LastResult) | LastRun=$($state.LastRun)"
 
-    # Guardrail
+    # Guardrail - counter tracks interventions (successful or not) within the window
     if ([int]$state.ConsecutiveAttempts -ge $MaxConsecutiveAttempts) {
-        $reason = "$($state.ConsecutiveAttempts) consecutive remediation attempts without success. Last result: $($state.LastResult). NOC must investigate manually."
+        $reason = "$($state.ConsecutiveAttempts) consecutive remediation interventions within the ${CounterResetHours}h window. Last result: $($state.LastResult). Repeated intervention - even when each one succeeds - indicates an underlying issue the script cannot fix. NOC must investigate manually."
         Write-DTCLog ERROR $reason
         return Complete-Remediation -State $state -Result 'MaxAttemptsReached' -Code 2 -Entry $null
     }
@@ -982,16 +1107,18 @@ function Invoke-LockhartRemediation {
             else { $repairActions += 'Failed_LockhartRestart' }
         }
         'Running' {
-            if ($currentSvc.ProcessId -le 0 -or -not (Get-Process -Id $currentSvc.ProcessId -ErrorAction SilentlyContinue)) {
-                if (Invoke-RestartService -Name $script:ServiceName) { $repairActions += 'LockhartRestarted' }
-                else { $repairActions += 'Failed_LockhartRestart' }
-            } elseif ($liveBackup -and -not $liveBackup.ProcessAlive) {
-                if (Invoke-RestartService -Name $script:ServiceName) { $repairActions += 'LockhartRestarted' }
-                else { $repairActions += 'Failed_LockhartRestart' }
-            } else {
-                if (Invoke-RestartService -Name $script:ServiceName) { $repairActions += 'LockhartRestarted' }
-                else { $repairActions += 'Failed_LockhartRestart' }
-            }
+            # Single restart for every Running sub-state that reaches this point:
+            #  - zombie PID / process missing
+            #  - process died during the sample window
+            #  - process alive but idle below both thresholds with backups failing 25h+
+            # A genuinely active backup already exited earlier via LiveJobSkipped.
+            # Known accepted edge: a long-running backup sampled entirely within a
+            # quiet phase (dedupe/catalog/network stall) gets restarted; NinjaOne
+            # Backup resumes block-level on the next run (vendor-documented), so
+            # the cost is bounded and preferable to leaving stuck processes
+            # unremediated - the exact case the pilot validated.
+            if (Invoke-RestartService -Name $script:ServiceName) { $repairActions += 'LockhartRestarted' }
+            else { $repairActions += 'Failed_LockhartRestart' }
         }
         default {
             if (Invoke-RestartService -Name $script:ServiceName) { $repairActions += 'LockhartRestarted' }
@@ -1072,6 +1199,11 @@ function Invoke-LockhartRemediation {
             $state.ConsecutiveAttempts = 0
             Write-DTCLog INFO "Lockhart fully healthy, no repairs needed. Counter cleared."
         } else {
+            # Intentional: successful interventions still count toward the
+            # guardrail. Needing to repair Lockhart every cycle is a recurring
+            # problem worth NOC eyes even when each individual repair works.
+            # AlreadyHealthy_CounterCleared (above) is the recovery path once
+            # the device holds healthy between runs.
             $result = 'RemediationSucceeded'
             $state.ConsecutiveAttempts = [int]$state.ConsecutiveAttempts + 1
             Write-DTCLog INFO "Repairs confirmed healthy. Actions: $($repairActions -join ', ')"
@@ -1114,8 +1246,20 @@ function Invoke-LockhartRemediation {
 }
 
 # ================================================================
-# ENTRY POINT
+# ENTRY POINT (SCRIPT LOGIC SECTION)
 # ================================================================
+# HV0 exclusion FIRST - before transcript, mutex, or any file writes.
+# Hypervisors take zero side effects from this script.
+if ($env:COMPUTERNAME -match '^HV0') {
+    Write-DTCLog INFO "Hyper-V host detected ($env:COMPUTERNAME matches ^HV0). Backup remediation does not apply to hypervisors. Skipping."
+    Write-DTCLog INFO "=== EXIT: HypervisorSkip ==="
+    exit 0
+}
+
+$script:TranscriptActive = Start-RemediationTranscript
+Write-DTCLog INFO "Description: $($script:Description) | RMM mode: $($script:IsRmmMode) | LogPath: $($script:LogPath)"
+Write-DTCLog INFO "Flags: ForceDisruptiveRepairs param=$($ForceDisruptiveRepairs.IsPresent) env='$($env:ForceDisruptiveRepairs)' resolved=$($script:ForceDisruptiveResolved) | ClearStateAndExit param=$($ClearStateAndExit.IsPresent) env='$($env:ClearStateAndExit)' resolved=$($script:ClearStateResolved)"
+
 $scriptPid = $PID
 $scriptTimeout = $MaxRuntimeSeconds
 $runtimeKiller = Start-Job -ScriptBlock {
@@ -1144,6 +1288,9 @@ try {
     }
     Stop-Job $runtimeKiller -ErrorAction SilentlyContinue | Out-Null
     Remove-Job $runtimeKiller -Force -ErrorAction SilentlyContinue | Out-Null
+    if ($script:TranscriptActive) {
+        try { Stop-Transcript | Out-Null } catch { Write-Verbose "Stop-Transcript failed: $_" }
+    }
 }
 
 exit $exitCode
