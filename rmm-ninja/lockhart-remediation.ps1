@@ -257,7 +257,6 @@ $script:ParentAgentName = 'NinjaRMMAgent'
 $script:MutexName       = 'Global\DTC_NinjaOneBackup_LockhartRemediation_v8'
 $script:CloudEndpoints  = @(
     @{ Host='app.ninjarmm.com';           Port=443 },
-    @{ Host='backup.ninjarmm.com';        Port=443 },
     @{ Host='s3.amazonaws.com';           Port=443 },
     @{ Host='s3.us-east-1.amazonaws.com'; Port=443 }
 )
