@@ -1,7 +1,8 @@
 ## PLEASE SET THE FOLLOWING ENVIRONMENT VARIABLES IN YOUR RMM BEFORE RUNNING
 ## $env:CUSTOM_FIELD_S3_BUCKET_NAME    - Text field: last used S3 bucket name
 ## $env:CUSTOM_FIELD_S3_BUCKET_SIZE    - Text field: last used S3 bucket size (human readable)
-## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
+## $env:CUSTOM_FIELD_S3_TOTAL_SIZE     - Text field: total used space across ALL S3 repos (active + inactive)
+## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML tables of active + inactive S3 repos
 ## $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
 ## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
 ## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup job's last run failed
@@ -81,8 +82,14 @@ function Build-HtmlTable {
         [string[]]$Headers,
         [System.Collections.Generic.List[string[]]]$Rows,
         [string]$ScanTimestamp,
-        [string]$EmptyMessage = "No data found."
+        [string]$EmptyMessage = "No data found.",
+        [string]$Title = ""
     )
+
+    $TITLE_HTML = ""
+    if ($Title) {
+        $TITLE_HTML = "    <p style=`"margin:0 0 6px;font-size:14px;font-weight:600;color:#111827;`">$(ConvertTo-SafeHtml $Title)</p>`n"
+    }
 
     $HEADER_CELLS = ""
     foreach ($H in $Headers) {
@@ -115,8 +122,8 @@ $CELLS        </tr>
     }
 
     return @"
-<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111827;">
-    <table style="width:100%;border-collapse:collapse;border:1px solid #d1d5db;border-radius:4px;overflow:hidden;">
+<div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#111827;margin-bottom:14px;">
+$TITLE_HTML    <table style="width:100%;border-collapse:collapse;border:1px solid #d1d5db;border-radius:4px;overflow:hidden;">
         <thead>
             <tr style="background-color:#f3f4f6;">
 $HEADER_CELLS            </tr>
@@ -169,6 +176,7 @@ if ($env:RMM -ne "1") {
 
     $env:CUSTOM_FIELD_S3_BUCKET_NAME = Read-Host "NinjaOne text field for S3 bucket name (blank to skip)"
     $env:CUSTOM_FIELD_S3_BUCKET_SIZE = Read-Host "NinjaOne text field for S3 bucket size (blank to skip)"
+    $env:CUSTOM_FIELD_S3_TOTAL_SIZE = Read-Host "NinjaOne text field for total S3 size across all repos (blank to skip)"
     $env:CUSTOM_FIELD_S3_INVENTORY = Read-Host "NinjaOne WYSIWYG field for S3 inventory table (blank to skip)"
     $env:CUSTOM_FIELD_ORPHANS_FOUND = Read-Host "NinjaOne integer field for orphans found flag (blank to skip)"
     $env:CUSTOM_FIELD_ORPHANED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for orphaned backups table (blank to skip)"
@@ -402,7 +410,15 @@ foreach ($BACKUP in $ALL_BACKUPS) {
 Write-Host ""
 Write-Host "Processing repositories..."
 
+# Union of all repo rows (used for the single-repo fallback + console dump),
+# plus the active/inactive split that drives the two inventory tables.
+# Row schema: @(BucketName, RepoName, Type, UsedSpace, LastBackup)
 $REPO_ROWS = [System.Collections.Generic.List[string[]]]::new()
+$ACTIVE_REPO_ROWS = [System.Collections.Generic.List[string[]]]::new()
+$INACTIVE_REPO_ROWS = [System.Collections.Generic.List[string[]]]::new()
+
+# Total used space across ALL S3 repos (active + inactive) -> total B2 footprint.
+$TOTAL_S3_BYTES = [long]0
 
 $LAST_USED_BUCKET = "N/A"
 $LAST_USED_SIZE = "N/A"
@@ -412,6 +428,11 @@ $LAST_USED_TIME = [datetime]::MinValue
 foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     $REPO_ID = $REPO.Id.ToString()
     Write-Host "  Processing: $($REPO.Name)"
+
+    # A repo is ACTIVE if a backup copy job currently targets it (it's wired into
+    # the live backup pipeline). Otherwise it's INACTIVE -- a registered repo no
+    # longer receiving data (e.g. a pre-move bucket left behind), still billable.
+    $IS_ACTIVE = $COPY_JOB_REPOS.ContainsKey($REPO_ID)
 
     # --- BUCKET NAME ---
     $BUCKET_NAME = "N/A"
@@ -451,9 +472,7 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
     try { if ($REPO.Type) { $REPO_TYPE = $REPO.Type.ToString() } } catch {}
     try { if ($REPO_TYPE -eq "N/A" -and $REPO.TypeDisplay) { $REPO_TYPE = $REPO.TypeDisplay } } catch {}
 
-    $REPO_ROWS.Add(@($BUCKET_NAME, $REPO.Name, $REPO_TYPE, $USED_SPACE_DISPLAY))
-
-    # --- LAST USED tracking ---
+    # --- LAST BACKUP (most recent restore point in this repo) ---
     $REPO_LATEST_TIME = [datetime]::MinValue
     if ($S3_CHILDREN_BY_REPO_ID.ContainsKey($REPO_ID)) {
         foreach ($CHILD in $S3_CHILDREN_BY_REPO_ID[$REPO_ID]) {
@@ -462,6 +481,15 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
             }
         }
     }
+    $LAST_BACKUP_STR = if ($REPO_LATEST_TIME -gt [datetime]::MinValue) { $REPO_LATEST_TIME.ToString("yyyy-MM-dd") } else { "N/A" }
+
+    # --- ROW + ACTIVE/INACTIVE SPLIT + RUNNING TOTAL ---
+    $ROW = @($BUCKET_NAME, $REPO.Name, $REPO_TYPE, $USED_SPACE_DISPLAY, $LAST_BACKUP_STR)
+    $REPO_ROWS.Add($ROW)
+    if ($IS_ACTIVE) { $ACTIVE_REPO_ROWS.Add($ROW) } else { $INACTIVE_REPO_ROWS.Add($ROW) }
+    $TOTAL_S3_BYTES += $USED_SPACE_BYTES
+
+    # --- LAST USED tracking (drives the single-bucket scalar fields) ---
     if ($REPO_LATEST_TIME -gt $LAST_USED_TIME) {
         $LAST_USED_TIME = $REPO_LATEST_TIME
         $LAST_USED_BUCKET = $BUCKET_NAME
@@ -469,6 +497,8 @@ foreach ($REPO in $OBJECT_STORAGE_REPOS) {
         $LAST_USED_SIZE_BYTES = $USED_SPACE_BYTES
     }
 }
+
+$TOTAL_S3_SIZE_DISPLAY = Format-SizeBytes -Bytes $TOTAL_S3_BYTES
 
 # --- ORPHAN ROWS (all repos) ---
 $ORPHAN_ROWS = [System.Collections.Generic.List[string[]]]::new()
@@ -598,17 +628,23 @@ Write-Host ""
 Write-Host "=== Results ==="
 Write-Host "  Last used S3 bucket: $LAST_USED_BUCKET"
 Write-Host "  Last used S3 size:   $LAST_USED_SIZE"
-Write-Host "  S3 repos found:      $($REPO_ROWS.Count)"
+Write-Host "  S3 repos found:      $($REPO_ROWS.Count) (active: $($ACTIVE_REPO_ROWS.Count), inactive: $($INACTIVE_REPO_ROWS.Count))"
+Write-Host "  Total S3 size (all): $TOTAL_S3_SIZE_DISPLAY"
 Write-Host "  Orphaned backups:    $ORPHAN_COUNT"
 Write-Host "  Failed backups:      $FAILED_COUNT"
 Write-Host "  S3 copy job missing: $S3_COPY_MISSING $(if ($S3_COPY_MISSING_REASON) { "($S3_COPY_MISSING_REASON)" })"
 Write-Host ""
 
 if ($REPO_ROWS.Count -gt 0) {
-    Write-Host "=== Inventory ==="
-    foreach ($ROW in $REPO_ROWS) {
-        Write-Host "  Bucket: $($ROW[0]) | Repo: $($ROW[1]) | Type: $($ROW[2]) | Size: $($ROW[3])"
+    Write-Host "=== Active S3 Repositories ($($ACTIVE_REPO_ROWS.Count)) ==="
+    foreach ($ROW in $ACTIVE_REPO_ROWS) {
+        Write-Host "  Bucket: $($ROW[0]) | Repo: $($ROW[1]) | Type: $($ROW[2]) | Size: $($ROW[3]) | Last backup: $($ROW[4])"
     }
+    Write-Host "=== Inactive S3 Repositories ($($INACTIVE_REPO_ROWS.Count)) ==="
+    foreach ($ROW in $INACTIVE_REPO_ROWS) {
+        Write-Host "  Bucket: $($ROW[0]) | Repo: $($ROW[1]) | Type: $($ROW[2]) | Size: $($ROW[3]) | Last backup: $($ROW[4])"
+    }
+    Write-Host "  Total across all S3 repos: $TOTAL_S3_SIZE_DISPLAY"
     Write-Host ""
 }
 
@@ -631,11 +667,25 @@ if ($FAILED_COUNT -gt 0) {
 # ------------------------------------------------------------
 # Build HTML tables
 # ------------------------------------------------------------
-$HTML_INVENTORY = Build-HtmlTable `
-    -Headers @("Bucket Name", "Repository Name", "Type", "Used Space") `
-    -Rows $REPO_ROWS `
+$INVENTORY_HEADERS = @("Bucket Name", "Repository Name", "Type", "Used Space", "Last Backup")
+
+$HTML_ACTIVE = Build-HtmlTable `
+    -Title "Active S3 Repositories ($($ACTIVE_REPO_ROWS.Count))" `
+    -Headers $INVENTORY_HEADERS `
+    -Rows $ACTIVE_REPO_ROWS `
     -ScanTimestamp $SCAN_TIMESTAMP `
-    -EmptyMessage "No S3-compatible object storage repositories found."
+    -EmptyMessage "No active S3 repositories (no backup copy job targets an S3 repo)."
+
+$HTML_INACTIVE = Build-HtmlTable `
+    -Title "Inactive S3 Repositories ($($INACTIVE_REPO_ROWS.Count))" `
+    -Headers $INVENTORY_HEADERS `
+    -Rows $INACTIVE_REPO_ROWS `
+    -ScanTimestamp $SCAN_TIMESTAMP `
+    -EmptyMessage "No inactive S3 repositories."
+
+$HTML_TOTAL = "<p style=`"font-family:Arial,Helvetica,sans-serif;font-size:13px;font-weight:600;color:#111827;margin:0 0 12px;`">Total used space across all S3 repositories: $(ConvertTo-SafeHtml $TOTAL_S3_SIZE_DISPLAY)</p>"
+
+$HTML_INVENTORY = $HTML_TOTAL + $HTML_ACTIVE + $HTML_INACTIVE
 
 $HTML_ORPHANS = Build-HtmlTable `
     -Headers @("Machine", "Size", "Last Backup", "Reason", "Repository") `
@@ -656,6 +706,7 @@ Write-Host "Writing to NinjaOne custom fields..."
 
 Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_NAME $LAST_USED_BUCKET
 Set-NinjaField $env:CUSTOM_FIELD_S3_BUCKET_SIZE $LAST_USED_SIZE
+Set-NinjaField $env:CUSTOM_FIELD_S3_TOTAL_SIZE $TOTAL_S3_SIZE_DISPLAY
 Set-NinjaField $env:CUSTOM_FIELD_S3_INVENTORY $HTML_INVENTORY
 Set-NinjaField $env:CUSTOM_FIELD_ORPHANS_FOUND "$([int]($ORPHAN_COUNT -gt 0))"
 Set-NinjaField $env:CUSTOM_FIELD_ORPHANED_BACKUPS $HTML_ORPHANS
