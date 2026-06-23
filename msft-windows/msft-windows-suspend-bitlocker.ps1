@@ -3,6 +3,9 @@
 ## $env:RMM         - "1" when executed from the RMM (string). Anything else = interactive.
 ## $env:Description - ticket # and/or initials, used as the job description
 ## $env:RebootCount - reboots BitLocker stays suspended before it auto-resumes (optional, default 1)
+##
+## Exit codes: 0 = system volume protection is OFF (suspended, or no BitLocker) -> safe to reboot.
+##             1 = system volume is STILL protected (suspend failed) -> NOT safe to reboot.
 
 $ScriptLogName = "bitlocker-suspend.log"
 
@@ -44,10 +47,12 @@ if ($env:RMM -ne "1") {
 
 Start-Transcript -Path $LogPath
 
-Write-Host "Description: $Description"
-Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
-Write-Host "RebootCount: $RebootCount"
+Write-Host "================ Suspend BitLocker ================"
+Write-Host "Description : $Description"
+Write-Host "Log path    : $LogPath"
+Write-Host "RMM mode    : $env:RMM"
+Write-Host "RebootCount : $RebootCount"
+Write-Host "==================================================="
 
 # Suspend BitLocker on the system volume only. Only the OS/system volume can throw
 # the pre-boot recovery prompt; fixed data volumes auto-unlock from the
@@ -55,30 +60,47 @@ Write-Host "RebootCount: $RebootCount"
 function Suspend-SystemBitLocker {
     param([int]$RebootCount = 1)
     $mp = $env:SystemDrive
+
+    Write-Host "[1/3] Checking BitLocker on system volume $mp ..."
     try {
         $vol = Get-BitLockerVolume -MountPoint $mp -ErrorAction Stop
-        if ($vol.ProtectionStatus -ne 'On') {
-            Write-Output "System volume $mp is not actively protected; nothing to suspend."
-            return 0
-        }
-        Suspend-BitLocker -MountPoint $mp -RebootCount $RebootCount -Verbose | Out-Null
-
-        # Verify protection is actually off before we rely on it.
-        $vol = Get-BitLockerVolume -MountPoint $mp
-        if ($vol.ProtectionStatus -eq 'On') {
-            Write-Error "System volume $mp still protected after suspend."
-            return 1
-        }
-        Write-Output "BitLocker on system volume $mp suspended for $RebootCount reboot(s)."
-        return 0
-    }
-    catch {
-        Write-Error "An error occurred: $_"
+    } catch {
+        Write-Host "ERROR: could not query BitLocker on ${mp}: $($_.Exception.Message)"
+        Write-Host "RESULT: unable to determine BitLocker state on $mp -> EXIT 1"
         return 1
     }
+    Write-Host "      VolumeStatus     : $($vol.VolumeStatus)"
+    Write-Host "      ProtectionStatus : $($vol.ProtectionStatus)"
+
+    if ($vol.ProtectionStatus -ne 'On') {
+        Write-Host "[2/3] Protection already OFF on $mp - nothing to suspend."
+        Write-Host "RESULT: $mp is NOT protected -> safe to reboot -> EXIT 0"
+        return 0
+    }
+
+    Write-Host "[2/3] Suspending BitLocker on $mp for $RebootCount reboot(s) ..."
+    try {
+        Suspend-BitLocker -MountPoint $mp -RebootCount $RebootCount -ErrorAction Stop | Out-Null
+    } catch {
+        Write-Host "ERROR: Suspend-BitLocker failed on ${mp}: $($_.Exception.Message)"
+        Write-Host "RESULT: suspend FAILED on $mp -> still protected -> EXIT 1"
+        return 1
+    }
+
+    Write-Host "[3/3] Verifying protection is now off ..."
+    $vol = Get-BitLockerVolume -MountPoint $mp
+    Write-Host "      ProtectionStatus after suspend : $($vol.ProtectionStatus)"
+    if ($vol.ProtectionStatus -eq 'On') {
+        Write-Host "RESULT: $mp STILL PROTECTED after suspend -> NOT safe to reboot -> EXIT 1"
+        return 1
+    }
+
+    Write-Host "RESULT: BitLocker on $mp SUSPENDED for $RebootCount reboot(s) -> safe to reboot -> EXIT 0"
+    return 0
 }
 
 $exitCode = Suspend-SystemBitLocker -RebootCount $RebootCount
 
+Write-Host "Final exit code: $exitCode"
 Stop-Transcript
 exit $exitCode
