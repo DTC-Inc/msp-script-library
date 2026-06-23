@@ -55,29 +55,28 @@ Write-Host "Log path: $LogPath"
 Write-Host "RMM: $RMM"
 Write-Host "RebootCount: $RebootCount"
 
-# Function to suspend BitLocker on all actively protected volumes for $RebootCount reboot(s).
-function Suspend-AllBitLocker {
+# Function to suspend BitLocker on the system volume for $RebootCount reboot(s).
+# Only the OS/system volume can trigger the pre-boot recovery prompt; fixed data
+# volumes auto-unlock once Windows is up off the (suspended-but-bootable) system
+# drive, so suspending $env:SystemDrive is sufficient to cover the reboot.
+function Suspend-SystemBitLocker {
     param([int]$RebootCount = 1)
     try {
-        # Volumes with protection currently ON are the ones that need suspending.
-        $bitLockerVolumes = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'On' }
+        $mp = $env:SystemDrive
+        $vol = Get-BitLockerVolume -MountPoint $mp -ErrorAction Stop
 
-        if ($bitLockerVolumes.Count -gt 0) {
-            foreach ($volume in $bitLockerVolumes) {
-                # Suspend BitLocker for the configured number of reboots.
-                Suspend-BitLocker -MountPoint $volume.MountPoint -RebootCount $RebootCount -Verbose
+        if ($vol.ProtectionStatus -eq 'On') {
+            Suspend-BitLocker -MountPoint $mp -RebootCount $RebootCount -Verbose | Out-Null
 
-                Write-Output "BitLocker on volume $($volume.MountPoint) suspended for $RebootCount reboot(s)."
-            }
-
-            # Verify nothing is still actively protected.
-            $stillOn = Get-BitLockerVolume | Where-Object { $_.ProtectionStatus -eq 'On' }
-            if ($stillOn) {
-                Write-Error "Volume(s) still protected after suspend: $($stillOn.MountPoint -join ', ')"
+            # Verify protection is actually off before we rely on it.
+            $vol = Get-BitLockerVolume -MountPoint $mp
+            if ($vol.ProtectionStatus -eq 'On') {
+                Write-Error "System volume $mp still protected after suspend."
                 exit 1
             }
+            Write-Output "BitLocker on system volume $mp suspended for $RebootCount reboot(s)."
         } else {
-            Write-Output "No actively protected BitLocker volumes found; nothing to suspend."
+            Write-Output "System volume $mp is not actively protected; nothing to suspend."
         }
         Exit 0
     }
@@ -87,8 +86,8 @@ function Suspend-AllBitLocker {
     }
 }
 
-# Call the function to suspend BitLocker on all volumes
-Suspend-AllBitLocker -RebootCount $RebootCount
+# Call the function to suspend BitLocker on the system volume
+Suspend-SystemBitLocker -RebootCount $RebootCount
 
 
 
