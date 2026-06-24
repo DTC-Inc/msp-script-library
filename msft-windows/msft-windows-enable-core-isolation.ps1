@@ -10,7 +10,10 @@
 
 $ScriptLogName = "msft-windows-enable-core-isolation.log"
 
-if ($RMM -ne 1) {
+# Only prompt when the session is genuinely interactive. NinjaRMM runs non-interactively
+# ([Environment]::UserInteractive is $false), so a non-interactive run never reaches Read-Host
+# (which errors with "Windows PowerShell is in NonInteractive mode" and loops forever).
+if ($RMM -ne 1 -and [Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {

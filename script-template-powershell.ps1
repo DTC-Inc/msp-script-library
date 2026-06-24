@@ -41,7 +41,10 @@ $ScriptLogName = "EnterLogNameHere.log"
 
 # --- Input handling: RMM vs interactive ----------------------------------
 
-if ($env:RMM -ne "1") {
+# Only prompt in a genuinely interactive session. NinjaRMM runs non-interactively
+# ([Environment]::UserInteractive is $false), so a missing/renamed RMM variable can never
+# leave the script erroring/looping on Read-Host in NonInteractive mode.
+if ($env:RMM -ne "1" -and [Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {

@@ -19,7 +19,8 @@ All scripts follow a consistent three-part structure defined in `script-template
 
 2. **Input Handling Section**
    - **All RMM-supplied variables come via environment variables** (`$env:VarName`). NinjaRMM passes script preset variables to PowerShell as environment variables, so the script must read them via `$env:` at every use site. Bare `$VarName` references resolve to `$null` in true RMM mode and silently fall through to the interactive branch.
-   - Detects execution context via `$env:RMM` — environment variables are strings, so compare against `"1"` not `1`. Anything other than `"1"` is interactive mode.
+   - Detects execution context via `$env:RMM` — environment variables are strings, so compare against `"1"` not `1`.
+   - **Gate the interactive branch on an interactive session too:** `if ($env:RMM -ne "1" -and [Environment]::UserInteractive)`. NinjaRMM runs scripts non-interactively (`[Environment]::UserInteractive` is `$false`), so if the RMM preset variable is ever missing, renamed, or not seen as `"1"`, the script still falls through to RMM mode instead of erroring/looping forever on `Read-Host` (`"Windows PowerShell is in NonInteractive mode. Read and Prompt functionality is not available."`). Never gate solely on `$env:RMM` — a single missing variable should never be able to hang an unattended job.
    - Interactive mode: Prompts user with `Read-Host` for required inputs with validation loop. Write the result back to `$env:Description` so the rest of the script can keep referencing `$env:` consistently.
    - RMM mode: Uses pre-set environment variables passed by the RMM platform. Defaults for any optional variables (custom field names, state file paths, etc.) should be set at the top of the script by writing to `$env:` directly:
      ```powershell
