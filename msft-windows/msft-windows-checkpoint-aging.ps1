@@ -1,6 +1,5 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
 ## $env:Description   - Ticket # or initials for audit trail
 ## $env:RMMScriptPath - Optional log directory base provided by the RMM
 ## $env:DaysAging     - Number of days old a checkpoint must be to flag it (default: "7").
@@ -16,9 +15,12 @@ if ([string]::IsNullOrEmpty($env:DaysAging)) {
     $env:DaysAging = "$DefaultDaysAging"
 }
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Input handling: interactive vs unattended ---------------------------
 
-if ($env:RMM -ne "1") {
+# Prompt only in an interactive session. NinjaRMM (and any unattended/scheduled run)
+# is non-interactive, so it skips the prompts and uses defaults -- it never blocks or
+# errors on Read-Host.
+if ([Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
@@ -81,7 +83,6 @@ try {
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 Write-Host "Days Aging threshold: $daysAging day(s)"
 
 # Detect Hyper-V WITHOUT the ServerManager module / Get-WindowsFeature.

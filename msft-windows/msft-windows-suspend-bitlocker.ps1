@@ -1,6 +1,5 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
 ## $env:Description   - Ticket # or initials for audit trail
 ## $env:RMMScriptPath - Optional log directory base provided by the RMM
 
@@ -11,13 +10,12 @@
 
 $ScriptLogName = "bitlocker-suspend.log"
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Input handling: interactive vs unattended ---------------------------
 
-# Only prompt when the session is genuinely interactive. NinjaRMM runs scripts
-# non-interactively ([Environment]::UserInteractive is $false), so even if the RMM
-# preset variable is missing or renamed, we fall through to RMM mode with defaults
-# instead of erroring/looping forever on Read-Host in NonInteractive mode.
-if ($env:RMM -ne "1" -and [Environment]::UserInteractive) {
+# Prompt only in an interactive session. NinjaRMM (and any unattended/scheduled run)
+# is non-interactive, so it skips the prompts and uses defaults -- it never blocks or
+# errors on Read-Host.
+if ([Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
@@ -65,7 +63,6 @@ try {
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 
 # BitLocker cmdlets require the BitLocker feature/module. If absent, no-op cleanly.
 if (-not (Get-Command -Name "Get-BitLockerVolume" -ErrorAction SilentlyContinue)) {

@@ -1,6 +1,5 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
 ## $env:Description   - Ticket # or initials for audit trail
 ## $env:RMMScriptPath - Optional log directory base provided by the RMM
 ##
@@ -17,12 +16,13 @@
 #   2. Input Handling             - RMM vs interactive detection, log path setup
 #   3. Script Logic               - your actual automation, wrapped in Start-Transcript
 #
-# IMPORTANT: All RMM-supplied variables come via environment variables.
-# Read them via $env:VarName at every use site. Bare $RMM / $Description /
-# $RMMScriptPath references resolve to $null in true RMM mode and silently
-# fall through to the interactive branch.
+# IMPORTANT: All RMM-supplied variables come via environment variables ($env:VarName).
+# Read them via $env: at every use site -- bare $Description / $RMMScriptPath resolve
+# to $null in true RMM mode.
 #
-# Environment variables are always strings, so compare $env:RMM to "1" not 1.
+# Execution mode is decided by [Environment]::UserInteractive, NOT an RMM variable:
+# NinjaRMM (and any unattended/scheduled run) is non-interactive, so prompts are skipped
+# and defaults are used -- the script can never block or error on Read-Host.
 #
 # See CLAUDE.md for the full pattern documentation including application
 # detection patterns, NinjaRMM custom field types, and the cross-context
@@ -39,9 +39,11 @@ $ScriptLogName = "EnterLogNameHere.log"
 #     $env:CustomFieldFooDetected = "fooDetected"
 # }
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Input handling: interactive vs unattended ---------------------------
 
-if ($env:RMM -ne "1") {
+# Prompt only in an interactive session. NinjaRMM (and any unattended/scheduled run)
+# is non-interactive, so it skips the prompts and uses defaults -- never blocking on Read-Host.
+if ([Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
@@ -85,7 +87,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 
 # Your script logic goes here.
 

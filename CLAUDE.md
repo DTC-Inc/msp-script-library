@@ -19,7 +19,7 @@ All scripts follow a consistent three-part structure defined in `script-template
 
 2. **Input Handling Section**
    - **All RMM-supplied variables come via environment variables** (`$env:VarName`). NinjaRMM passes script preset variables to PowerShell as environment variables, so the script must read them via `$env:` at every use site. Bare `$VarName` references resolve to `$null` in true RMM mode and silently fall through to the interactive branch.
-   - Detects execution context via `$env:RMM` — environment variables are strings, so compare against `"1"` not `1`. Anything other than `"1"` is interactive mode.
+   - **Execution mode is decided by `[Environment]::UserInteractive`, not an RMM variable.** Gate the prompt branch with `if ([Environment]::UserInteractive)`. NinjaRMM (and any unattended/scheduled run) is non-interactive, so it skips the `Read-Host` prompts and uses defaults — the script can never block or error on `Read-Host` ("Windows PowerShell is in NonInteractive mode"). Do **not** add an `$env:RMM` flag: it is redundant with the interactivity check and was a recurring source of hangs when unset.
    - Interactive mode: Prompts user with `Read-Host` for required inputs with validation loop. Write the result back to `$env:Description` so the rest of the script can keep referencing `$env:` consistently.
    - RMM mode: Uses pre-set environment variables passed by the RMM platform. Defaults for any optional variables (custom field names, state file paths, etc.) should be set at the top of the script by writing to `$env:` directly:
      ```powershell
@@ -35,7 +35,7 @@ All scripts follow a consistent three-part structure defined in `script-template
 
 3. **Script Logic Section**
    - Wrapped in `Start-Transcript` / `Stop-Transcript` for full logging
-   - Logs key variables at start (Description, LogPath, RMM mode)
+   - Logs key variables at start (Description, LogPath)
    - Contains actual automation logic
 
 ### Naming Conventions

@@ -13,7 +13,9 @@
 
 $ScriptLogName = "msft-windows-disable-core-isolation.log"
 
-if ($RMM -ne 1) {
+# Prompt only in an interactive session; unattended/RMM runs are non-interactive and
+# fall through to defaults (never blocking/erroring on Read-Host).
+if ([Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
@@ -58,7 +60,7 @@ try {
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM `n"
+Write-Host ""
 
 Write-Host "=== Windows Core Isolation Disable Script ===" -ForegroundColor Cyan
 Write-Host "This script disables Core Isolation (Memory Integrity/HVCI) to improve performance." -ForegroundColor White
