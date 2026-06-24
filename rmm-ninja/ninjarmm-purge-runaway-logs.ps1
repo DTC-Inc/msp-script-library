@@ -10,31 +10,41 @@ if ($env:PROCESSOR_ARCHITEW6432 -eq "AMD64" -and -not [Environment]::Is64BitProc
 
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $env:RMM            - "1" when executed from the RMM (string). Anything else = interactive.
-## $env:Description    - optional audit label for the transcript (default set below). Ninja
-##                       already captures operator/ticket at the platform level, so no prompt.
-## $env:ThresholdMB    - size floor in MB for a file to be considered runaway (optional, default 500)
+## $env:RMM             - "1" when executed from the RMM (string). Anything else = interactive.
+## $env:Description     - optional audit label for the transcript (default set below).
+## $env:ThresholdMB     - size floor in MB for an output file to be a runaway (optional, default 500)
+## $env:RuntimeCeilingMin - backstop: kill any NinjaRMM customscript process older than this many
+##                          minutes regardless of file size (optional, default 30)
 ##
-## Purpose: Reclaim disk consumed by runaway NinjaRMM custom-script output transcripts under
-##          the agent scripting directory. Uses the Windows Restart Manager to identify the
-##          exact process(es) holding each oversized "*-output.txt" file open, terminates them
-##          (never the NinjaRMM agent, never this run), then deletes the file.
-##          Runs silently with no required input in either mode. Fleet-safe across workstations
-##          and servers: fixed agent path, OS-level lock detection, no filename-pattern assumptions.
+## Purpose: Reclaim disk consumed by runaway NinjaRMM custom-script output transcripts under the
+##          agent scripting directory, and stop the processes producing them. A file is a runaway if:
+##            (a) it is over ThresholdMB, OR
+##            (b) it is actively growing during a short sample window while a NinjaRMM customscript
+##                process holds it open, OR
+##            (c) the holding process has run longer than RuntimeCeilingMin (backstop).
+##          Uses the Windows Restart Manager to find the exact PIDs holding each file, terminates
+##          them (never the NinjaRMM agent, never this run), then deletes the file. Fleet-safe:
+##          fixed agent path, OS-level lock detection, no filename-pattern assumptions.
 ##
-## Exit codes: 0 = completed (zero or more files cleaned, no failures)
+## Exit codes: 0 = completed (zero or more cleaned, no failures)
 ##             1 = completed with one or more files that could not be freed/deleted
 ##             2 = scripting directory not found / nothing to scan
 
 $ScriptLogName = "ninjarmm-purge-runaway-logs.log"
 
-# --- Resolve ThresholdMB from RMM env var; default 500, floor of 1 ---
+# --- Resolve optional numeric RMM env vars with defaults and floors ---
 $ThresholdMB = 500
 $parsedMB = 0
 if ($env:ThresholdMB -and [int]::TryParse($env:ThresholdMB, [ref]$parsedMB) -and $parsedMB -ge 1) {
     $ThresholdMB = $parsedMB
 }
 $thresholdBytes = [int64]$ThresholdMB * 1MB
+
+$RuntimeCeilingMin = 30
+$parsedMin = 0
+if ($env:RuntimeCeilingMin -and [int]::TryParse($env:RuntimeCeilingMin, [ref]$parsedMin) -and $parsedMin -ge 1) {
+    $RuntimeCeilingMin = $parsedMin
+}
 
 # --- Input handling: no required user input. Default Description, set log path by context. ---
 if ([string]::IsNullOrEmpty($env:Description)) {
@@ -54,10 +64,11 @@ if ($env:RMM -eq "1") {
 Start-Transcript -Path $LogPath
 
 Write-Host "============ Purge Runaway NinjaRMM Script Logs ============"
-Write-Host "Description : $env:Description"
-Write-Host "Log path    : $LogPath"
-Write-Host "RMM mode    : $env:RMM"
-Write-Host "Threshold   : $ThresholdMB MB ($thresholdBytes bytes)"
+Write-Host "Description      : $env:Description"
+Write-Host "Log path         : $LogPath"
+Write-Host "RMM mode         : $env:RMM"
+Write-Host "Threshold        : $ThresholdMB MB ($thresholdBytes bytes)"
+Write-Host "Runtime ceiling  : $RuntimeCeilingMin min (backstop)"
 Write-Host "==========================================================="
 
 # --- Restart Manager interop: ask Windows which PIDs hold a file open. Dependency-free,
@@ -114,40 +125,104 @@ public static class DtcFileLock {
 "@
 }
 
+function Get-ScriptHolder {
+    param([string]$Path, [string]$ScriptingDir)
+    $result = @()
+    try {
+        $holders = [DtcFileLock]::WhoHas($Path)
+        foreach ($hpid in $holders) {
+            $p = Get-CimInstance Win32_Process -Filter "ProcessId=$hpid" -ErrorAction SilentlyContinue
+            if ($p -and $p.CommandLine -like "*$ScriptingDir*") {
+                $result += $p
+            }
+        }
+    } catch {
+        Write-Host "      WARN: RM query failed during detection: $($_.Exception.Message)"
+    }
+    return $result
+}
+
 function Invoke-RunawayLogPurge {
-    param([int64]$ThresholdBytes)
+    param([int64]$ThresholdBytes, [int]$RuntimeCeilingMin)
 
     $scriptingDir = "C:\ProgramData\NinjaRMMAgent\scripting"
     $myPid = $PID
     $protectedNames = @('NinjaRMMAgent', 'ninjarmm-agent', 'ninjarmm-cli')
+    $growthSampleSec = 3
 
-    Write-Host "[1/4] Validating scripting directory: $scriptingDir"
+    Write-Host "[1/5] Validating scripting directory: $scriptingDir"
     if (-not (Test-Path -LiteralPath $scriptingDir)) {
         Write-Host "RESULT: scripting directory not found -> nothing to do -> EXIT 2"
         return 2
     }
 
-    Write-Host "[2/4] Scanning for *-output.txt over threshold ..."
-    $candidates = Get-ChildItem -LiteralPath $scriptingDir -Filter *output.txt -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.Length -gt $ThresholdBytes }
+    Write-Host "[2/5] First pass: snapshot all *output.txt sizes ..."
+    $first = @{}
+    Get-ChildItem -LiteralPath $scriptingDir -Filter *output.txt -File -ErrorAction SilentlyContinue |
+        ForEach-Object { $first[$_.FullName] = $_.Length }
 
-    if (-not $candidates) {
-        Write-Host "RESULT: no files over $([math]::Round($ThresholdBytes/1MB)) MB -> nothing to clean -> EXIT 0"
+    if ($first.Count -eq 0) {
+        Write-Host "RESULT: no output files present -> nothing to clean -> EXIT 0"
         return 0
     }
 
-    Write-Host "      Found $($candidates.Count) candidate file(s):"
-    $candidates | ForEach-Object { Write-Host "        $($_.Name)  [$([math]::Round($_.Length/1GB,2)) GB]" }
+    Write-Host "[3/5] Sampling growth over $growthSampleSec sec ..."
+    Start-Sleep -Seconds $growthSampleSec
+    $now = Get-Date
+
+    $targets = @()
+    foreach ($path in $first.Keys) {
+        $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+        if (-not $item) { continue }
+        $sizeNow = $item.Length
+        $sizeWas = $first[$path]
+        $reason  = $null
+
+        if ($sizeNow -gt $ThresholdBytes) {
+            $reason = "over threshold ($([math]::Round($sizeNow/1GB,2)) GB)"
+        }
+        elseif ($sizeNow -gt $sizeWas) {
+            $scriptHolders = Get-ScriptHolder -Path $path -ScriptingDir $scriptingDir
+            if ($scriptHolders.Count -gt 0) {
+                $reason = "actively growing (+$([math]::Round(($sizeNow-$sizeWas)/1KB,1)) KB in ${growthSampleSec}s) and held by a script process"
+            }
+        }
+
+        if (-not $reason) {
+            $scriptHolders = Get-ScriptHolder -Path $path -ScriptingDir $scriptingDir
+            foreach ($p in $scriptHolders) {
+                $started = $null
+                if ($p.CreationDate) {
+                    try { $started = [Management.ManagementDateTimeConverter]::ToDateTime($p.CreationDate) } catch { $started = $null }
+                }
+                if ($started -and ($now - $started).TotalMinutes -gt $RuntimeCeilingMin) {
+                    $reason = "backstop: holder PID $($p.ProcessId) running $([math]::Round(($now-$started).TotalMinutes)) min (> $RuntimeCeilingMin)"
+                    break
+                }
+            }
+        }
+
+        if ($reason) {
+            $targets += [pscustomobject]@{ Path = $path; Reason = $reason }
+        }
+    }
+
+    if ($targets.Count -eq 0) {
+        Write-Host "RESULT: no runaways (none over threshold, growing, or past runtime ceiling) -> EXIT 0"
+        return 0
+    }
+
+    Write-Host "[4/5] Identified $($targets.Count) runaway file(s):"
+    $targets | ForEach-Object { Write-Host "        $([System.IO.Path]::GetFileName($_.Path)) -- $($_.Reason)" }
 
     $failures = 0
-    foreach ($f in $candidates) {
-        Write-Host "[3/4] Processing $($f.Name) [$([math]::Round($f.Length/1GB,2)) GB]"
+    foreach ($t in $targets) {
+        $path = $t.Path
+        Write-Host "[5/5] Processing $([System.IO.Path]::GetFileName($path)) -- $($t.Reason)"
 
-        # Ask Windows directly which PIDs hold this file open.
         $holders = @()
-        try { $holders = [DtcFileLock]::WhoHas($f.FullName) } catch {
-            Write-Host "      WARN: Restart Manager query failed: $($_.Exception.Message)"
-        }
+        try { $holders = [DtcFileLock]::WhoHas($path) }
+        catch { Write-Host "      WARN: Restart Manager query failed: $($_.Exception.Message)" }
 
         if ($holders.Count -gt 0) {
             Write-Host "      Lock holders (PIDs): $($holders -join ', ')"
@@ -159,7 +234,7 @@ function Invoke-RunawayLogPurge {
                 $proc = Get-Process -Id $hpid -ErrorAction SilentlyContinue
                 if (-not $proc) { continue }
                 if ($protectedNames -contains $proc.Name) {
-                    Write-Host "      PROTECTED: PID $hpid is '$($proc.Name)' (NinjaRMM agent) - will NOT kill. File held by agent; stop the source automation in NinjaOne, then re-run."
+                    Write-Host "      PROTECTED: PID $hpid is '$($proc.Name)' (NinjaRMM agent) - will NOT kill."
                     continue
                 }
                 Write-Host "      Killing PID $hpid ($($proc.Name))"
@@ -167,15 +242,13 @@ function Invoke-RunawayLogPurge {
                 catch { Write-Host "      WARN: could not kill PID ${hpid}: $($_.Exception.Message)" }
             }
         } else {
-            Write-Host "      No lock holders reported (file may be unlocked, or held by a protected/system handle)."
+            Write-Host "      No lock holders reported."
         }
 
-        # Delete with brief retry: handle release after a kill is not always instantaneous.
-        Write-Host "[4/4] Deleting $($f.FullName)"
         $deleted = $false
         for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
-                Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+                Remove-Item -LiteralPath $path -Force -ErrorAction Stop
                 $deleted = $true
                 Write-Host "      Deleted on attempt $attempt."
                 break
@@ -194,11 +267,11 @@ function Invoke-RunawayLogPurge {
         Write-Host "RESULT: completed with $failures file(s) not freed -> EXIT 1"
         return 1
     }
-    Write-Host "RESULT: all candidates cleaned -> EXIT 0"
+    Write-Host "RESULT: all runaways cleaned -> EXIT 0"
     return 0
 }
 
-$exitCode = Invoke-RunawayLogPurge -ThresholdBytes $thresholdBytes
+$exitCode = Invoke-RunawayLogPurge -ThresholdBytes $thresholdBytes -RuntimeCeilingMin $RuntimeCeilingMin
 
 Write-Host "Final exit code: $exitCode"
 Stop-Transcript
