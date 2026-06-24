@@ -17,14 +17,12 @@ if ($env:PROCESSOR_ARCHITEW6432 -eq "AMD64" -and -not [Environment]::Is64BitProc
 ##                          minutes regardless of file size (optional, default 30)
 ##
 ## Purpose: Reclaim disk consumed by runaway NinjaRMM custom-script output transcripts under the
-##          agent scripting directory, and stop the processes producing them. A file is a runaway if:
-##            (a) it is over ThresholdMB, OR
-##            (b) it is actively growing during a short sample window while a NinjaRMM customscript
-##                process holds it open, OR
-##            (c) the holding process has run longer than RuntimeCeilingMin (backstop).
+##          agent scripting directory, and stop the processes producing them. A file is a runaway if
+##          it is over ThresholdMB, OR actively growing while a NinjaRMM customscript process holds
+##          it open, OR the holding process has run longer than RuntimeCeilingMin (backstop).
+##          Excludes this run's own output file so the tool never false-flags what it is writing.
 ##          Uses the Windows Restart Manager to find the exact PIDs holding each file, terminates
-##          them (never the NinjaRMM agent, never this run), then deletes the file. Fleet-safe:
-##          fixed agent path, OS-level lock detection, no filename-pattern assumptions.
+##          them (never the NinjaRMM agent, never this run), then deletes the file.
 ##
 ## Exit codes: 0 = completed (zero or more cleaned, no failures)
 ##             1 = completed with one or more files that could not be freed/deleted
@@ -32,7 +30,6 @@ if ($env:PROCESSOR_ARCHITEW6432 -eq "AMD64" -and -not [Environment]::Is64BitProc
 
 $ScriptLogName = "ninjarmm-purge-runaway-logs.log"
 
-# --- Resolve optional numeric RMM env vars with defaults and floors ---
 $ThresholdMB = 500
 $parsedMB = 0
 if ($env:ThresholdMB -and [int]::TryParse($env:ThresholdMB, [ref]$parsedMB) -and $parsedMB -ge 1) {
@@ -46,7 +43,6 @@ if ($env:RuntimeCeilingMin -and [int]::TryParse($env:RuntimeCeilingMin, [ref]$pa
     $RuntimeCeilingMin = $parsedMin
 }
 
-# --- Input handling: no required user input. Default Description, set log path by context. ---
 if ([string]::IsNullOrEmpty($env:Description)) {
     $env:Description = "Automated runaway-log purge"
 }
@@ -71,8 +67,6 @@ Write-Host "Threshold        : $ThresholdMB MB ($thresholdBytes bytes)"
 Write-Host "Runtime ceiling  : $RuntimeCeilingMin min (backstop)"
 Write-Host "==========================================================="
 
-# --- Restart Manager interop: ask Windows which PIDs hold a file open. Dependency-free,
-#     works on every Windows version (rstrtmgr.dll, XP+). Added once per session. ---
 if (-not ([System.Management.Automation.PSTypeName]'DtcFileLock').Type) {
     Add-Type -ErrorAction Stop -TypeDefinition @"
 using System;
@@ -156,13 +150,36 @@ function Invoke-RunawayLogPurge {
         return 2
     }
 
+    $ownPids = @($myPid)
+    try {
+        $parent = (Get-CimInstance Win32_Process -Filter "ProcessId=$myPid" -ErrorAction SilentlyContinue).ParentProcessId
+        if ($parent) { $ownPids += [int]$parent }
+    } catch {
+        Write-Host "      WARN: could not resolve parent PID: $($_.Exception.Message)"
+    }
+
+    $selfFiles = @()
+    Get-ChildItem -LiteralPath $scriptingDir -Filter *output.txt -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $fp = $_.FullName
+        try {
+            $h = [DtcFileLock]::WhoHas($fp)
+            if ($h | Where-Object { $ownPids -contains $_ }) { $selfFiles += $fp }
+        } catch {
+            Write-Host "      WARN: self-file check failed on $fp : $($_.Exception.Message)"
+        }
+    }
+    if ($selfFiles.Count -gt 0) {
+        Write-Host "      Excluding this run's own output file(s): $($selfFiles -join ', ')"
+    }
+
     Write-Host "[2/5] First pass: snapshot all *output.txt sizes ..."
     $first = @{}
     Get-ChildItem -LiteralPath $scriptingDir -Filter *output.txt -File -ErrorAction SilentlyContinue |
+        Where-Object { $selfFiles -notcontains $_.FullName } |
         ForEach-Object { $first[$_.FullName] = $_.Length }
 
     if ($first.Count -eq 0) {
-        Write-Host "RESULT: no output files present -> nothing to clean -> EXIT 0"
+        Write-Host "RESULT: no eligible output files present -> nothing to clean -> EXIT 0"
         return 0
     }
 
@@ -227,8 +244,8 @@ function Invoke-RunawayLogPurge {
         if ($holders.Count -gt 0) {
             Write-Host "      Lock holders (PIDs): $($holders -join ', ')"
             foreach ($hpid in $holders) {
-                if ($hpid -eq $myPid -or $hpid -le 4) {
-                    Write-Host "      Skipping PID $hpid (self or system)"
+                if ($ownPids -contains $hpid -or $hpid -le 4) {
+                    Write-Host "      Skipping PID $hpid (self/parent or system)"
                     continue
                 }
                 $proc = Get-Process -Id $hpid -ErrorAction SilentlyContinue
