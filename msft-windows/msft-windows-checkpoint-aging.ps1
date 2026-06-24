@@ -9,10 +9,11 @@
 # Standard DTC three-part structure: 1) RMM variable declaration, 2) input handling, 3) script logic.
 
 $ScriptLogName = "windows-hyper-v-checkpoint-aging.log"
+$DefaultDaysAging = 7
 
 # --- Default optional RMM environment variables --------------------------
 if ([string]::IsNullOrEmpty($env:DaysAging)) {
-    $env:DaysAging = "7"
+    $env:DaysAging = "$DefaultDaysAging"
 }
 
 # --- Input handling: RMM vs interactive ----------------------------------
@@ -54,10 +55,16 @@ if (-not (Test-Path -Path $logDir)) {
     New-Item -Path $logDir -ItemType Directory -Force | Out-Null
 }
 
-# Normalize DaysAging to a negative integer so AddDays() walks backwards from now.
-$daysAgingInt = $env:DaysAging -as [int]
-if ($null -eq $daysAgingInt) { $daysAgingInt = 7 }
-$daysAgingInt = -[math]::Abs($daysAgingInt)
+# Normalize DaysAging to a positive whole number, then negate so AddDays() walks backwards from now.
+# A non-numeric or non-positive value (e.g. "abc", "0", "-0") is meaningless for "older than N days",
+# so fall back to the default rather than silently flagging every checkpoint.
+$parsedDays = $env:DaysAging -as [int]
+if ($null -eq $parsedDays -or [math]::Abs($parsedDays) -lt 1) {
+    Write-Host "WARNING: DaysAging value '$env:DaysAging' is not a valid positive number; defaulting to $DefaultDaysAging day(s)."
+    $parsedDays = $DefaultDaysAging
+}
+$daysAging = [math]::Abs($parsedDays)
+$daysAgingNegative = -$daysAging
 
 # --- Script logic --------------------------------------------------------
 
@@ -66,7 +73,7 @@ Start-Transcript -Path $LogPath
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
 Write-Host "RMM: $env:RMM"
-Write-Host "Days Aging: $daysAgingInt"
+Write-Host "Days Aging threshold: $daysAging day(s)"
 
 # Detect Hyper-V WITHOUT the ServerManager module / Get-WindowsFeature.
 #
@@ -88,7 +95,7 @@ if (-not (Get-Command -Name "Get-VM" -ErrorAction SilentlyContinue)) {
     Exit 0
 }
 
-$cutoff = (Get-Date).AddDays($daysAgingInt)
+$cutoff = (Get-Date).AddDays($daysAgingNegative)
 
 # Enumerate checkpoints. If this throws (e.g. insufficient privilege, WMI/vmms fault) we must
 # NOT fall through and report "no aging checkpoints" -- that would be a false all-clear that
@@ -103,12 +110,12 @@ try {
 
 if ($AgingCheckpoints) {
     $AgingCheckpoints | ForEach-Object {
-        Write-Host "Checkpoint '$($_.Name)' on VM '$($_.VMName)' is older than $([math]::Abs($daysAgingInt)) day(s). Created on $($_.CreationTime). Please delete this checkpoint."
+        Write-Host "Checkpoint '$($_.Name)' on VM '$($_.VMName)' is older than $daysAging day(s). Created on $($_.CreationTime). Please delete this checkpoint."
     }
     Stop-Transcript
     Exit 1
 } else {
-    Write-Host "There are no checkpoints older than $([math]::Abs($daysAgingInt)) day(s) that need to be deleted."
+    Write-Host "There are no checkpoints older than $daysAging day(s) that need to be deleted."
     Stop-Transcript
     Exit 0
 }

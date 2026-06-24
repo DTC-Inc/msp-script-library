@@ -99,27 +99,43 @@ if (-not $vmList) {
     Exit 0
 }
 
+$deletedCount = 0
 $failureCount = 0
 foreach ($vm in $vmList) {
-    $checkpointList = Get-VMSnapshot -VMName $vm.Name
+    # Enumerate this VM's checkpoints. A failure here (e.g. WMI/vmms fault) must not abort the
+    # whole run -- record it and move on to the next VM.
+    try {
+        $checkpointList = Get-VMSnapshot -VMName $vm.Name -ErrorAction Stop
+    } catch {
+        Write-Host "Error reading checkpoints for VM '$($vm.Name)': $_" -ForegroundColor Red
+        $failureCount++
+        continue
+    }
+
     if (-not $checkpointList) {
         Write-Host "No checkpoints found for VM '$($vm.Name)'." -ForegroundColor Yellow
-    } else {
-        foreach ($checkpoint in $checkpointList) {
-            try {
-                Write-Host "Deleting checkpoint '$($checkpoint.Name)' for VM '$($vm.Name)'."
-                # Remove only THIS checkpoint. An earlier version piped $vmList into
-                # Remove-VMSnapshot, which removed every snapshot on every VM each iteration.
-                $checkpoint | Remove-VMSnapshot
-            } catch {
-                Write-Host "Error deleting checkpoint '$($checkpoint.Name)' for VM '$($vm.Name)': $_" -ForegroundColor Red
-                $failureCount++
-                # Keep going so one failure does not abort the rest of the cleanup.
-                continue
-            }
+        continue
+    }
+
+    foreach ($checkpoint in $checkpointList) {
+        try {
+            Write-Host "Deleting checkpoint '$($checkpoint.Name)' for VM '$($vm.Name)'."
+            # Remove only THIS checkpoint. An earlier version piped $vmList into
+            # Remove-VMSnapshot, which removed every snapshot on every VM each iteration.
+            # -Confirm:$false guarantees no prompt under any $ConfirmPreference (RMM runs non-interactive).
+            $checkpoint | Remove-VMSnapshot -Confirm:$false -ErrorAction Stop
+            $deletedCount++
+        } catch {
+            Write-Host "Error deleting checkpoint '$($checkpoint.Name)' for VM '$($vm.Name)': $_" -ForegroundColor Red
+            $failureCount++
+            # Keep going so one failure does not abort the rest of the cleanup.
+            continue
         }
     }
 }
+
+Write-Host "Summary: $deletedCount checkpoint(s) deleted, $failureCount failure(s)."
+Write-Host "Note: deleting a checkpoint triggers an AVHDX merge that completes asynchronously after this script exits."
 
 if ($failureCount -gt 0) {
     Write-Host "Completed with $failureCount checkpoint deletion failure(s). See log for details." -ForegroundColor Red
