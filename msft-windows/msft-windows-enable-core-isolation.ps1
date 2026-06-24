@@ -1,39 +1,43 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $Description
+## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
+## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## $env:Description   - Ticket # or initials for audit trail
+## $env:RMMScriptPath - Optional log directory base provided by the RMM
 
 # This script re-enables Core Isolation (Memory Integrity / HVCI)
 # Use this to reverse the effects of msft-windows-disable-core-isolation.ps1
 # Note: On some older machines, disabling Core Isolation can cause screen flickering - this script fixes that.
 
-# Getting input from user if not running from RMM else set variables from RMM.
+# Standard DTC three-part structure: 1) RMM variable declaration, 2) input handling, 3) script logic.
 
 $ScriptLogName = "msft-windows-enable-core-isolation.log"
 
-if ($RMM -ne 1) {
+# --- Input handling: RMM vs interactive ----------------------------------
+
+if ($env:RMM -ne "1") {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
+        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
+        if ($env:Description) {
             $ValidInput = 1
         } else {
             Write-Host "Invalid input. Please try again."
         }
     }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+    # RMM mode: store logs under $env:RMMScriptPath if the RMM provided one,
+    # otherwise fall back to the standard Windows logs directory.
+    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
     } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
     }
 
-    if ($null -eq $Description) {
+    if ([string]::IsNullOrEmpty($env:Description)) {
         Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "Windows Core Isolation Enable"
+        $env:Description = "Windows Core Isolation Enable"
     }
 }
 
@@ -53,9 +57,9 @@ try {
     Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
 }
 
-Write-Host "Description: $Description"
+Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM `n"
+Write-Host "RMM: $env:RMM `n"
 
 Write-Host "=== Windows Core Isolation Enable Script ===" -ForegroundColor Cyan
 Write-Host "This script re-enables Core Isolation (Memory Integrity/HVCI)." -ForegroundColor White
@@ -240,3 +244,4 @@ try {
 }
 
 if ($TranscriptStarted) { Stop-Transcript }
+exit 0
