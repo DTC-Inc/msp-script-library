@@ -18,7 +18,11 @@ if ([string]::IsNullOrEmpty($env:DaysAging)) {
 
 # --- Input handling: RMM vs interactive ----------------------------------
 
-if ($env:RMM -ne "1") {
+# Only prompt when the session is genuinely interactive. NinjaRMM runs scripts
+# non-interactively ([Environment]::UserInteractive is $false), so even if the RMM
+# preset variable is missing or renamed, we fall through to RMM mode with defaults
+# instead of blocking forever on Read-Host (which manifests as a hung RMM job).
+if ($env:RMM -ne "1" -and [Environment]::UserInteractive) {
     $ValidInput = 0
     # Checking for valid input.
     while ($ValidInput -ne 1) {
