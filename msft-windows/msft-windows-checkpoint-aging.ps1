@@ -68,7 +68,16 @@ $daysAgingNegative = -$daysAging
 
 # --- Script logic --------------------------------------------------------
 
-Start-Transcript -Path $LogPath
+# Start-Transcript fails in some hosts (e.g. the NinjaRMM scripting host throws
+# "Transcription cannot be started"). Guard it so the script still runs and its
+# Write-Host output still reaches the RMM console; only the transcript file is lost.
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop
+    $TranscriptStarted = $true
+} catch {
+    Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
+}
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
@@ -85,13 +94,13 @@ Write-Host "Days Aging threshold: $daysAging day(s)"
 # only when the Hyper-V platform is installed, and both are bitness-safe on client + server.
 if (-not (Get-Service -Name "vmms" -ErrorAction SilentlyContinue)) {
     Write-Host "Hyper-V is not installed on this machine (vmms service not found)."
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }
 
 if (-not (Get-Command -Name "Get-VM" -ErrorAction SilentlyContinue)) {
     Write-Host "Hyper-V platform is present but the Hyper-V PowerShell module is not installed; cannot enumerate checkpoints."
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }
 
@@ -104,7 +113,7 @@ try {
     $AgingCheckpoints = Get-VM -ErrorAction Stop | Get-VMSnapshot -ErrorAction Stop | Where-Object { $_.CreationTime -lt $cutoff }
 } catch {
     Write-Host "ERROR: Failed to enumerate Hyper-V VMs/checkpoints: $_"
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 2
 }
 
@@ -112,10 +121,10 @@ if ($AgingCheckpoints) {
     $AgingCheckpoints | ForEach-Object {
         Write-Host "Checkpoint '$($_.Name)' on VM '$($_.VMName)' is older than $daysAging day(s). Created on $($_.CreationTime). Please delete this checkpoint."
     }
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 1
 } else {
     Write-Host "There are no checkpoints older than $daysAging day(s) that need to be deleted."
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }

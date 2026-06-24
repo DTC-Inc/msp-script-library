@@ -58,7 +58,16 @@ if (-not (Test-Path -Path $logDir)) {
 
 # --- Script logic --------------------------------------------------------
 
-Start-Transcript -Path $LogPath
+# Start-Transcript fails in some hosts (e.g. the NinjaRMM scripting host throws
+# "Transcription cannot be started"). Guard it so the script still runs and its
+# Write-Host output still reaches the RMM console; only the transcript file is lost.
+$TranscriptStarted = $false
+try {
+    Start-Transcript -Path $LogPath -ErrorAction Stop
+    $TranscriptStarted = $true
+} catch {
+    Write-Host "Warning: Could not start transcript logging to $LogPath - $($_.Exception.Message)"
+}
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
@@ -74,13 +83,13 @@ Write-Host "RMM: $env:RMM"
 # only when the Hyper-V platform is installed, and both are bitness-safe on client + server.
 if (-not (Get-Service -Name "vmms" -ErrorAction SilentlyContinue)) {
     Write-Host "Hyper-V is not installed on this machine (vmms service not found)."
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }
 
 if (-not (Get-Command -Name "Get-VM" -ErrorAction SilentlyContinue)) {
     Write-Host "Hyper-V platform is present but the Hyper-V PowerShell module is not installed; cannot manage checkpoints."
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }
 
@@ -89,13 +98,13 @@ try {
     $vmList = Get-VM -ErrorAction Stop
 } catch {
     Write-Host "ERROR: Failed to enumerate Hyper-V VMs: $_" -ForegroundColor Red
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 2
 }
 
 if (-not $vmList) {
     Write-Host "No virtual machines found on this host." -ForegroundColor Yellow
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 0
 }
 
@@ -139,10 +148,10 @@ Write-Host "Note: deleting a checkpoint triggers an AVHDX merge that completes a
 
 if ($failureCount -gt 0) {
     Write-Host "Completed with $failureCount checkpoint deletion failure(s). See log for details." -ForegroundColor Red
-    Stop-Transcript
+    if ($TranscriptStarted) { Stop-Transcript }
     Exit 1
 }
 
 Write-Host "All checkpoints processed successfully."
-Stop-Transcript
+if ($TranscriptStarted) { Stop-Transcript }
 Exit 0
