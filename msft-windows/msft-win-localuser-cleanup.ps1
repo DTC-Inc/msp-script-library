@@ -2,7 +2,7 @@
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
 
 # This script disables and removes any pre-staging administrative users from a windows endpoint with a specified age of inactivity in days.
-# It also disables any local admin after a specified time period in days. It does not remove other local admins.
+# It also disables any local admin after a specified time period in days, and deletes them after 180 days of inactivity.
 
 # $InstallationUsers needs filled out with comma seperated usernames used from pre-staging/staging. They need removed
 # sooner rather than later
@@ -29,8 +29,8 @@ if ($RMM -ne 1) {
         $ExcludedUsers = Read-Host "Please enter the users you wish to exclude from cleanup."
         $InactivityDays = Read-Host "Please enter the amount of days a user needs to be inactive to be disabled"
         $AdminInactivityDays = Read-Host "PLease enter the amount days all admins must be inative before disabling"
-        Write-Host "Please note, Installation Users will be deleted after $InactivityDays"
-        Write-Host "Please note, all other Administrator Users will be deleted after $AdminInactivityDays"
+        Write-Host "Please note, Installation Users will be deleted after $InactivityDays days"
+        Write-Host "Please note, Local Administrator Users will be disabled after $AdminInactivityDays days and deleted after 180 days"
 
         $ValidInput = 1
         
@@ -93,6 +93,9 @@ $AdminCutoffDate = (Get-Date).AddDays(-$AdminInactivityDays)
 
 # Calculate the deletion threshold (inactivity time * 2 for regular users)
 $DeletionThresholdDate = (Get-Date).AddDays(-($InactivityDays * 2))
+
+# Calculate the deletion threshold for administrators (180 days)
+$AdminDeletionThresholdDate = (Get-Date).AddDays(-180)
 
 # Get all members of the Administrators group
 try {
@@ -170,13 +173,25 @@ foreach ($UserName in $AllUsersToCheck) {
             # Process local administrators (not in InstallationUsers)
             Write-Output "The user '$UserName' is a local administrator."
 
-            # Check if the local administrator is inactive for 90 days
+            # Check if the local administrator is inactive for AdminInactivityDays
             if ($LastLogon -eq $null -or $LastLogon -lt $AdminCutoffDate) {
-                Write-Output "The local administrator '$UserName' has been inactive for 90+ days. Disabling the account..."
-                Disable-LocalUser -Name $UserName
-                Write-Output "The account '$UserName' has been disabled (Administrators are never deleted)."
+                # Disable inactive administrator
+                if (-not $User.Enabled) {
+                    Write-Output "The local administrator '$UserName' is already disabled."
+                } else {
+                    Write-Output "The local administrator '$UserName' has been inactive for $AdminInactivityDays+ days. Disabling the account..."
+                    Disable-LocalUser -Name $UserName
+                    Write-Output "The account '$UserName' has been disabled."
+                }
+
+                # Delete the administrator account if disabled and inactive for 180 days
+                if ($User.Enabled -eq $false -and ($LastLogon -eq $null -or $LastLogon -lt $AdminDeletionThresholdDate)) {
+                    Write-Output "The local administrator '$UserName' has been inactive for 180+ days. Deleting the account..."
+                    Remove-LocalUser -Name $UserName
+                    Write-Output "The account '$UserName' has been deleted."
+                }
             } else {
-                Write-Output "The local administrator '$UserName' has been active within the last 90 days. No action taken."
+                Write-Output "The local administrator '$UserName' has been active within the last $AdminInactivityDays days. No action taken."
             }
         } else {
             Write-Output "Skipping non-administrator user '$UserName' as it's not in the InstallationUsers list."
