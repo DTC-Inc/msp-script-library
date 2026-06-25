@@ -2,51 +2,32 @@
 ## RMM VARIABLE DECLARATION SECTION
 ## ============================================================================================
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ##
-## $RMM = 1
-## $mysqlRootPassword
+## $mysqlRootPassword / $env:mysqlRootPassword - REQUIRED. MySQL root account password
+## $RMMScriptPath     / $env:RMMScriptPath     - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-mysqlRootPassword ...) or from an RMM that supplies values as env variables.
+    [string]$mysqlRootPassword = $env:mysqlRootPassword,
+    [string]$RMMScriptPath     = $env:RMMScriptPath
+)
 
 ## ============================================================================================
 ## INPUT HANDLING SECTION
 ## ============================================================================================
 
-# Detect RMM execution context
-if ($RMM -eq 1) {
-    # RMM Mode - Variables should be pre-defined by RMM platform
-    $LogPath = if ($RMMScriptPath) { "$RMMScriptPath\logs\" } else { "$ENV:WINDIR\logs\" }
-    $Description = "MySQL All Databases Backup - RMM Execution"
+$Description = "MySQL All Databases Backup"
 
-    # Validate required RMM variables
-    if (-not $mysqlRootPassword) {
-        Write-Error "Required variable `$mysqlRootPassword not set by RMM"
-        exit 1
-    }
+# Validate required input. Must come from -Parameter or $env: -- there is no prompt.
+if (-not $mysqlRootPassword) {
+    Write-Error "Required variable `$mysqlRootPassword not set"
+    exit 1
 }
-else {
-    # Interactive Mode - Prompt user for inputs
-    $LogPath = "$ENV:WINDIR\logs\"
 
-    Write-Host "`n=== MySQL All Databases Backup Utility ===" -ForegroundColor Cyan
-    Write-Host "This script will backup ALL MySQL databases and maintain 7 days of retention.`n" -ForegroundColor Yellow
-
-    # Get MySQL root password
-    $ValidInput = $false
-    while (-not $ValidInput) {
-        $securePassword = Read-Host "Enter MySQL root password" -AsSecureString
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
-        $mysqlRootPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
-
-        if ($mysqlRootPassword) {
-            $ValidInput = $true
-        }
-        else {
-            Write-Host "Password cannot be empty. Please try again." -ForegroundColor Red
-        }
-    }
-
-    $Description = "MySQL All Databases Backup - Interactive Execution"
-}
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+$LogPath = if ($RMMScriptPath) { "$RMMScriptPath\logs\" } else { "$ENV:WINDIR\logs\" }
 
 # Ensure log directory exists
 if (-not (Test-Path -Path $LogPath)) {
@@ -64,7 +45,6 @@ Start-Transcript -Path "$LogPath\$ScriptLogName" -Append
 Write-Host "`n=== MySQL All Databases Backup Script ===" -ForegroundColor Cyan
 Write-Host "Description: $Description"
 Write-Host "Log Path: $LogPath"
-Write-Host "RMM Mode: $($RMM -eq 1)"
 Write-Host "Target: All databases on localhost"
 Write-Host "================================`n" -ForegroundColor Cyan
 

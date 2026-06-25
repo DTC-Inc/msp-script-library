@@ -11,64 +11,57 @@
 ## their way" -- not "logging is enforced." Audit/retention/ACL of the log
 ## destination is handled outside this script.
 ##
-## $env:RMM            - "1" to skip the interactive Read-Host prompt
-## $env:Description    - Ticket # / initials for the transcript audit trail
-## $env:RMMScriptPath  - Optional transcript root. Falls back to LOCALAPPDATA\dtc-logs
-## $env:EngineerName   - Folder under $LogRoot. Default: $env:USERNAME
-## $env:LogRoot        - Base path. Default: "G:\Shared drives\Engineer Session Logs"
-## $env:LogFilePattern - PuTTY filename template. Default: "&h-&Y&M&D-&T.log"
-## $env:LogType        - 0=none 1=printable 2=all 3=SSH-pkt 4=SSH-pkt+raw. Default: 1
-##                       (1 = printable; safer than 2 because raw input bytes that
-##                       can include pasted credentials are not written to disk)
-## $env:LogFileClash   - 0=overwrite, 1=append, -1=ask. Default: 1
+## $Description    / $env:Description    - Ticket # / initials for the transcript audit trail
+## $RMMScriptPath  / $env:RMMScriptPath  - Optional transcript root. Falls back to LOCALAPPDATA\dtc-logs
+## $EngineerName   / $env:EngineerName   - Folder under $LogRoot. Default: $env:USERNAME
+## $LogRoot        / $env:LogRoot        - Base path. Default: "G:\Shared drives\Engineer Session Logs"
+## $LogFilePattern / $env:LogFilePattern - PuTTY filename template. Default: "&h-&Y&M&D-&T.log"
+## $LogType        / $env:LogType        - 0=none 1=printable 2=all 3=SSH-pkt 4=SSH-pkt+raw. Default: 1
+##                                         (1 = printable; safer than 2 because raw input bytes that
+##                                         can include pasted credentials are not written to disk)
+## $LogFileClash   / $env:LogFileClash   - 0=overwrite, 1=append, -1=ask. Default: 1
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    # There is no Read-Host and no $env:RMM flag: the script is non-interactive by design.
+    [string]$Description    = $env:Description,
+    [string]$RMMScriptPath  = $env:RMMScriptPath,
+    [string]$EngineerName   = $env:EngineerName,
+    [string]$LogRoot        = $env:LogRoot,
+    [string]$LogFilePattern = $env:LogFilePattern,
+    [string]$LogType        = $env:LogType,
+    [string]$LogFileClash   = $env:LogFileClash
+)
 
 $ScriptLogName = "putty-configure-logging.log"
 
-# Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
-# When -NonInteractive is on the command line, Read-Host throws and would kill the
-# script, so treat that as RMM mode even if $env:RMM was not explicitly passed.
-try {
-    $cmdLineArgs = [Environment]::GetCommandLineArgs()
-    if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
-        if ($env:RMM -ne "1") {
-            Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
-            $env:RMM = "1"
-        }
-    }
-} catch {
-    # If detection itself fails, leave $env:RMM as-is and proceed.
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the resolution block below can
+# reference either the param or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))    { $env:Description    = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath))  { $env:RMMScriptPath  = $RMMScriptPath }
+if (-not [string]::IsNullOrEmpty($EngineerName))   { $env:EngineerName   = $EngineerName }
+if (-not [string]::IsNullOrEmpty($LogRoot))        { $env:LogRoot        = $LogRoot }
+if (-not [string]::IsNullOrEmpty($LogFilePattern)) { $env:LogFilePattern = $LogFilePattern }
+if (-not [string]::IsNullOrEmpty($LogType))        { $env:LogType        = $LogType }
+if (-not [string]::IsNullOrEmpty($LogFileClash))   { $env:LogFileClash   = $LogFileClash }
+
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrWhiteSpace($env:Description)) {
+    Write-Host "Description is empty/null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+} else {
+    $Description = $env:Description
 }
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    # User-context script: write logs to LOCALAPPDATA so non-admin users can run it.
-    $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'dtc-logs') $ScriptLogName
-
+# User-context script: prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise
+# fall back to LOCALAPPDATA so the user-context script can write its transcript without admin.
+if ($env:RMMScriptPath) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back
-    # to LOCALAPPDATA so the user-context script can write its transcript without admin.
-    if ($env:RMMScriptPath) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'dtc-logs') $ScriptLogName
-    }
-
-    if ([string]::IsNullOrWhiteSpace($env:Description)) {
-        Write-Host "Description is empty/null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    } else {
-        $Description = $env:Description
-    }
+    $LogPath = Join-Path (Join-Path $env:LOCALAPPDATA 'dtc-logs') $ScriptLogName
 }
 
 # Resolve effective values from env vars with sane defaults.
@@ -82,7 +75,6 @@ $LogFileClash   = if ([string]::IsNullOrWhiteSpace($env:LogFileClash))   { 1 }  
 # fails (no log dir, locked file, etc.) the RMM still captures something useful.
 Write-Host "putty-configure-logging.ps1 starting"
 Write-Host "Description    : $Description"
-Write-Host "RMM            : $env:RMM"
 Write-Host "Computer       : $env:COMPUTERNAME"
 Write-Host "User context   : $env:USERNAME"
 Write-Host "PowerShell     : $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"

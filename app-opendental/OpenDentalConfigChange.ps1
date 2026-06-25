@@ -1,46 +1,44 @@
-﻿# Getting input from user if not running from RMM else set variables from RMM.
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $description    / $env:description    - Ticket # and/or initials, used as the job description
+## $rmmScriptPath  / $env:rmmScriptPath  - Optional log directory base provided by the RMM
+## $middleTierURI  / $env:middleTierURI  - Middle Tier URI; if set, configures a Middle Tier connection
+## $serverFQDN     / $env:serverFQDN     - Database server FQDN for a direct database connection
+## $passwordHash   / $env:passwordHash   - MySQL password hash for the direct database connection
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-description ...) or from an RMM that supplies values as env variables.
+    [string]$description   = $env:description,
+    [string]$rmmScriptPath = $env:rmmScriptPath,
+    [string]$middleTierURI = $env:middleTierURI,
+    [string]$serverFQDN    = $env:serverFQDN,
+    [string]$passwordHash  = $env:passwordHash
+)
 
 $scriptLogName = "opendental-server-change.log"
 
-if ($rmm -ne 1) {
-    $validInput = 0
-    # Checking for valid input.
-    while ($validInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make validInput = 1 whenever correct input is given.
-        $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
-        if ($description) {
-            $validInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Default the audit-trail description if it was not supplied (e.g. an automated RMM run).
+if (-not $description) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $description = "No description"
+}
+
+# Store the logs in the rmmScriptPath when provided, else the Windows logs directory.
+if ($rmmScriptPath -ne $null) {
+    $logPath = "$rmmScriptPath\logs\$scriptLogName"
+
+} else {
     $logPath = "$env:WINDIR\logs\$scriptLogName"
 
-} else { 
-    # Store the logs in the rmmScriptPath
-    if ($rmmScriptPath -ne $null) {
-        $logPath = "$rmmScriptPath\logs\$scriptLogName"
-        
-    } else {
-        $logPath = "$env:WINDIR\logs\$scriptLogName"
-        
-    }
-
-    if ($description -eq $null) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $description = "No description"
-    }   
-
-
-    
 }
 
 Start-Transcript -Path $logPath
 
 Write-Host "Description: $description"
 Write-Host "Log path: $logPath"
-Write-Host "RMM: $rmm"
 
 # Define the path to the configuration file
 $configFilePath = "C:\Program Files (x86)\Open Dental\FreeDentalConfig.xml"
@@ -63,7 +61,7 @@ if ($middleTierURI) {
     $root.DatabaseType = "MySQL"
     $root.UseDynamicMode = "False"
     # $root.RemoveChild(DatabaseConnection)
-    
+
 } else {
     # Modify the fields under <ConnectionSettings>
     $configXml.ConnectionSettings.DatabaseConnection.ComputerName = "$serverFQDN"
@@ -72,11 +70,11 @@ if ($middleTierURI) {
     $configXml.ConnectionSettings.DatabaseConnection.Password = ""
     $configXml.ConnectionSettings.DatabaseConnection.MySQLPassHash = "$passwordHash"
     $configXml.ConnectionSettings.DatabaseConnection.NoShowOnStartup = "True"
-    
+
     # Modify other fields
     $configXml.ConnectionSettings.DatabaseType = "SqlServer"
     $configXml.ConnectionSettings.UseDynamicMode = "True"
-    
+
 }
 
 

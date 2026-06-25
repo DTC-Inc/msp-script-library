@@ -1,74 +1,48 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ##
 ## Required RMM Variables:
-## - $LocalAdminUsername: Username for local admin account with rights to unjoin domain
-## - $LocalAdminPassword: Password for local admin account
-## - $WorkgroupName: Name of workgroup to join (default: WORKGROUP)
-## - $Description: Ticket number or initials for tracking
+## - $LocalAdminUsername / $env:LocalAdminUsername: Username for local admin account with rights to unjoin domain
+## - $LocalAdminPassword / $env:LocalAdminPassword: Password for local admin account
+## - $WorkgroupName / $env:WorkgroupName: Name of workgroup to join (default: WORKGROUP)
+## - $Description / $env:Description: Ticket number or initials for tracking
+## - $RMMScriptPath / $env:RMMScriptPath: Optional log directory base provided by the RMM
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs identically from the
+    # command line (-LocalAdminUsername ...) or from an RMM that supplies values as env variables.
+    [string]$Description        = $env:Description,
+    [string]$LocalAdminUsername = $env:LocalAdminUsername,
+    [string]$LocalAdminPassword = $env:LocalAdminPassword,
+    [string]$WorkgroupName      = $env:WorkgroupName,
+    [string]$RMMScriptPath      = $env:RMMScriptPath
+)
 
 $ScriptLogName = "domain-leave.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if (-not $Description) {
-            Write-Host "Invalid input. Please try again."
-            continue
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $LocalAdminUsername = Read-Host "Enter local admin username"
-        if (-not $LocalAdminUsername) {
-            Write-Host "Local admin username is required."
-            continue
-        }
+if ($null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
 
-        $SecurePassword = Read-Host "Enter local admin password" -AsSecureString
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
-        $LocalAdminPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
+if (-not $WorkgroupName) {
+    $WorkgroupName = "WORKGROUP"
+}
 
-        if (-not $LocalAdminPassword) {
-            Write-Host "Local admin password is required."
-            continue
-        }
+# Validate required inputs. These must come from -Parameter or $env: -- there is no prompt.
+if (-not $LocalAdminUsername -or -not $LocalAdminPassword) {
+    Write-Error "ERROR: LocalAdminUsername and LocalAdminPassword must be set when running from RMM"
+    exit 1
+}
 
-        $WorkgroupName = Read-Host "Enter workgroup name (press Enter for 'WORKGROUP')"
-        if (-not $WorkgroupName) {
-            $WorkgroupName = "WORKGROUP"
-        }
-
-        $ValidInput = 1
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }
-
-    if ($null -eq $WorkgroupName) {
-        $WorkgroupName = "WORKGROUP"
-    }
-
-    # Validate required RMM variables
-    if ($null -eq $LocalAdminUsername -or $null -eq $LocalAdminPassword) {
-        Write-Error "ERROR: LocalAdminUsername and LocalAdminPassword must be set when running from RMM"
-        exit 1
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -78,7 +52,6 @@ Start-Transcript -Path $LogPath
 Write-Host "=== Domain Leave Script ==="
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "Workgroup Name: $WorkgroupName"
 Write-Host "Local Admin Username: $LocalAdminUsername"
 Write-Host ""

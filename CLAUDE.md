@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is an MSP (Managed Service Provider) script library containing PowerShell scripts for automation, deployment, configuration, and management tasks across various platforms and vendors. Scripts are designed to be executed both interactively and via RMM (Remote Monitoring and Management) platforms.
+This is an MSP (Managed Service Provider) script library containing PowerShell scripts for automation, deployment, configuration, and management tasks across various platforms and vendors. Scripts are **non-interactive by design**: every input is supplied either as a `-Parameter` or as an environment variable of the same name, so the same script runs from a technician's command line or unattended via an RMM (Remote Monitoring and Management) platform without ever blocking on a prompt.
 
 ## Code Architecture
 
@@ -12,30 +12,42 @@ This is an MSP (Managed Service Provider) script library containing PowerShell s
 
 All scripts follow a consistent three-part structure defined in `script-template-powershell.ps1`:
 
-1. **RMM Variable Declaration Section** (top of file)
-   - Comment block listing all required RMM variables
+1. **Variable Declaration Section** (top of file)
+   - Comment block listing all inputs, each documented as both forms it accepts (e.g., `## $DomainName / $env:DomainName`)
    - Format: `## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM`
-   - Each variable should be documented as a comment (e.g., `## $variableName`)
+   - A `param()` block immediately follows, with **one parameter per input, each defaulting to its `$env:` counterpart**:
+     ```powershell
+     param(
+         [string]$Description   = $env:Description,
+         [string]$RMMScriptPath = $env:RMMScriptPath
+     )
+     ```
+     This is what makes every input usable **either** as a `-Parameter` (technician/command-line) **or** as an `$env:` variable (RMM/unattended). NinjaRMM passes script preset variables to PowerShell as environment variables, and the param default picks them up.
 
 2. **Input Handling Section**
-   - **All RMM-supplied variables come via environment variables** (`$env:VarName`). NinjaRMM passes script preset variables to PowerShell as environment variables, so the script must read them via `$env:` at every use site. Bare `$VarName` references resolve to `$null` in true RMM mode and silently fall through to the interactive branch.
-   - Detects execution context via `$env:RMM` — environment variables are strings, so compare against `"1"` not `1`. Anything other than `"1"` is interactive mode.
-   - Interactive mode: Prompts user with `Read-Host` for required inputs with validation loop. Write the result back to `$env:Description` so the rest of the script can keep referencing `$env:` consistently.
-   - RMM mode: Uses pre-set environment variables passed by the RMM platform. Defaults for any optional variables (custom field names, state file paths, etc.) should be set at the top of the script by writing to `$env:` directly:
+   - **Scripts are non-interactive — there is no `Read-Host` and no `$env:RMM` flag.** Both were recurring sources of hangs: an unattended PowerShell host is in NonInteractive mode and `Read-Host` blocks or errors there ("Windows PowerShell is in NonInteractive mode"), and an unset `$env:RMM` silently routed real RMM runs into the prompt branch.
+   - **Mirror resolved params back into `$env:`** so the rest of the script can reference either `$Name` or `$env:Name` interchangeably, regardless of which form the value arrived in:
+     ```powershell
+     if (-not [string]::IsNullOrEmpty($Description)) { $env:Description = $Description }
+     ```
+   - Apply defaults for optional inputs, and validate required inputs by **failing fast** (no prompt fallback):
      ```powershell
      if ([string]::IsNullOrEmpty($env:CustomFieldFooBoolean)) {
          $env:CustomFieldFooBoolean = "fooDetected"
      }
+     if (-not $DomainName) {
+         Write-Error "ERROR: DomainName must be set (as -Parameter or `$env:DomainName)"
+         exit 1
+     }
      ```
    - Sets `$LogPath` based on context:
-     - **SYSTEM-context script, interactive:** `$env:WINDIR\logs\`
-     - **SYSTEM-context script, RMM:** `$env:RMMScriptPath\logs\` (fallback to `$env:WINDIR\logs\` if `$env:RMMScriptPath` is null)
+     - **SYSTEM-context script:** `$env:RMMScriptPath\logs\` when the RMM provided a base, else `$env:WINDIR\logs\`
      - **User-context script:** `$env:LOCALAPPDATA\dtc-logs\` — `$env:WINDIR\logs\` requires admin and a user-context script will fail to write there
-   - Always captures `$env:Description` for audit trail
+   - Always captures `$Description` / `$env:Description` for audit trail
 
 3. **Script Logic Section**
    - Wrapped in `Start-Transcript` / `Stop-Transcript` for full logging
-   - Logs key variables at start (Description, LogPath, RMM mode)
+   - Logs key variables at start (Description, LogPath)
    - Contains actual automation logic
 
 ### Naming Conventions
@@ -63,9 +75,9 @@ Scripts are organized by category prefixes:
 ### When Creating New Scripts
 
 1. **Always start from `script-template-powershell.ps1`** - Copy this template for new scripts
-2. **Document RMM variables** - List all required variables in the top comment block
-3. **Support dual execution modes** - Script must work both interactively and via RMM
-4. **Implement input validation** - Use `$ValidInput` loop pattern for interactive mode
+2. **Declare every input in a `param()` block** - One parameter per input, each defaulting to `$env:<Name>`, and documented in the top comment block as `## $Name / $env:Name`
+3. **Support dual input** - Every input must be usable as a `-Parameter` OR an `$env:` variable (the param-default pattern gives this for free)
+4. **Validate required inputs by failing fast** - No `Read-Host`, no `$env:RMM` flag; if a required input is missing, `Write-Error` and `exit` with a non-zero code
 5. **Enable full logging** - Use `Start-Transcript` at the beginning and `Stop-Transcript` at the end
 6. **Set appropriate `$ScriptLogName`** - Use descriptive filename matching the script purpose
 
@@ -73,9 +85,9 @@ Scripts are organized by category prefixes:
 
 When modifying existing scripts:
 - Preserve the three-section structure
-- Maintain backward compatibility with RMM variable names
+- Keep input names stable so existing RMM presets keep working — a param named `$Foo` accepts the same `$env:Foo` the preset already sets
 - Keep logging verbosity high for troubleshooting
-- Test both interactive and RMM execution paths
+- Verify the script runs unattended (no prompts) — pass inputs as `$env:` vars, then run with no parameters
 
 ### Common Patterns
 
@@ -200,9 +212,9 @@ NinjaRMM custom fields come in several types and have important runtime constrai
 | **WYSIWYG / HTML** | Rich formatted reports for technician dashboards | No 200-char limit. Use for detailed multi-line output, tables, lists, color-coded status. |
 | **Multi-line text** | Logs, transcripts, free-form notes | Larger character limit than single-line text. |
 
-**Standard write pattern** — `Ninja-Property-Set` works for all field types; the cmdlet figures out the type from the field's NinjaRMM configuration:
+**Standard write pattern** — `Ninja-Property-Set` works for all field types; the cmdlet figures out the type from the field's NinjaRMM configuration. Gate on whether the cmdlet actually exists (it is only present in the NinjaRMM agent's PowerShell host), **not** on an `$env:RMM` flag:
 ```powershell
-if ($env:RMM -eq "1") {
+if (Get-Command Ninja-Property-Set -ErrorAction SilentlyContinue) {
     try {
         Ninja-Property-Set -Name $env:CustomFieldFooDetected -Value $detected
         Write-Host "Wrote $detected to '$env:CustomFieldFooDetected'"
@@ -266,18 +278,13 @@ Some detection tasks need both SYSTEM-visible state (HKLM, services, processes) 
 ## $env:OrgName - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
 ```
 
-Validate it early and fail fast in RMM mode:
+Declare it as a parameter (`[string]$OrgName = $env:OrgName`) and validate it early, failing fast — no prompt fallback:
 ```powershell
-if ([string]::IsNullOrEmpty($env:OrgName)) {
-    if ($env:RMM -eq "1") {
-        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
-        exit 99
-    } else {
-        while ([string]::IsNullOrEmpty($env:OrgName)) {
-            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
-        }
-    }
+if ([string]::IsNullOrEmpty($OrgName)) {
+    Write-Host "ERROR: OrgName is required but not set. Pass -OrgName or configure the OrgName variable in your RMM script preset."
+    exit 99
 }
+$env:OrgName = $OrgName  # mirror back so $env:OrgName references in the body resolve
 ```
 
 **Why JSON over SQLite:**
@@ -513,15 +520,19 @@ if ($veeamVersion -ge $requiredVersion) {
 
 ## Testing Scripts
 
-- **Interactive Testing**: Run script directly in PowerShell without setting `$env:RMM`. The script will prompt for `$env:Description` via `Read-Host`.
-- **RMM Simulation**: Set the RMM environment variables before invoking the script:
+Scripts never prompt, so both test paths are non-interactive — the only difference is how you hand inputs to the script:
+
+- **Parameter testing**: Pass inputs directly on the command line.
   ```powershell
-  $env:RMM = "1"
+  .\your-script.ps1 -Description "Test run" -DomainName "contoso.com"
+  ```
+- **Environment-variable testing** (mimics real RMM execution — NinjaRMM passes preset variables as environment variables): set the env vars, then invoke with no parameters.
+  ```powershell
   $env:Description = "Test run"
   $env:CustomFieldFooBoolean = "fooDetected"  # if applicable
   .\your-script.ps1
   ```
-  Remember: NinjaRMM passes preset variables as environment variables, so this is the correct way to mimic real RMM execution.
+  Each parameter defaults to its `$env:` counterpart, so both forms reach the same code with no branching.
 - **Log Verification**: Always check transcript logs after execution. SYSTEM-context scripts log to `$env:WINDIR\logs\`; user-context scripts log to `$env:LOCALAPPDATA\dtc-logs\`.
 
 ## Repository Context
@@ -534,11 +545,11 @@ if ($veeamVersion -ge $requiredVersion) {
 ## Git Workflow
 
 **Branching Model:**
-* `development` — default branch (HEAD), active work lands here
-* `release` — stable/production branch, merged from development when ready
-* `enhancement/{name}` — branched from development for new functionality
-* `problem/{name}` — branched from development for bug fixes and issue resolution
-* No `main` or `master` branches
+* `main` — default branch (HEAD) and single trunk; all work merges here via PR
+* `enhancement/{name}` — branched from `main` for new functionality
+* `problem/{name}` — branched from `main` for bug fixes and issue resolution
+* `improvement/{name}` / `feature/{name}` / `bug/{name}` / `refactor/{name}` — also in use, branched from `main`
+* The former `development` branch has been retired — there is no separate integration branch
 
 **GitHub Issues & Labels:**
 * New functionality uses the **enhancement** label, not "feature"

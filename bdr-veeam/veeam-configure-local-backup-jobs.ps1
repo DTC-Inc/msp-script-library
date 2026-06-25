@@ -6,9 +6,21 @@
 ##   Mon-Fri: 10 PM - 6 AM
 ##   Sat-Sun: All day
 ##
-## $env:DESCRIPTION   - Ticket # or initials for audit trail
-## $env:RMM           - Set to 1 when running from RMM platform
-## $env:RMM_SCRIPT_PATH - Script path provided by RMM (used for log location)
+## $DESCRIPTION     / $env:DESCRIPTION     - Ticket # or initials for audit trail
+## $RMM_SCRIPT_PATH / $env:RMM_SCRIPT_PATH - Script path provided by RMM (used for log location)
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-DESCRIPTION ...) or from an RMM that supplies values as env variables.
+    [string]$DESCRIPTION     = $env:DESCRIPTION,
+    [string]$RMM_SCRIPT_PATH = $env:RMM_SCRIPT_PATH
+)
+
+# Mirror resolved parameter values into $env: so the rest of the script can reference either
+# $DESCRIPTION or $env:DESCRIPTION, and so the values propagate to the re-launched PS7 process
+# below (which inherits env vars but not -Parameter values).
+if (-not [string]::IsNullOrEmpty($DESCRIPTION))     { $env:DESCRIPTION     = $DESCRIPTION }
+if (-not [string]::IsNullOrEmpty($RMM_SCRIPT_PATH)) { $env:RMM_SCRIPT_PATH = $RMM_SCRIPT_PATH }
 
 # ============================================================
 # PS7 BOOTSTRAP
@@ -57,18 +69,14 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 $SCRIPT_LOG_NAME = "veeam-configure-local-backup-schedule.log"
 $ConfirmPreference = 'None'
 
-if ($env:RMM -ne "1") {
-    if (-not $env:DESCRIPTION) { $env:DESCRIPTION = Read-Host "Ticket # or initials" }
-    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
+if (-not $env:DESCRIPTION) { $env:DESCRIPTION = "No Description" }
+
+if ($env:RMM_SCRIPT_PATH) {
+    $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
+    if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
+    $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
 } else {
-    if (-not $env:DESCRIPTION) { $env:DESCRIPTION = "No Description" }
-    if ($env:RMM_SCRIPT_PATH) {
-        $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
-        if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
-        $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
-    } else {
-        $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-    }
+    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 }
 
 Start-Transcript -Path $LOG_PATH

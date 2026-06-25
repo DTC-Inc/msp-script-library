@@ -1,13 +1,20 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $env:RMM            - "1" to skip the interactive Read-Host prompt
-## $env:Description    - Ticket # / initials for the transcript audit trail
-## $env:RMMScriptPath  - Optional transcript root (e.g. Datto). Falls back to $env:WINDIR\logs
-## $env:InstallerUrl   - Optional override for the MSI URL (emergency rollouts).
-##                       Default is pinned to a known-good version below.
-## $env:ForceReinstall - "1" to reinstall even if PuTTY is already present.
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description    / $env:Description    - Ticket # / initials for the transcript audit trail
+## $RMMScriptPath  / $env:RMMScriptPath  - Optional transcript root (e.g. Datto). Falls back to $env:WINDIR\logs
+## $InstallerUrl   / $env:InstallerUrl   - Optional override for the MSI URL (emergency rollouts).
+##                                         Default is pinned to a known-good version below.
+## $ForceReinstall / $env:ForceReinstall - "1" to reinstall even if PuTTY is already present.
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description    = $env:Description,
+    [string]$RMMScriptPath  = $env:RMMScriptPath,
+    [string]$InstallerUrl   = $env:InstallerUrl,
+    [string]$ForceReinstall = $env:ForceReinstall
+)
 
 $ScriptLogName = "putty-install.log"
 
@@ -17,47 +24,28 @@ $DefaultInstallerUrl = 'https://the.earth.li/~sgtatham/putty/0.83/w64/putty-64bi
 $ExpectedExe         = 'C:\Program Files\PuTTY\putty.exe'
 $MinInstallerBytes   = 1MB   # reject obvious failed downloads (captive-portal HTML, 0-byte, etc.)
 
-# Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
-# When -NonInteractive is on the command line, Read-Host throws and would kill the
-# script, so treat that as RMM mode even if $env:RMM was not explicitly passed.
-try {
-    $cmdLineArgs = [Environment]::GetCommandLineArgs()
-    if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
-        if ($env:RMM -ne "1") {
-            Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
-            $env:RMM = "1"
-        }
-    }
-} catch {
-    # If detection itself fails, leave $env:RMM as-is and proceed.
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))    { $env:Description    = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath))  { $env:RMMScriptPath  = $RMMScriptPath }
+if (-not [string]::IsNullOrEmpty($InstallerUrl))   { $env:InstallerUrl   = $InstallerUrl }
+if (-not [string]::IsNullOrEmpty($ForceReinstall)) { $env:ForceReinstall = $ForceReinstall }
+
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrWhiteSpace($env:Description)) {
+    Write-Host "Description is empty/null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+} else {
+    $Description = $env:Description
 }
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-
+# Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back to WINDIR.
+if ($env:RMMScriptPath) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back to WINDIR.
-    if ($env:RMMScriptPath) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ([string]::IsNullOrWhiteSpace($env:Description)) {
-        Write-Host "Description is empty/null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    } else {
-        $Description = $env:Description
-    }
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 }
 
 # Resolve effective values (env-var overrides with sane defaults).
@@ -68,7 +56,6 @@ $ForceReinstall = ($env:ForceReinstall -eq "1")
 # fails (no log dir, locked file, etc.) the RMM still captures something useful.
 Write-Host "putty-install.ps1 starting"
 Write-Host "Description    : $Description"
-Write-Host "RMM            : $env:RMM"
 Write-Host "Computer       : $env:COMPUTERNAME"
 Write-Host "User context   : $env:USERNAME"
 Write-Host "PowerShell     : $($PSVersionTable.PSVersion) ($([IntPtr]::Size * 8)-bit)"

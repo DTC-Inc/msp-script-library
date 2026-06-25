@@ -1,5 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
 
 # This script configures Windows telemetry and privacy settings:
 # 1. Disables telemetry via Group Policy registry keys
@@ -13,29 +15,32 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
+
 $ScriptLogName = "msft-windows-debloat-telemetry-privacy.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-} else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated telemetry and privacy configuration"
-    }
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Description or $env:Description, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))   { $env:Description   = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) { $env:RMMScriptPath = $RMMScriptPath }
+
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $env:Description = "RMM-initiated telemetry and privacy configuration"
+}
+
+# Store logs under $env:RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
+} else {
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting transcript
@@ -46,9 +51,8 @@ if (!(Test-Path $logDir)) {
 
 Start-Transcript -Path $LogPath
 
-Write-Host "Description: $Description"
+Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== Windows Telemetry & Privacy Configuration ===" -ForegroundColor Cyan

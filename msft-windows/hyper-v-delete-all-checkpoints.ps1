@@ -1,45 +1,39 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description   - Ticket # or initials for audit trail
-## $env:RMMScriptPath - Optional log directory base provided by the RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
 ##
 ## WARNING: This script DELETES every Hyper-V checkpoint on every VM on the host. It is a
 ## deliberate maintenance action -- deploy it intentionally.
 
-# Standard DTC three-part structure: 1) RMM variable declaration, 2) input handling, 3) script logic.
+# Standard DTC three-part structure: 1) variable declaration, 2) input handling, 3) script logic.
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 $ScriptLogName = "windows-hyper-v-delete-all-checkpoints.log"
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        if ($env:Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Description or $env:Description, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))   { $env:Description   = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) { $env:RMMScriptPath = $RMMScriptPath }
+
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $env:Description = "No Description"
+}
+
+# Store logs under $env:RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # RMM mode: store logs under $env:RMMScriptPath if the RMM provided one,
-    # otherwise fall back to the standard Windows logs directory.
-    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ([string]::IsNullOrEmpty($env:Description)) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $env:Description = "No Description"
-    }
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 }
 
 # This script needs administrator rights to manage Hyper-V and to write to the system log
@@ -71,7 +65,6 @@ try {
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 
 # Detect Hyper-V WITHOUT the ServerManager module / Get-WindowsFeature.
 #

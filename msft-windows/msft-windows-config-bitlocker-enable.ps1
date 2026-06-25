@@ -1,7 +1,9 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
-## $EncryptDataDrives = $true    # Also encrypt fixed data drives
-## $UseUsedSpaceOnly = $true     # Faster encryption, only encrypts used space
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description       / $env:Description       - Ticket # or initials for audit trail
+## $EncryptDataDrives / $env:EncryptDataDrives - Also encrypt fixed data drives (true/false, default: true)
+## $UseUsedSpaceOnly  / $env:UseUsedSpaceOnly  - Faster encryption, only encrypts used space (true/false, default: true)
+## $RMMScriptPath     / $env:RMMScriptPath     - Optional log directory base provided by the RMM
 
 # This script enables BitLocker encryption:
 # - Checks for TPM 2.0
@@ -13,33 +15,42 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description       = $env:Description,
+    [string]$EncryptDataDrives = $env:EncryptDataDrives,
+    [string]$UseUsedSpaceOnly  = $env:UseUsedSpaceOnly,
+    [string]$RMMScriptPath     = $env:RMMScriptPath
+)
+
 $ScriptLogName = "msft-windows-config-bitlocker-enable.log"
 
-# Default values
-if ($null -eq $EncryptDataDrives) { $EncryptDataDrives = $true }
-if ($null -eq $UseUsedSpaceOnly) { $UseUsedSpaceOnly = $true }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Default the audit-trail description if it was not supplied.
+if ($null -eq $Description -or $Description -eq "") {
+    $Description = "RMM-initiated BitLocker configuration"
+}
+
+# Resolve the encryption options. Default to $true when not supplied; otherwise honor the
+# string the input arrived as ("false"/"0"/"no" disable, anything else enables).
+if ([string]::IsNullOrEmpty($EncryptDataDrives)) {
+    $EncryptDataDrives = $true
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
+    $EncryptDataDrives = $EncryptDataDrives -notin @('false', '0', 'no', 'off')
+}
+if ([string]::IsNullOrEmpty($UseUsedSpaceOnly)) {
+    $UseUsedSpaceOnly = $true
+} else {
+    $UseUsedSpaceOnly = $UseUsedSpaceOnly -notin @('false', '0', 'no', 'off')
+}
 
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated BitLocker configuration"
-    }
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting transcript
@@ -52,7 +63,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== BitLocker Configuration ===" -ForegroundColor Cyan

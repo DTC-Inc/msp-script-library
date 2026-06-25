@@ -1,12 +1,23 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                                                  - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description                                          - Ticket # or initials for audit trail
-## $env:RMMScriptPath                                        - Optional log directory base provided by the RMM
-## $env:OrgName                                              - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
-## $env:CustomFieldGoogleChromeRemoteDesktopDetected         - Boolean (1/0) field name (default: "googleChromeRemoteDesktopDetected")
-## $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn   - Text field name for context labels (default: "googleChromeRemoteDesktopContextFoundIn")
-## $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails     - HTML field name for the formatted detail report (default: "googleChromeRemoteDesktopFoundDetails")
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## NinjaRMM passes script preset variables as environment variables, so each parameter defaults to its $env: value.
+## $Description                                          / $env:Description                                          - Ticket # or initials for audit trail
+## $RMMScriptPath                                        / $env:RMMScriptPath                                        - Optional log directory base provided by the RMM
+## $OrgName                                              / $env:OrgName                                              - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
+## $CustomFieldGoogleChromeRemoteDesktopDetected         / $env:CustomFieldGoogleChromeRemoteDesktopDetected         - Boolean (1/0) field name (default: "googleChromeRemoteDesktopDetected")
+## $CustomFieldGoogleChromeRemoteDesktopContextFoundIn   / $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn   - Text field name for context labels (default: "googleChromeRemoteDesktopContextFoundIn")
+## $CustomFieldGoogleChromeRemoteDesktopFoundDetails     / $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails     - HTML field name for the formatted detail report (default: "googleChromeRemoteDesktopFoundDetails")
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-OrgName ...) or from an RMM that supplies the values as env variables.
+    [string]$Description                                          = $env:Description,
+    [string]$RMMScriptPath                                        = $env:RMMScriptPath,
+    [string]$OrgName                                              = $env:OrgName,
+    [string]$CustomFieldGoogleChromeRemoteDesktopDetected         = $env:CustomFieldGoogleChromeRemoteDesktopDetected,
+    [string]$CustomFieldGoogleChromeRemoteDesktopContextFoundIn   = $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn,
+    [string]$CustomFieldGoogleChromeRemoteDesktopFoundDetails     = $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails
+)
 
 # Chrome Remote Desktop Detection Script (SYSTEM context)
 #
@@ -39,19 +50,24 @@
 
 $ScriptLogName = "chrome-remote-desktop-detect-system.log"
 
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))                                        { $env:Description                                        = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath))                                      { $env:RMMScriptPath                                      = $RMMScriptPath }
+if (-not [string]::IsNullOrEmpty($OrgName))                                            { $env:OrgName                                            = $OrgName }
+if (-not [string]::IsNullOrEmpty($CustomFieldGoogleChromeRemoteDesktopDetected))       { $env:CustomFieldGoogleChromeRemoteDesktopDetected       = $CustomFieldGoogleChromeRemoteDesktopDetected }
+if (-not [string]::IsNullOrEmpty($CustomFieldGoogleChromeRemoteDesktopContextFoundIn)) { $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn = $CustomFieldGoogleChromeRemoteDesktopContextFoundIn }
+if (-not [string]::IsNullOrEmpty($CustomFieldGoogleChromeRemoteDesktopFoundDetails))   { $env:CustomFieldGoogleChromeRemoteDesktopFoundDetails   = $CustomFieldGoogleChromeRemoteDesktopFoundDetails }
+
 # --- Required: $env:OrgName ----------------------------------------------
 # OrgName namespaces the shared state under %PUBLIC%\<OrgName>\rmm-db\.
-# It must be set in the RMM script preset (or interactively for testing).
+# It must be supplied via -OrgName or the $env:OrgName RMM preset variable -- there is no prompt.
 
 if ([string]::IsNullOrEmpty($env:OrgName)) {
-    if ($env:RMM -eq "1") {
-        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
-        exit 99
-    } else {
-        while ([string]::IsNullOrEmpty($env:OrgName)) {
-            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
-        }
-    }
+    Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
+    exit 99
 }
 
 # --- Default RMM environment variables if not provided -------------------
@@ -70,29 +86,18 @@ if ([string]::IsNullOrEmpty($env:CustomFieldGoogleChromeRemoteDesktopFoundDetail
 
 $UserStatePath = "$env:PUBLIC\$env:OrgName\rmm-db\google-chrome-remote-desktop-user-active.json"
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Description default and log path -------------------------------------
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        if ($env:Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM."
+    $env:Description = "RMM Automated Scan"
+}
+
+# Store logs under $env:RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-    }
-    if ([string]::IsNullOrEmpty($env:Description)) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM."
-        $env:Description = "RMM Automated Scan"
-    }
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting transcript
@@ -110,7 +115,6 @@ Write-Host "============================================"
 Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 Write-Host "OrgName: $env:OrgName"
 Write-Host "Detected Field: $env:CustomFieldGoogleChromeRemoteDesktopDetected"
 Write-Host "Context Field: $env:CustomFieldGoogleChromeRemoteDesktopContextFoundIn"
@@ -287,7 +291,7 @@ Write-Host ""
 
 # --- Write to NinjaRMM custom fields -------------------------------------
 
-if ($env:RMM -eq "1") {
+if (Get-Command Ninja-Property-Set -ErrorAction SilentlyContinue) {
     try {
         Ninja-Property-Set -Name $env:CustomFieldGoogleChromeRemoteDesktopDetected -Value $detected
         Write-Host "Wrote $detected to '$env:CustomFieldGoogleChromeRemoteDesktopDetected'"

@@ -1,12 +1,17 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description    / $env:Description    - REQUIRED. Ticket # or initials for audit trail
+## $RMMScriptPath  / $env:RMMScriptPath  - Optional log directory base provided by the RMM
+## $PasswordLength / $env:PasswordLength - Optional password length (default: 16)
+## $localUser      / $env:localUser      - Optional local admin user name (default: "admin")
 
 # Local Administrator Password Solution (LAPS) - Enhanced Version
 # This script creates/manages a local administrator account with a secure, user-friendly password
-# 
+#
 # Password Generation Improvements:
 # - Excludes problematic symbols that could break scripts: |, ;, <, >, ?, &, {, }, [, ], \, /, ', ", `, ^
-# - Excludes easily confused characters: 0 vs O, 1 vs l vs I  
+# - Excludes easily confused characters: 0 vs O, 1 vs l vs I
 # - Uses only safe, easy-to-type symbols: !@#$%*()_+-=:,.
 # - Guarantees at least one uppercase, lowercase, number, and symbol
 # - Default 16-character length (configurable)
@@ -16,49 +21,44 @@
 # $PasswordLength = 16 (Default password length - can be customized)
 # $localUser = "admin" (Default local user name - can be customized)
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description    = $env:Description,
+    [string]$RMMScriptPath  = $env:RMMScriptPath,
+    [string]$PasswordLength = $env:PasswordLength,
+    [string]$localUser      = $env:localUser
+)
 
 $ScriptLogName = "laps.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))    { $env:Description    = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath))  { $env:RMMScriptPath  = $RMMScriptPath }
+if (-not [string]::IsNullOrEmpty($PasswordLength)) { $env:PasswordLength = $PasswordLength }
+if (-not [string]::IsNullOrEmpty($localUser))      { $env:localUser      = $localUser }
+
+# Description is required. The interactive build required a non-empty value; there is no
+# prompt fallback, so fail fast if it was not supplied via -Parameter or $env:.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Error "ERROR: Required input 'Description' not provided (set as -Parameter or `$env:Description)."
+    exit 1
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 
 # Check if the computer is a domain controller or Azure AD joined
 # PowerShell Script to Check if the Server is a Domain Controller
@@ -157,11 +157,11 @@ function Add-UserToLocalAdministrators {
 }
 
 # Set default values if not provided by RMM
-if ($null -eq $PasswordLength) {
+if ([string]::IsNullOrEmpty($PasswordLength)) {
     $PasswordLength = 16  # Default password length
 }
 
-if ($null -eq $localUser) {
+if ([string]::IsNullOrEmpty($localUser)) {
     $localUser = "admin"  # Default local user name
 }
 

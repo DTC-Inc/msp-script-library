@@ -1,51 +1,46 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM           - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description   - Ticket # or initials for audit trail
-## $env:RMMScriptPath - Optional log directory base provided by the RMM
-## $env:DaysAging     - Number of days old a checkpoint must be to flag it (default: "7").
-##                      Positive or negative both work (e.g. "7" or "-7" both mean "older than 7 days").
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
+## $DaysAging     / $env:DaysAging     - Number of days old a checkpoint must be to flag it (default: "7").
+##                                       Positive or negative both work (e.g. "7" or "-7" both mean "older than 7 days").
 
-# Standard DTC three-part structure: 1) RMM variable declaration, 2) input handling, 3) script logic.
+# Standard DTC three-part structure: 1) variable declaration, 2) input handling, 3) script logic.
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$RMMScriptPath = $env:RMMScriptPath,
+    [string]$DaysAging     = $env:DaysAging
+)
 
 $ScriptLogName = "windows-hyper-v-checkpoint-aging.log"
 $DefaultDaysAging = 7
 
-# --- Default optional RMM environment variables --------------------------
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))   { $env:Description   = $Description }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) { $env:RMMScriptPath = $RMMScriptPath }
+if (-not [string]::IsNullOrEmpty($DaysAging))     { $env:DaysAging     = $DaysAging }
+
+# Default optional inputs.
 if ([string]::IsNullOrEmpty($env:DaysAging)) {
     $env:DaysAging = "$DefaultDaysAging"
 }
 
-# --- Input handling: RMM vs interactive ----------------------------------
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $env:Description = "No Description"
+}
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        $env:DaysAging = Read-Host "Please enter the number of days old a Hyper-V checkpoint must be to flag it (e.g. 7)"
-        if ($env:Description -and ($null -ne ($env:DaysAging -as [int]))) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+# Store logs under $env:RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # RMM mode: store logs under $env:RMMScriptPath if the RMM provided one,
-    # otherwise fall back to the standard Windows logs directory.
-    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ([string]::IsNullOrEmpty($env:Description)) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $env:Description = "No Description"
-    }
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting the transcript
@@ -81,7 +76,6 @@ try {
 
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 Write-Host "Days Aging threshold: $daysAging day(s)"
 
 # Detect Hyper-V WITHOUT the ServerManager module / Get-WindowsFeature.

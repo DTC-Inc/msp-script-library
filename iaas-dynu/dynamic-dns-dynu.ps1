@@ -1,51 +1,46 @@
-# Getting input from user if not running from RMM else set variables from RMM.
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description       / $env:Description       - Ticket # or initials for audit trail (default: "No Description")
+## $hostname          / $env:hostname          - Hostname we're creating or updating
+## $domain            / $env:domain            - Domain to use for dynamic DNS
+## $zoneID            / $env:zoneID            - Dynu zone ID where records are changed
+## $apiKey            / $env:apiKey            - Dynu API key
+## $ipUpdatePassword  / $env:ipUpdatePassword  - IP Update password from Dynu
+## $RMMScriptPath     / $env:RMMScriptPath     - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description      = $env:Description,
+    [string]$hostname         = $env:hostname,
+    [string]$domain           = $env:domain,
+    [string]$zoneID           = $env:zoneID,
+    [string]$apiKey           = $env:apiKey,
+    [string]$ipUpdatePassword = $env:ipUpdatePassword,
+    [string]$RMMScriptPath    = $env:RMMScriptPath
+)
 
 $ScriptLogName = "dynu-dynamic-dns.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        $hostname = "Enter the hostname we're creating or updating"
-        $domain = Read-Host "Enter the domain you want to use for dynamic DNS"
-        $zoneID = Read-Host "Enter the Dynu zone ID where you want to change records"
-        $apiKey = Read-Host "Enter the Dynu API key"
-        $ipUpdatePassword = Read-Host "Enter the IP Update password from Dynu"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Output "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Preserve the original default for the audit-trail description.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Output "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($RMMScriptPath -eq $null) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($null -eq $Description) {
-        Write-Output "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Output "Description: $Description"
 Write-Output "Log path: $LogPath"
-Write-Output "RMM: $RMM"
 Write-Output "Hostname: $hostname"
 Write-Output "Domain: $domain"
 Write-Output "API Key: *********"
@@ -58,7 +53,7 @@ $fqdn = $hostname + "." + $domain
 Write-Output "FQDN: $fqdn"
 
 # Check if the domain exists in Dynu using v2 API
-# $recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" 
+# $recordUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record"
 # $existingRecords = Invoke-RestMethod -Method GET -Uri $recordUrl -Headers @{"API-Key" = $apiKey} -UseBasicParsing | Select -Expand dnsRecords
 # $existingRecordId = $existingRecord | Where { $_.hostname -eq '$fqdn' } | Select -Expand id
 $existingRecord = wget "https://api.dynu.com/nic/update?hostname=$domain&alias=$hostname&password=$ipUpdatePassword" -UseBasicParsing
@@ -72,7 +67,7 @@ if ($existingRecord.Content -notlike "good*") {
         recordType = "A"
         state = "true"
         ttl = 60}
-        
+
     $createUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record"
     Invoke-RestMethod -Method POST -Uri $createUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json) -UseBasicParsing | Write-Output
 
@@ -93,7 +88,7 @@ if ($existingRecord.Content -notlike "good*") {
     #    ipv4Address = "$ipAddress"
     #    recordType = "A"
     #    state = "true"
-    #    ttl = 60}        
+    #    ttl = 60}
     #$updateUrl = "https://api.dynu.com/v2/dns/" + [System.Net.WebUtility]::UrlEncode($zoneID) + "/record" + [System.Net.WebUtility]::UrlEncode($existingRecordId)
     #Invoke-RestMethod -Method POST -Uri $updateUrl -Headers @{"API-Key" = $apiKey} -Body ($postData | ConvertTo-Json)
 }

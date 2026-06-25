@@ -1,55 +1,48 @@
-## PLEASE SET THE FOLLOWING ENVIRONMENT VARIABLES IN YOUR RMM BEFORE RUNNING
-## $env:CUSTOM_FIELD_UNSUPPORTED_FOUND - NinjaRMM custom field name (checkbox) - set to 1 if unsupported software detected alongside OpenDental
-## $env:CUSTOM_FIELD_APPS_FOUND - NinjaRMM custom field name (text) - comma-separated list of unsupported apps found
-## $env:DESCRIPTION - Ticket # and/or initials for audit trail
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $CUSTOM_FIELD_UNSUPPORTED_FOUND / $env:CUSTOM_FIELD_UNSUPPORTED_FOUND - NinjaRMM custom field name (checkbox) - set to 1 if unsupported software detected alongside OpenDental
+## $CUSTOM_FIELD_APPS_FOUND / $env:CUSTOM_FIELD_APPS_FOUND - NinjaRMM custom field name (text) - comma-separated list of unsupported apps found
+## $DESCRIPTION / $env:DESCRIPTION - Ticket # and/or initials for audit trail
+## $RMM_SCRIPT_PATH / $env:RMM_SCRIPT_PATH - Optional log directory base provided by the RMM
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-DESCRIPTION ...) or from an RMM that supplies values as env variables.
+    [string]$DESCRIPTION                    = $env:DESCRIPTION,
+    [string]$CUSTOM_FIELD_UNSUPPORTED_FOUND = $env:CUSTOM_FIELD_UNSUPPORTED_FOUND,
+    [string]$CUSTOM_FIELD_APPS_FOUND        = $env:CUSTOM_FIELD_APPS_FOUND,
+    [string]$RMM_SCRIPT_PATH                = $env:RMM_SCRIPT_PATH
+)
 
 $SCRIPT_LOG_NAME = "opendental-detect-integrations.log"
 
-if ($env:RMM -ne 1) {
-    $validInput = 0
-    while ($validInput -ne 1) {
-        $DESCRIPTION = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
-        if ($DESCRIPTION) {
-            $validInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    # Interactive mode: prompt for custom field names
-    $CUSTOM_FIELD_UNSUPPORTED_FOUND = Read-Host "Enter the NinjaRMM custom field name for unsupported found (checkbox)"
-    $CUSTOM_FIELD_APPS_FOUND = Read-Host "Enter the NinjaRMM custom field name for apps found list (text, or leave blank to skip)"
+# Mirror the resolved RMMScriptPath parameter into $env: so the log-path logic below
+# can reference $env:RMM_SCRIPT_PATH whichever form the value arrived in.
+if (-not [string]::IsNullOrEmpty($RMM_SCRIPT_PATH)) { $env:RMM_SCRIPT_PATH = $RMM_SCRIPT_PATH }
 
+# Default the audit-trail description if it was not supplied.
+if (-not $DESCRIPTION) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $DESCRIPTION = "No description"
+}
+
+if (-not $CUSTOM_FIELD_UNSUPPORTED_FOUND) {
+    Write-Host "[WARNING] No CUSTOM_FIELD_UNSUPPORTED_FOUND value set. Custom field write-back will be skipped."
+}
+
+# Store logs under $env:RMM_SCRIPT_PATH if provided, otherwise the standard Windows logs directory.
+if ($env:RMM_SCRIPT_PATH) {
+    $LOG_PATH = "$env:RMM_SCRIPT_PATH\logs\$SCRIPT_LOG_NAME"
 } else {
-    if ($env:RMM_SCRIPT_PATH) {
-        $LOG_PATH = "$env:RMM_SCRIPT_PATH\logs\$SCRIPT_LOG_NAME"
-    } else {
-        $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-    }
-
-    if (-not $env:DESCRIPTION) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $DESCRIPTION = "No description"
-    } else {
-        $DESCRIPTION = $env:DESCRIPTION
-    }
-
-    $CUSTOM_FIELD_UNSUPPORTED_FOUND = $env:CUSTOM_FIELD_UNSUPPORTED_FOUND
-    $CUSTOM_FIELD_APPS_FOUND = $env:CUSTOM_FIELD_APPS_FOUND
-
-    if (-not $CUSTOM_FIELD_UNSUPPORTED_FOUND) {
-        Write-Host "[WARNING] No CUSTOM_FIELD_UNSUPPORTED_FOUND environment variable set in RMM. Custom field write-back will be skipped."
-    }
+    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 }
 
 Start-Transcript -Path $LOG_PATH
 
 Write-Host "Description: $DESCRIPTION"
 Write-Host "Log path: $LOG_PATH"
-Write-Host "RMM: $env:RMM"
 Write-Host "Custom Field (Unsupported Found): $CUSTOM_FIELD_UNSUPPORTED_FOUND"
 Write-Host "Custom Field (Apps Found): $CUSTOM_FIELD_APPS_FOUND"
 

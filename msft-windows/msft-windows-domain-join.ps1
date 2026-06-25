@@ -1,78 +1,51 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ##
 ## Required RMM Variables:
-## - $DomainName: FQDN of domain to join (e.g., contoso.com)
-## - $DomainUsername: Username with rights to join computers to domain (can be DOMAIN\Username or UPN format)
-## - $DomainPassword: Password for domain account
-## - $DefaultLoginUser: Default user to show on Windows login screen (e.g., "DOMAIN\username" or "username@domain.com")
+## - $DomainName / $env:DomainName: FQDN of domain to join (e.g., contoso.com)
+## - $DomainUsername / $env:DomainUsername: Username with rights to join computers to domain (DOMAIN\Username or UPN)
+## - $DomainPassword / $env:DomainPassword: Password for domain account
+## - $DefaultLoginUser / $env:DefaultLoginUser: Default user to show on Windows login screen ("DOMAIN\username" or "username@domain.com")
 ##
 ## Optional RMM Variables:
-## - $Description: Ticket number or initials for tracking (defaults to "Automated Domain Join")
+## - $Description / $env:Description: Ticket number or initials for tracking (defaults to "Automated Domain Join")
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs identically from the
+    # command line (-DomainName ...) or from an RMM that supplies the values as env variables.
+    [string]$Description      = $env:Description,
+    [string]$DomainName       = $env:DomainName,
+    [string]$DomainUsername   = $env:DomainUsername,
+    [string]$DomainPassword   = $env:DomainPassword,
+    [string]$DefaultLoginUser = $env:DefaultLoginUser,
+    [string]$RMMScriptPath    = $env:RMMScriptPath
+)
 
 $ScriptLogName = "domain-join.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        $Description = Read-Host "Please enter the ticket # and, or your initials (press Enter for 'Automated Domain Join')"
-        if (-not $Description) {
-            $Description = "Automated Domain Join"
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $DomainName = Read-Host "Enter domain name to join (FQDN, e.g., contoso.com)"
-        if (-not $DomainName) {
-            Write-Host "Domain name is required."
-            continue
-        }
+if (-not $Description) {
+    $Description = "Automated Domain Join"
+}
 
-        $DomainUsername = Read-Host "Enter domain username with join rights (DOMAIN\Username or user@domain.com)"
-        if (-not $DomainUsername) {
-            Write-Host "Domain username is required."
-            continue
-        }
+# Validate required inputs. These must come from -Parameter or $env: -- there is no prompt.
+$missing = @()
+if (-not $DomainName)       { $missing += 'DomainName' }
+if (-not $DomainUsername)   { $missing += 'DomainUsername' }
+if (-not $DomainPassword)   { $missing += 'DomainPassword' }
+if (-not $DefaultLoginUser) { $missing += 'DefaultLoginUser' }
+if ($missing.Count -gt 0) {
+    Write-Error "ERROR: Required input(s) not provided (set as -Parameter or `$env:): $($missing -join ', ')"
+    exit 1
+}
 
-        $SecurePassword = Read-Host "Enter domain password" -AsSecureString
-        $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SecurePassword)
-        $DomainPassword = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR)
-        [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($BSTR)
-
-        if (-not $DomainPassword) {
-            Write-Host "Domain password is required."
-            continue
-        }
-
-        $DefaultLoginUser = Read-Host "Enter default login user (e.g., DOMAIN\username or username@domain.com)"
-        if (-not $DefaultLoginUser) {
-            Write-Host "Default login user is required."
-            continue
-        }
-
-        $ValidInput = 1
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "Automated Domain Join"
-    }
-
-    # Validate required RMM variables
-    if ($null -eq $DomainName -or $null -eq $DomainUsername -or $null -eq $DomainPassword -or $null -eq $DefaultLoginUser) {
-        Write-Error "ERROR: DomainName, DomainUsername, DomainPassword, and DefaultLoginUser must be set when running from RMM"
-        exit 1
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -82,7 +55,6 @@ Start-Transcript -Path $LogPath
 Write-Host "=== Domain Join Script ==="
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "Domain Name: $DomainName"
 Write-Host "Domain Username: $DomainUsername"
 Write-Host "Default Login User: $DefaultLoginUser"

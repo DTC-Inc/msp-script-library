@@ -1,30 +1,36 @@
 # This script sets all backup copy schedules to run daily at 10:00 PM.
 
-# Getting input from user if not running from RMM else set variables from RMM.
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $description   / $env:description   - Ticket # and/or initials, used as the job description
+## $rmmScriptPath / $env:rmmScriptPath - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-description ...) or from an RMM that supplies values as env variables.
+    [string]$description   = $env:description,
+    [string]$rmmScriptPath = $env:rmmScriptPath
+)
 
 Write-Host $description
 Write-Host $rmmScriptPath
-Write-Host $rmm
 
 $scriptLogName = "veeam-set-backup-copy-schedule.log"
 
-if ($rmm -ne 1) {
-    $validInput = 0
-    # Only running if S3 Copy Job is true for this part.
-    while ($validInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make validInput = 1 whenever correct input is given.
-        $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
-        $validInput = 1
-    }
-    $logPath = "$env:WINDIR\logs\$scriptLogName"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
+# The description is required: it is the audit-trail tag written onto every job. There is no
+# prompt fallback, so fail fast if it was not supplied as a -Parameter or $env: variable.
+if ([string]::IsNullOrEmpty($description)) {
+    Write-Error "ERROR: Required input 'description' not provided (set as -Parameter or `$env:description). It is used as the description for the job."
+    exit 1
+}
 
-} else { 
-    # Store the logs in the rmmScriptPath
+# Store the logs in the rmmScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($rmmScriptPath)) {
     $logPath = "$rmmScriptPath\logs\$scriptLogName"
-    
-
+} else {
+    $logPath = "$env:WINDIR\logs\$scriptLogName"
 }
 
 Start-Transcript -Path $logPath

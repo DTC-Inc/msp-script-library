@@ -4,13 +4,23 @@
 ## Bucket sizes come from Backblaze's daily usage reports stored in
 ## the b2-reports-{accountId} bucket (generated automatically by B2).
 ##
-## $env:B2_KEY_ID              - Backblaze B2 application key ID
-## $env:B2_APP_KEY             - Backblaze B2 application key
-## $env:ACTIVE_BUCKETS_CSV     - Comma-separated list of bucket names in active use
-##                                (or path to a .txt/.csv file with one bucket per line)
-## $env:CUSTOM_FIELD_B2_AUDIT  - NinjaOne WYSIWYG field for the bucket audit table
-## $env:DESCRIPTION            - Ticket # or initials for audit trail
-## $env:RMM                    - Set to 1 when running from RMM platform
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $B2_KEY_ID             / $env:B2_KEY_ID             - Backblaze B2 application key ID
+## $B2_APP_KEY            / $env:B2_APP_KEY            - Backblaze B2 application key
+## $ACTIVE_BUCKETS_CSV    / $env:ACTIVE_BUCKETS_CSV    - Comma-separated list of bucket names in active use
+##                                                       (or path to a .txt/.csv file with one bucket per line)
+## $CUSTOM_FIELD_B2_AUDIT / $env:CUSTOM_FIELD_B2_AUDIT - NinjaOne WYSIWYG field for the bucket audit table
+## $DESCRIPTION           / $env:DESCRIPTION           - Ticket # or initials for audit trail
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-B2_KEY_ID ...) or from an RMM that supplies values as env variables.
+    [string]$B2_KEY_ID             = $env:B2_KEY_ID,
+    [string]$B2_APP_KEY            = $env:B2_APP_KEY,
+    [string]$ACTIVE_BUCKETS_CSV    = $env:ACTIVE_BUCKETS_CSV,
+    [string]$CUSTOM_FIELD_B2_AUDIT = $env:CUSTOM_FIELD_B2_AUDIT,
+    [string]$DESCRIPTION           = $env:DESCRIPTION
+)
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -42,20 +52,14 @@ function Set-NinjaField {
 # INPUT HANDLING
 # ============================================================
 
-if ($env:RMM -ne "1") {
-    if (-not $env:B2_KEY_ID) {
-        $env:B2_KEY_ID = Read-Host "Backblaze B2 application key ID"
-    }
-    if (-not $env:B2_APP_KEY) {
-        $env:B2_APP_KEY = Read-Host "Backblaze B2 application key"
-    }
-    if (-not $env:ACTIVE_BUCKETS_CSV) {
-        $env:ACTIVE_BUCKETS_CSV = Read-Host "Active bucket names (comma-separated, or path to file, or blank to show all)"
-    }
-    if (-not $env:CUSTOM_FIELD_B2_AUDIT) {
-        $env:CUSTOM_FIELD_B2_AUDIT = Read-Host "NinjaOne WYSIWYG field for audit table (blank to skip)"
-    }
-}
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in. Non-interactive by design:
+# inputs come only from -Parameter or $env:, never an interactive prompt.
+if (-not [string]::IsNullOrEmpty($B2_KEY_ID))             { $env:B2_KEY_ID             = $B2_KEY_ID }
+if (-not [string]::IsNullOrEmpty($B2_APP_KEY))            { $env:B2_APP_KEY            = $B2_APP_KEY }
+if (-not [string]::IsNullOrEmpty($ACTIVE_BUCKETS_CSV))    { $env:ACTIVE_BUCKETS_CSV    = $ACTIVE_BUCKETS_CSV }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_B2_AUDIT)) { $env:CUSTOM_FIELD_B2_AUDIT = $CUSTOM_FIELD_B2_AUDIT }
+if (-not [string]::IsNullOrEmpty($DESCRIPTION))           { $env:DESCRIPTION           = $DESCRIPTION }
 
 if (-not $env:B2_KEY_ID -or -not $env:B2_APP_KEY) {
     Write-Error "B2_KEY_ID and B2_APP_KEY are required."

@@ -1,7 +1,9 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $Description - Ticket # or initials for audit trail
-## $ExcludeCurrentProcess - Set to 1 to exclude the current PowerShell process (default: 1)
-## $KillPwshCore - Set to 1 to also kill pwsh.exe (PowerShell 7+) (default: 0)
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description           / $env:Description           - Ticket # or initials for audit trail
+## $ExcludeCurrentProcess / $env:ExcludeCurrentProcess - Set to 1 to exclude the current PowerShell process (default: 1)
+## $KillPwshCore          / $env:KillPwshCore          - Set to 1 to also kill pwsh.exe (PowerShell 7+) (default: 0)
+## $RMMScriptPath         / $env:RMMScriptPath         - Optional log directory base provided by the RMM
 
 # Kill PowerShell Processes Script
 # Use this to terminate runaway or stuck RMM scripts
@@ -10,28 +12,37 @@
 # 0 = Success (processes killed or none found)
 # 1 = Failed to kill one or more processes
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description           = $env:Description,
+    [string]$ExcludeCurrentProcess = $env:ExcludeCurrentProcess,
+    [string]$KillPwshCore          = $env:KillPwshCore,
+    [string]$RMMScriptPath         = $env:RMMScriptPath
+)
+
 $ScriptLogName = "Kill-PowerShell.log"
 
-if ($RMM -ne 1) {
-    $Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    $Description = "RMM Emergency Kill"
+}
+
+# Default the optional behavior flags when not supplied.
+if ([string]::IsNullOrEmpty($ExcludeCurrentProcess)) {
     $ExcludeCurrentProcess = 1
+}
+if ([string]::IsNullOrEmpty($KillPwshCore)) {
     $KillPwshCore = 0
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-    if ($null -eq $Description) {
-        $Description = "RMM Emergency Kill"
-    }
-    if ($null -eq $ExcludeCurrentProcess) {
-        $ExcludeCurrentProcess = 1
-    }
-    if ($null -eq $KillPwshCore) {
-        $KillPwshCore = 0
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists

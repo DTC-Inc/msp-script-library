@@ -1,68 +1,37 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $RMM
-## $RMMScriptPath
-## $Description
-## $autoConfirm
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail (default: "No Description")
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
+## $autoConfirm   / $env:autoConfirm   - Set to 1 to proceed with destructive disk ops; anything else cancels (default: 1)
 
-### ————— MSP RMM VARIABLE INITIALIZATION GOES HERE —————
-# Example for NinjaRMM:
-# $RMM = 1
-# $autoConfirm = 1  # Set to 1 to skip confirmation prompts
-#
-# Example for ConnectWise Automate:
-# $RMM = 1
-# $autoConfirm = 1
-#
-# Example for Datto RMM:
-# $RMM = 1
-# $autoConfirm = 1
-### ————— END RMM VARIABLE INITIALIZATION —————
-
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$RMMScriptPath = $env:RMMScriptPath,
+    [string]$autoConfirm   = $env:autoConfirm
+)
 
 $ScriptLogName = "msft-windows-disk-extend-recovery.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    # Interactive mode defaults to requiring confirmation
-    if ($null -eq $autoConfirm) {
-        $autoConfirm = 0
-    }
+# Default the audit-trail description if it was not supplied.
+if ($null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
 
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Default to auto-confirm so unattended/RMM runs proceed without an interactive prompt.
+if ($null -eq $autoConfirm -or $autoConfirm -eq "") {
+    $autoConfirm = 1
+}
 
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }
-
-    # RMM mode defaults to auto-confirm
-    if ($null -eq $autoConfirm) {
-        $autoConfirm = 1
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -71,7 +40,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "Auto-Confirm: $autoConfirm"
 
 <#
@@ -356,7 +324,7 @@ else {
     exit 0
 }
 
-### ————— CONFIRMATION PROMPT —————
+### ————— CONFIRMATION GATE —————
 if ($autoConfirm -ne 1) {
     Write-Output "`n=========================================="
     Write-Output "CONFIRMATION REQUIRED"
@@ -364,13 +332,9 @@ if ($autoConfirm -ne 1) {
     Write-Warning "This operation will modify disk partitions. This is a DESTRUCTIVE operation."
     Write-Warning "Ensure you have backups before proceeding."
     Write-Output ""
-    $confirmation = Read-Host "Type 'YES' (in all caps) to proceed with the action plan"
-
-    if ($confirmation -ne "YES") {
-        Write-Output "Operation cancelled by user."
-        Stop-Transcript
-        exit 0
-    }
+    Write-Output "Operation cancelled: autoConfirm was not set to 1. Re-run with -autoConfirm 1 (or `$env:autoConfirm = '1') to proceed."
+    Stop-Transcript
+    exit 0
 } else {
     Write-Output "Auto-confirm enabled. Proceeding with action plan..."
 }

@@ -1,5 +1,12 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description         / $env:Description         - Ticket # or initials for audit trail (defaults to "No Description")
+## $InstallationUsers   / $env:InstallationUsers   - REQUIRED. Comma-separated usernames from pre-staging/staging to remove
+## $ExcludedUsers       / $env:ExcludedUsers       - REQUIRED. Comma-separated usernames to exclude from cleanup
+## $InactivityDays      / $env:InactivityDays      - REQUIRED. Days of inactivity before disabling installation users
+## $AdminInactivityDays / $env:AdminInactivityDays - REQUIRED. Days of inactivity before disabling local admins
+## $RMMScriptPath       / $env:RMMScriptPath       - Optional log directory base provided by the RMM
 
 # This script disables and removes any pre-staging administrative users from a windows endpoint with a specified age of inactivity in days.
 # It also disables any local admin after a specified time period in days. It does not remove other local admins.
@@ -13,47 +20,46 @@
 
 # $AdminInactivityDays needs set to the amount of days to remove local admins that aren't part of the installation users list.
 
-
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs identically from the
+    # command line (-InstallationUsers ...) or from an RMM that supplies the values as env variables.
+    [string]$Description         = $env:Description,
+    [string]$InstallationUsers   = $env:InstallationUsers,
+    [string]$ExcludedUsers       = $env:ExcludedUsers,
+    [string]$InactivityDays      = $env:InactivityDays,
+    [string]$AdminInactivityDays = $env:AdminInactivityDays,
+    [string]$RMMScriptPath       = $env:RMMScriptPath
+)
 
 $ScriptLogName = "msft-win-localuser-cleanup.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        $InstallationUsers = Read-Host "Please enter comma separated usernames of installation users to remove quickly"
-        $ExcludedUsers = Read-Host "Please enter the users you wish to exclude from cleanup."
-        $InactivityDays = Read-Host "Please enter the amount of days a user needs to be inactive to be disabled"
-        $AdminInactivityDays = Read-Host "PLease enter the amount days all admins must be inative before disabling"
-        Write-Host "Please note, Installation Users will be deleted after $InactivityDays"
-        Write-Host "Please note, all other Administrator Users will be deleted after $AdminInactivityDays"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $ValidInput = 1
-        
-    }
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
+
+# Validate required inputs. These must come from -Parameter or $env: -- there is no prompt.
+$missing = @()
+if ([string]::IsNullOrEmpty($InstallationUsers))   { $missing += 'InstallationUsers' }
+if ([string]::IsNullOrEmpty($ExcludedUsers))       { $missing += 'ExcludedUsers' }
+if ([string]::IsNullOrEmpty($InactivityDays))      { $missing += 'InactivityDays' }
+if ([string]::IsNullOrEmpty($AdminInactivityDays)) { $missing += 'AdminInactivityDays' }
+if ($missing.Count -gt 0) {
+    Write-Error "ERROR: Required input(s) not provided (set as -Parameter or `$env:): $($missing -join ', ')"
+    exit 1
+}
+
+Write-Host "Please note, Installation Users will be deleted after $InactivityDays"
+Write-Host "Please note, all other Administrator Users will be deleted after $AdminInactivityDays"
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -62,7 +68,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 
 # Define a comma-separated string of installation users to check
 #$InstallationUsers = "installadmin,testuser,backupadmin"

@@ -1,10 +1,39 @@
 ## Apply lifecycle rule to existing B2 buckets to purge hidden (old) file versions.
 ## Fixes the storage bloat where B2 keeps all versions forever.
 ##
-## $env:B2_ADMIN_KEY_ID   - Master B2 application key ID
-## $env:B2_ADMIN_APP_KEY  - Master B2 application key
-## $env:BUCKET_NAME       - Target bucket name (or "ALL" to apply to all *-veeam buckets)
-## $env:PURGE_DAYS        - Days after hiding before deletion (default: 15)
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $B2_ADMIN_KEY_ID  / $env:B2_ADMIN_KEY_ID  - Master B2 application key ID
+## $B2_ADMIN_APP_KEY / $env:B2_ADMIN_APP_KEY - Master B2 application key
+## $BUCKET_NAME      / $env:BUCKET_NAME      - Target bucket name (or "ALL" to apply to all *-veeam buckets)
+## $PURGE_DAYS       / $env:PURGE_DAYS       - Days after hiding before deletion (default: 15)
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-BUCKET_NAME ...) or from an RMM that supplies values as env variables.
+    [string]$B2_ADMIN_KEY_ID  = $env:B2_ADMIN_KEY_ID,
+    [string]$B2_ADMIN_APP_KEY = $env:B2_ADMIN_APP_KEY,
+    [string]$BUCKET_NAME      = $env:BUCKET_NAME,
+    [string]$PURGE_DAYS       = $env:PURGE_DAYS
+)
+
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($B2_ADMIN_KEY_ID))  { $env:B2_ADMIN_KEY_ID  = $B2_ADMIN_KEY_ID }
+if (-not [string]::IsNullOrEmpty($B2_ADMIN_APP_KEY)) { $env:B2_ADMIN_APP_KEY = $B2_ADMIN_APP_KEY }
+if (-not [string]::IsNullOrEmpty($BUCKET_NAME))      { $env:BUCKET_NAME      = $BUCKET_NAME }
+if (-not [string]::IsNullOrEmpty($PURGE_DAYS))       { $env:PURGE_DAYS       = $PURGE_DAYS }
+
+# Validate required inputs. These must come from -Parameter or $env: -- there is no prompt.
+$missing = @()
+if (-not $env:B2_ADMIN_KEY_ID)  { $missing += 'B2_ADMIN_KEY_ID' }
+if (-not $env:B2_ADMIN_APP_KEY) { $missing += 'B2_ADMIN_APP_KEY' }
+if (-not $env:BUCKET_NAME)      { $missing += 'BUCKET_NAME' }
+if ($missing.Count -gt 0) {
+    Write-Error "ERROR: Required input(s) not provided (set as -Parameter or `$env:): $($missing -join ', ')"
+    exit 1
+}
 
 function Invoke-B2Api {
     param([string]$Uri, [string]$Method = "POST", [string]$AuthToken, [string]$Body)
@@ -15,10 +44,6 @@ function Invoke-B2Api {
     if ($Body) { $PARAMS['Body'] = $Body }
     return Invoke-RestMethod @PARAMS
 }
-
-if (-not $env:B2_ADMIN_KEY_ID) { $env:B2_ADMIN_KEY_ID = Read-Host "B2 admin key ID" }
-if (-not $env:B2_ADMIN_APP_KEY) { $env:B2_ADMIN_APP_KEY = Read-Host "B2 admin app key" }
-if (-not $env:BUCKET_NAME) { $env:BUCKET_NAME = Read-Host "Bucket name (or ALL for all *-veeam buckets)" }
 
 $PURGE_DAYS = 15
 if ($env:PURGE_DAYS) { try { $PURGE_DAYS = [int]$env:PURGE_DAYS } catch {} }

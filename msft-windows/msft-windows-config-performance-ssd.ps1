@@ -1,6 +1,8 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
-## $DisableScheduledTasks = $true   # Disable telemetry scheduled tasks
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description           / $env:Description           - Ticket # or initials for audit trail
+## $DisableScheduledTasks / $env:DisableScheduledTasks - Disable telemetry scheduled tasks (default: $true)
+## $RMMScriptPath         / $env:RMMScriptPath         - Optional log directory base provided by the RMM
 
 # This script applies SSD performance optimizations:
 # - Disables SysMain (Superfetch) service
@@ -11,39 +13,33 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description           = $env:Description,
+    [bool]  $DisableScheduledTasks = $(if ([string]::IsNullOrEmpty($env:DisableScheduledTasks)) { $true } else { [System.Convert]::ToBoolean($env:DisableScheduledTasks) }),
+    [string]$RMMScriptPath         = $env:RMMScriptPath
+)
+
 $ScriptLogName = "msft-windows-config-performance-ssd.log"
 
-# Default values
-if ($null -eq $DisableScheduledTasks) { $DisableScheduledTasks = $true }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+if ($null -eq $Description) {
+    $Description = "RMM-initiated SSD performance optimization"
+}
+
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated SSD performance optimization"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== SSD Performance Optimization ===" -ForegroundColor Cyan
