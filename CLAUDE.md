@@ -49,6 +49,7 @@ All scripts follow a consistent three-part structure defined in `script-template
 Scripts are organized by category prefixes:
 - `app-*`: Application-specific scripts (Duo, Adobe, Teramind, etc.)
 - `bdr-*`: Backup and Disaster Recovery (Veeam, MSP360)
+- `db-*`: Database engines (MySQL, etc.)
 - `iaas-*`: Infrastructure as a Service (Azure, Backblaze, Dynu)
 - `mw-*`: Middleware/Microsoft 365 scripts
 - `msft-*`: Microsoft Windows system scripts
@@ -511,6 +512,88 @@ if ($veeamVersion -ge $requiredVersion) {
 }
 ```
 
+### OEM Vendor Scripts
+
+OEM scripts (`oem-dell/`, `oem-hp/`, `oem-lenovo/`) deploy and operate the vendor lifecycle tools for endpoint hardware ... BIOS configuration, driver/firmware updates, and consumer-software debloat. Each OEM follows the same four-leaf shape and the same patterns.
+
+#### The four-leaf shape
+
+Every OEM lives at the repo root under `oem-<vendor>/` and ships exactly four scripts, each independently runnable from RMM. RMM presets compose them per device-class:
+
+| Leaf | Purpose | Internet check? |
+|---|---|---|
+| `<oem>-configure.ps1` | Apply BIOS settings from `$env:BIOS_*` env vars. Operates on already-installed Command Configure / equivalent tooling. | No |
+| `<oem>-command-update-install.ps1` | Install or upgrade the vendor update tool (Dell Command Update, HP Image Assistant, Lenovo System Update). | Yes |
+| `<oem>-command-update-run.ps1` | Scan + apply driver/firmware updates via the vendor CLI. Operates on already-installed tooling. | No |
+| `<oem>-debloat.ps1` | Uninstall the vendor's consumer software (e.g. SupportAssist, MyDell). Keeps the lifecycle tools. | No |
+
+Each leaf is self-contained: its OEM detection, vendor-tool detection, and translation tables are inlined directly in the file. No `lib/` subfolder, no `src/`, no build system. Helpers that multiple leaves need get duplicated across those leaves.
+
+#### `configure` not `baseline`
+
+The leaf is named `<oem>-configure.ps1`, not `<oem>-baseline.ps1`. The RMM operator's env-var set is the desired state. There is no static policy file in the repo. The naming is explicit so contributors don't go looking for a `.cctk` / `.repset` / WMI policy that doesn't exist.
+
+#### `$env:BIOS_*` canonical settings table
+
+Settings are operator-set via canonical environment variables. Each `<oem>-configure.ps1` carries its own per-OEM translation map inline that maps canonical names to vendor-native syntax. Unknown canonical names or unsupported values are logged and skipped so forward-looking presets don't break the run.
+
+| Canonical variable | Type / allowed values | Dell | HP | Lenovo |
+|---|---|---|---|---|
+| `$env:BIOS_AdminPassword` | string (current admin pw, required to apply settings) | yes | yes | yes |
+| `$env:BIOS_AdminPasswordNew` | string (new admin pw to set; empty = no change) | yes | yes | yes |
+| `$env:BIOS_TPMEnabled` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_TPMActivation` | `Activated` / `Deactivated` | yes | n/a (HP couples activation with enable) | yes |
+| `$env:BIOS_SecureBoot` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_VirtualizationCPU` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_VirtualizationIOMMU` | `Enabled` / `Disabled` | yes | yes | yes |
+| `$env:BIOS_WakeOnLAN` | `Enabled` / `Disabled` / `LANOnly` / `LANWLAN` | yes (Dell maps `Enabled` -> `lan`) | yes | yes |
+| `$env:BIOS_BootMode` | `UEFI` / `Legacy` | yes | yes | yes |
+
+Operators set the vars they want to apply; leave the rest blank. Each `<oem>-configure.ps1` iterates the canonical names, looks each up in its inline translation table, and emits the vendor-native call.
+
+#### Internet check pattern (install leaves only)
+
+`*-command-update-install.ps1` is the only leaf that needs vendor download connectivity. It checks before pulling the installer and skips cleanly when offline:
+
+```powershell
+function Test-InternetAvailable {
+    try {
+        $resp = Invoke-WebRequest -Uri 'https://www.msftconnecttest.com/connecttest.txt' `
+            -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+        return ($resp.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
+if (-not (Test-InternetAvailable)) {
+    Write-Host "No internet connectivity detected ... skipping vendor install. Exit 0."
+    if ($TranscriptStarted) { Stop-Transcript }
+    exit 0
+}
+```
+
+The other three leaves (`*-configure`, `*-command-update-run`, `*-debloat`) operate on already-installed tooling and intentionally do **not** include the internet check. They should still run on an endpoint that's momentarily offline.
+
+#### Self-contained guidance
+
+Each OEM leaf is independently runnable from RMM and inlines its own helpers (manufacturer check, vendor-tool detection, BIOS translation table, internet check where needed). The trade-off versus a shared `lib/` is intentional:
+
+- Duplicated helpers across Dell + HP + Lenovo land in the 30-50 line range.
+- Reading any one script tells you exactly what it does without grepping for includes or fat-script build output.
+- No build system to operate, no `published/` branch, no marker syntax to learn.
+
+If you find yourself wanting to share a helper across many scripts, copy it. Sweep drift via a Pester test or a periodic refactor PR ... not a build pipeline.
+
+The standard gate sequence after the RMM-vs-interactive section:
+
+1. Manufacturer check ... `if (-not (Test-DellHardware)) { Write-Host "Not a Dell endpoint. Skipping."; exit 0 }`
+2. (Install leaves only) `if (-not (Test-InternetAvailable)) { Write-Host "Offline. Skipping vendor install."; exit 0 }`
+3. Vendor-tool presence check where required (e.g. `Test-DCUInstalled` for `dell-command-update-run`).
+4. Do the actual work.
+
+Canonical example: `oem-dell/dell-configure.ps1`, `oem-dell/dell-command-update-install.ps1`, `oem-dell/dell-command-update-run.ps1`, `oem-dell/dell-debloat.ps1`.
+
 ## Testing Scripts
 
 - **Interactive Testing**: Run script directly in PowerShell without setting `$env:RMM`. The script will prompt for `$env:Description` via `Read-Host`.
@@ -533,13 +616,100 @@ if ($veeamVersion -ge $requiredVersion) {
 
 ## Git Workflow
 
-**Branching Model:**
-* `development` — default branch (HEAD), active work lands here
-* `release` — stable/production branch, merged from development when ready
-* `enhancement/{name}` — branched from development for new functionality
-* `problem/{name}` — branched from development for bug fixes and issue resolution
-* No `main` or `master` branches
+See [DTC KB ... Change Taxonomy](https://kb.dtctoday.com/books/developer-operations-devops/page/change-taxonomy) for the canonical reference. This file mirrors the rules; the KB is authoritative.
 
-**GitHub Issues & Labels:**
-* New functionality uses the **enhancement** label, not "feature"
-* Configure repository labels accordingly
+**Branching Model:**
+* `main` ... default branch and release branch. Production code deployed to customer environments lives here.
+* This repo has no `development` branch. Feature/fix PRs target `main` directly.
+* All changes go through a typed branch and a pull request ... no direct commits to `main` (exception: minor `CLAUDE.md` / `README.md` doc updates that do not affect script functionality).
+
+**CRITICAL: All changes must be made in a typed branch, never directly to `main`.**
+
+### Change Taxonomy (two-tier ... Halo / GitHub / branch)
+
+Every change to this repo maps to one of four categories under two parent types. The category drives the branch prefix, the GitHub labels, and the default semver bump (future-state: this repo has no semver versioning today, but the bump column is recorded for when it does). `Refactor` spans both parent types ... see the table.
+
+| Halo Type | Halo Category | GitHub labels | Branch prefix | Default semver |
+|---|---|---|---|---|
+| `Problem` | `Bug` | `type:problem` + `category:bug` | `bug/{name}` | Patch |
+| `Problem` | `Refactor` | `type:problem` + `category:refactor` | `refactor/{name}` | Patch |
+| `Enhancement` | `Feature` | `type:enhancement` + `category:feature` | `feature/{name}` | Minor |
+| `Enhancement` | `Improvement` | `type:enhancement` + `category:improvement` | `improvement/{name}` | Minor |
+| `Enhancement` | `Refactor` | `type:enhancement` + `category:refactor` | `refactor/{name}` | Minor |
+
+How to pick:
+- **Bug** ... the script doesn't do what it was designed to do. Null check missing, wrong path, broken regex, off-by-one.
+- **Refactor** ... a redesign of how something is shaped. Spans both parent types ... `Problem/Refactor` when the original design was wrong (broken-shape redo, patch bump); `Enhancement/Refactor` when the original design works but is clunky (working-but-clunky redo, minor bump). Same branch prefix and same `category:refactor` label either way; the parent type column disambiguates motivation and semver.
+- **Improvement** ... an existing capability done better. Hardening, polish, clearer error output, integrity checks added to existing downloads.
+- **Feature** ... net-new capability. A new script, new delivery mechanism, new integration target.
+
+**`BREAKING:` PR title prefix** forces a major version bump regardless of category. (Future-state: applies once this repo carries a semver version.)
+
+**Name branches after the change, not the fix.** Good: `bug/iso-dismount-fails-on-server-2022`, `feature/jsdelivr-script-delivery`. Bad: `bug/my-fix`, `feature/wip`.
+
+**`dependabot/*` branches** ... categorize by the upstream change. CVE or upstream defect → `bug`. Major-version bump that takes new capability → `improvement` or `feature`.
+
+**Legacy prefixes:** `enhancement/` and `problem/` are deprecated by this taxonomy. Existing branches with these prefixes are accepted as-is and can merge under their original names; new work uses the four-prefix model above (`bug/`, `refactor/`, `improvement/`, `feature/`).
+
+### GitHub Labels
+
+Two-tier label set, one of each per PR:
+
+**Type labels:** `type:problem`, `type:enhancement`
+
+**Category labels:** `category:bug`, `category:refactor`, `category:improvement`, `category:feature`
+
+The legacy single-tier labels (`bug`, `enhancement`, `feature`) remain on the repo for issues opened under the old convention. New issues and PRs use the two-tier labels.
+
+### Workflow for All Changes
+
+1. **Create a typed branch off `main`**
+   ```bash
+   git checkout main
+   git pull
+   git checkout -b feature/descriptive-name
+   # or bug/, refactor/, improvement/ per the taxonomy above
+   ```
+
+   Examples:
+   - `feature/jsdelivr-script-delivery`
+   - `improvement/vendor-download-integrity`
+   - `bug/iso-dismount-error`
+   - `refactor/rmm-input-handler-shared-helper`
+
+2. **Make changes on the branch**
+   - Make all code modifications on the typed branch
+   - Commit changes with descriptive messages
+   - Test thoroughly in both interactive and RMM modes
+
+3. **Push branch**
+   ```bash
+   git push -u origin feature/descriptive-name
+   ```
+
+4. **Create pull request**
+   - Open PR from your branch to `main`
+   - Apply the two labels from the taxonomy table (one `type:*` + one `category:*`)
+   - Include description of changes, testing performed, and RMM compatibility
+   - Wait for review and approval before merging
+
+5. **Merge to `main`**
+   - Only merge after testing and approval
+   - Delete the branch after successful merge
+
+### If Changes Are Accidentally Committed to Main
+
+```bash
+# Revert the commit from main
+git revert <commit-hash> --no-edit
+git push
+
+# Create the typed branch and restore the changes
+git checkout -b feature/descriptive-name
+git cherry-pick <commit-hash>
+git push -u origin feature/descriptive-name
+```
+
+### Exception: Documentation Updates
+
+Minor documentation updates to `CLAUDE.md` or `README.md` may be committed directly to `main` if they do not affect script functionality.
