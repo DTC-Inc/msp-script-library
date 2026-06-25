@@ -9,22 +9,34 @@ These scripts form the automated BDR provisioning and monitoring pipeline. They 
 ### veeam-configure-backblaze-repo.ps1
 Creates a Backblaze B2 bucket and registers it as a Veeam S3-compatible repository.
 
+**Storage isolation is per-LOCATION, per-DEVICE:**
+
+```
+bucket:  veeam-{location-ouid-flat}     (one bucket per location)
+folder:  {device-ouid-dashed}/          (one repository root per BDR; Veeam owns everything below)
+```
+
+Locations get bought and sold, so the bucket tracks the location OUID (looked up at runtime from NinjaOne), not the org. The per-device folder is the BDR's device OUID, so a single location bucket can hold more than one BDR. The device OUID is recomputable from a stable source (minted once, persisted on the device), so re-runs and rebuilds resolve to the SAME folder and reclaim existing data. See [Cloud Backup Architecture Standards](https://kb.dtctoday.com/books/dtcs-pillars-of-technology/page/cloud-backup-architecture-standards) and [OUID Standard](https://kb.dtctoday.com/books/dtcs-pillars-of-technology/page/operational-uuid-ouid-standard).
+
+> **Prerequisite:** the device must already have a Device GUID. Run `rmm-ninja/ninja-ensure-device-guid.ps1` first (mints + persists the device OUID). This script fails fast if no Device GUID is found.
+
 **What it does:**
-1. Reads org UUID from NinjaRMM org-level field
-2. Creates a B2 bucket: `{org_uuid_nodashes}-{time_short_id}-veeam`
-3. Enables Object Lock (for immutability) and SSE-B2 encryption
+1. Reads location OUID from the NinjaRMM location field; computes bucket `veeam-{location-ouid-flat}`
+2. Resolves this device's OUID (registry `HKLM\SOFTWARE\DTC\DeviceGuid`, then NinjaOne field)
+3. Creates the B2 bucket; enables Object Lock (for immutability) and SSE-B2 encryption
 4. Sets lifecycle rule to purge hidden file versions after immutability + 1 day
 5. Creates a scoped B2 application key restricted to that bucket only
 6. Saves bucket name + scoped key to NinjaRMM device fields (before Veeam step)
-7. Registers the Veeam S3 repository with immutability enabled
+7. Registers the Veeam S3 repository with immutability enabled, rooted at the `{device-ouid}/` folder
 
-**Idempotency:** If bucket name + keys already exist in NinjaRMM, skips B2 creation and only creates the Veeam repo. Safe to re-run after failures.
+**Idempotency:** Bucket name and folder are both deterministic (location OUID, device OUID), so re-runs target the same paths. If bucket name + keys already exist in NinjaRMM, skips B2 creation and only creates the Veeam repo. Safe to re-run after failures.
 
 **NinjaRMM Fields:**
 
 | Variable | Level | Type | Purpose |
 |----------|-------|------|---------|
-| `CUSTOM_FIELD_ORG_UUID` | Org | Text | Organization UUID (read via Ninja-Property-Get) |
+| `CUSTOM_FIELD_LOCATION_UUID` | Location | Text | Location OUID (read via Ninja-Property-Get) |
+| `CUSTOM_FIELD_DEVICE_GUID` | Device | Text | Device OUID (fallback if registry empty; see ninja-ensure-device-guid.ps1) |
 | `B2_ADMIN_KEY_ID` | Org | Text | Master B2 key ID (never stored on device) |
 | `B2_ADMIN_APP_KEY` | Org | Secure | Master B2 app key |
 | `B2_ENDPOINT` | Org | Text | e.g. `https://s3.us-west-002.backblazeb2.com` |
@@ -65,6 +77,8 @@ Comprehensive inventory and health check. Populates multiple NinjaRMM fields.
 
 **What it detects:**
 - S3 bucket name and storage size (via Veeam backup copy job + child backup storages)
+- **Active vs inactive S3 repositories.** Active = a backup copy job currently targets the repo (live pipeline). Inactive = a registered S3 repo with no copy job pointing at it (e.g. a pre-move bucket left behind, still billable). Rendered as two separate tables in the inventory field, each with a Last Backup column.
+- **Total used space across all S3 repos** (active + inactive) — the full B2 footprint, so leftover buckets show up in the cost picture.
 - Orphaned/stale backups across all repos (configurable threshold, default 30 days)
 - Failed backup jobs (checks most recent session per job, clears when job succeeds)
 - Missing S3 copy job (no S3 repo, no copy job, or missing source jobs)
@@ -75,7 +89,8 @@ Comprehensive inventory and health check. Populates multiple NinjaRMM fields.
 |----------|------|---------|
 | `CUSTOM_FIELD_S3_BUCKET_NAME` | Text | Last used S3 bucket name |
 | `CUSTOM_FIELD_S3_BUCKET_SIZE` | Text | Last used S3 bucket size |
-| `CUSTOM_FIELD_S3_INVENTORY` | WYSIWYG | HTML table of all S3 repos |
+| `CUSTOM_FIELD_S3_TOTAL_SIZE` | Text | Total used space across ALL S3 repos (active + inactive) |
+| `CUSTOM_FIELD_S3_INVENTORY` | WYSIWYG | HTML tables: active + inactive S3 repos, with total |
 | `CUSTOM_FIELD_ORPHANS_FOUND` | Checkbox | 1 if orphaned backups exist |
 | `CUSTOM_FIELD_ORPHANED_BACKUPS` | WYSIWYG | HTML table of orphaned backups |
 | `CUSTOM_FIELD_FAILED_BACKUP` | Checkbox | 1 if any job's last run failed |

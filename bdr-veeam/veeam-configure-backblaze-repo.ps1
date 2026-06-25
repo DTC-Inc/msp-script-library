@@ -2,15 +2,27 @@
 ## read/write access to only that bucket, registers the Veeam S3 repository
 ## using the scoped key, and stores credentials in NinjaRMM device fields.
 ##
-## Bucket naming: {ORG_UUID_no_dashes}-{time_based_short_id}-veeam
+## Bucket naming: veeam-{LOCATION_OUID_no_dashes}
+## Folder (object prefix) inside the bucket: {device_ouid_dashed}/
 ## Veeam repository name = bucket name
+##
+## Isolation is per-LOCATION (not per-org): locations get bought and sold, so the
+## storage boundary tracks the location OUID, read at runtime from NinjaOne. The
+## per-DEVICE folder (the BDR's device OUID) is the repository root for this BDR.
+## A single location bucket can hold more than one BDR while keeping each one's
+## data in its own prefix. The device OUID is used (not Veeam's internal instance
+## GUID, not a timestamp) because it is recomputable from a stable source: it is
+## minted once and persisted on the device (registry + NinjaOne), so re-runs and
+## rebuilds resolve to the SAME folder and reclaim existing data. Mint it first
+## with rmm-ninja\ninja-ensure-device-guid.ps1.
 ##
 ## ADMIN CREDENTIALS (org-level in NinjaRMM, used to create bucket + scoped key):
 ## $env:B2_ADMIN_KEY_ID               - Master/admin B2 application key ID
 ## $env:B2_ADMIN_APP_KEY              - Master/admin B2 application key
 ##
 ## CONFIGURATION:
-## $env:CUSTOM_FIELD_ORG_UUID          - NinjaOne text field containing the organization UUID (REQUIRED)
+## $env:CUSTOM_FIELD_LOCATION_UUID     - NinjaOne text field containing the location OUID (REQUIRED)
+## $env:CUSTOM_FIELD_DEVICE_GUID       - NinjaOne device text field containing the device OUID (fallback if registry is empty)
 ## $env:B2_ENDPOINT                   - S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)
 ## $env:B2_REGION                     - S3 region ID (e.g. us-west-002)
 ## $env:IMMUTABILITY_DAYS             - Object lock immutability period in days (default: 14)
@@ -78,19 +90,39 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 # HELPER FUNCTIONS
 # ============================================================
 
-function New-TimeBasedShortId {
-    # Generates a short time-based ID from a UUIDv7-style timestamp.
-    # Uses milliseconds since Unix epoch encoded in base36 for compactness.
-    # 8 chars of base36 = ~2.8 trillion values, unique to the millisecond.
-    $MS = [long]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-    $CHARS = "0123456789abcdefghijklmnopqrstuvwxyz"
-    $RESULT = ""
-    while ($MS -gt 0) {
-        $RESULT = $CHARS[$MS % 36] + $RESULT
-        $MS = [Math]::Floor($MS / 36)
+$GUID_REGEX = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+
+function Get-DeviceOuid {
+    # Returns this device's OUID (the "Device GUID"), used as the repository-root
+    # folder name inside the location bucket. Per the DTC OUID Standard, the
+    # device OUID is minted once and persisted on the device, so it is
+    # recomputable from a stable source: re-runs and rebuilds resolve to the SAME
+    # folder and reclaim existing backup data. Mint it with
+    # rmm-ninja\ninja-ensure-device-guid.ps1 before running this script.
+    #
+    # Sources tried in order: (1) on-device registry (authoritative mirror, no
+    # network needed), (2) NinjaOne device custom field. Returns $null if neither
+    # holds a valid GUID -- caller must handle that.
+
+    # 1. On-device registry: HKLM\SOFTWARE\DTC\DeviceGuid
+    try {
+        $REG = Get-ItemProperty -Path 'HKLM:\SOFTWARE\DTC' -Name 'DeviceGuid' -ErrorAction Stop
+        if ($REG.DeviceGuid -and "$($REG.DeviceGuid)" -match $GUID_REGEX) {
+            return "$($REG.DeviceGuid)".ToLower()
+        }
+    } catch { }
+
+    # 2. NinjaOne device custom field
+    if ($env:CUSTOM_FIELD_DEVICE_GUID) {
+        try {
+            $NINJA_VAL = Ninja-Property-Get $env:CUSTOM_FIELD_DEVICE_GUID 2>$null
+            if ($NINJA_VAL -and "$NINJA_VAL" -match $GUID_REGEX) {
+                return "$NINJA_VAL".ToLower()
+            }
+        } catch { }
     }
-    # Pad to 8 chars or truncate
-    return $RESULT.PadLeft(8, '0').Substring(0, 8)
+
+    return $null
 }
 
 function Invoke-B2Api {
@@ -148,7 +180,7 @@ if ($env:RMM -ne "1") {
         $env:DESCRIPTION = Read-Host "Ticket # or initials for audit trail"
         if ($env:DESCRIPTION) { $VALID_INPUT = 1 } else { Write-Host "Required." }
     }
-    if (-not $env:CUSTOM_FIELD_ORG_UUID) { $env:CUSTOM_FIELD_ORG_UUID = Read-Host "Organization UUID (REQUIRED)" }
+    if (-not $env:CUSTOM_FIELD_LOCATION_UUID) { $env:CUSTOM_FIELD_LOCATION_UUID = Read-Host "Location OUID NinjaOne field name (REQUIRED)" }
     if (-not $env:B2_ADMIN_KEY_ID) { $env:B2_ADMIN_KEY_ID = Read-Host "B2 admin key ID (master key)" }
     if (-not $env:B2_ADMIN_APP_KEY) { $env:B2_ADMIN_APP_KEY = Read-Host "B2 admin app key (master key)" }
     if (-not $env:B2_ENDPOINT) { $env:B2_ENDPOINT = Read-Host "B2 S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)" }
@@ -197,45 +229,43 @@ Write-Host "=== Veeam S3 Repository Creation ==="
 Write-Host "Description: $env:DESCRIPTION"
 Write-Host ""
 
-# Org UUID: CUSTOM_FIELD_ORG_UUID contains the NinjaOne field NAME (e.g. "dtcOrgGuid").
-# We pass that to Ninja-Property-Get to read the actual UUID value.
-$ORG_UUID = $null
-if ($env:CUSTOM_FIELD_ORG_UUID) {
+# Location OUID: CUSTOM_FIELD_LOCATION_UUID contains the NinjaOne field NAME
+# (e.g. "dtcLocationGuid"). We pass that to Ninja-Property-Get to read the value.
+# Isolation is per-location: locations get bought/sold, so the bucket tracks the
+# location OUID rather than the org.
+$LOCATION_UUID = $null
+if ($env:CUSTOM_FIELD_LOCATION_UUID) {
     try {
-        $ORG_UUID = Ninja-Property-Get $env:CUSTOM_FIELD_ORG_UUID 2>$null
+        $LOCATION_UUID = Ninja-Property-Get $env:CUSTOM_FIELD_LOCATION_UUID 2>$null
     } catch { }
 }
-if (-not $ORG_UUID) {
-    Write-Error "CUSTOM_FIELD_ORG_UUID is empty. Set the org UUID field in NinjaRMM."
+if (-not $LOCATION_UUID) {
+    Write-Error "CUSTOM_FIELD_LOCATION_UUID is empty. Set the location OUID field in NinjaRMM."
     Stop-Transcript
     exit 1
 }
 # Validate it's actually a UUID, not a field name or garbage
-if ($ORG_UUID -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$') {
-    Write-Error "CUSTOM_FIELD_ORG_UUID value '$ORG_UUID' is not a valid UUID. Expected format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+if ($LOCATION_UUID -notmatch $GUID_REGEX) {
+    Write-Error "CUSTOM_FIELD_LOCATION_UUID value '$LOCATION_UUID' is not a valid UUID. Expected format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
     Stop-Transcript
     exit 1
 }
-Write-Host "Org UUID: $ORG_UUID"
-$ORG_PREFIX = $ORG_UUID.Replace("-", "").ToLower()
+Write-Host "Location OUID: $LOCATION_UUID"
+$LOCATION_PREFIX = $LOCATION_UUID.Replace("-", "").ToLower()
 
-# Generate time-based short ID for this bucket
-$BUCKET_SHORT_ID = New-TimeBasedShortId
-$BUCKET_NAME = "$ORG_PREFIX-$BUCKET_SHORT_ID-veeam"
+# Bucket name = veeam-{location-ouid-flat}. Deterministic: re-runs compute the
+# same name. "veeam-" (6) + 32 hex = 38 chars, within B2's 50-char limit.
+$BUCKET_NAME = "veeam-$LOCATION_PREFIX"
 
 # S3 bucket name validation: lowercase alphanumeric + hyphens, 3-50 chars
 $BUCKET_NAME = $BUCKET_NAME -replace '[^a-z0-9\-]', ''
 if ($BUCKET_NAME.Length -gt 50) {
-    # Truncate org prefix to fit
-    $MAX_ORG = 50 - 1 - 8 - 1 - 5  # dash + shortid + dash + "veeam"
-    $ORG_PREFIX = $ORG_PREFIX.Substring(0, $MAX_ORG)
-    $BUCKET_NAME = "$ORG_PREFIX-$BUCKET_SHORT_ID-veeam"
+    $BUCKET_NAME = $BUCKET_NAME.Substring(0, 50)
 }
 
 Write-Host "Bucket name:       $BUCKET_NAME"
-Write-Host "Org UUID:          $ORG_UUID"
-Write-Host "Org prefix:        $ORG_PREFIX"
-Write-Host "Bucket short ID:   $BUCKET_SHORT_ID"
+Write-Host "Location OUID:     $LOCATION_UUID"
+Write-Host "Location prefix:   $LOCATION_PREFIX"
 Write-Host "Endpoint:          $env:B2_ENDPOINT"
 Write-Host "Region:            $env:B2_REGION"
 Write-Host "Immutability:      $IMMUTABILITY_DAYS days"
@@ -261,6 +291,20 @@ if ($VBR_MODULES = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
     Stop-Transcript
     throw "Veeam.Backup.PowerShell module not found."
 }
+
+# ============================================================
+# RESOLVE THIS DEVICE'S OUID (repository-root folder name)
+# ============================================================
+
+Write-Host ""
+Write-Host "Resolving device OUID..."
+$DEVICE_GUID = Get-DeviceOuid
+if (-not $DEVICE_GUID) {
+    Write-Error "Could not resolve a device OUID. Run rmm-ninja\ninja-ensure-device-guid.ps1 on this device first (mints + persists the Device GUID), then re-run."
+    Stop-Transcript
+    exit 1
+}
+Write-Host "  [OK] Device OUID: $DEVICE_GUID"
 
 # ============================================================
 # CHECK IF BUCKET + KEYS ALREADY EXIST (idempotency)
@@ -309,10 +353,6 @@ if ($EXISTING_BUCKET -and $EXISTING_KEY_ID -and $EXISTING_APP_KEY) {
     $BUCKET_NAME = $EXISTING_BUCKET
     $SCOPED_KEY_ID = $EXISTING_KEY_ID
     $SCOPED_APP_KEY = $EXISTING_APP_KEY
-    # Extract short ID from existing bucket name for folder creation
-    if ($BUCKET_NAME -match '-([a-z0-9]{8})-veeam$') {
-        $BUCKET_SHORT_ID = $Matches[1]
-    }
     $SKIP_B2_CREATION = $true
 }
 
@@ -539,9 +579,12 @@ try {
     $VEEAM_BUCKET = Get-VBRAmazonS3Bucket -Connection $VEEAM_CONNECTION -Name $BUCKET_NAME
     Write-Host "  [OK] Bucket found in Veeam."
 
-    # Create a folder inside the bucket (use the short ID as folder name)
-    $VEEAM_FOLDER = New-VBRAmazonS3Folder -Name $BUCKET_SHORT_ID -Connection $VEEAM_CONNECTION -Bucket $VEEAM_BUCKET
-    Write-Host "  [OK] Folder created: $BUCKET_SHORT_ID"
+    # Create a folder inside the bucket, named for this device's OUID. This is
+    # the repository root for THIS BDR; Veeam owns everything below it. Another
+    # BDR at the same location gets its own folder. The device OUID is stable, so
+    # a rebuild of this BDR resolves to the same folder and reclaims its data.
+    $VEEAM_FOLDER = New-VBRAmazonS3Folder -Name $DEVICE_GUID -Connection $VEEAM_CONNECTION -Bucket $VEEAM_BUCKET
+    Write-Host "  [OK] Folder created: $DEVICE_GUID"
 
     # Create the repository (name = bucket name)
     # -Confirm:$false suppresses ShouldProcess prompts
@@ -576,7 +619,7 @@ Write-Host ""
 Write-Host "=== Complete ==="
 Write-Host "  Bucket:       $BUCKET_NAME"
 Write-Host "  Repository:   $BUCKET_NAME"
-Write-Host "  Folder:       $BUCKET_SHORT_ID"
+Write-Host "  Folder:       $DEVICE_GUID"
 Write-Host "  Scoped key:   $($SCOPED_KEY_ID_OUT.Substring(0, [Math]::Min(8, $SCOPED_KEY_ID_OUT.Length)))..."
 Write-Host "  Immutability: $IMMUTABILITY_DAYS days"
 Write-Host ""
