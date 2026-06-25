@@ -1,62 +1,45 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $DaysBack       - Number of days of history to pull (default: 90)
-## $OutputFolder   - Folder to write the CSV to (default: C:\temp)
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail (default: "No Description")
+## $DaysBack      / $env:DaysBack      - Number of days of history to pull (default: 90)
+## $OutputFolder  / $env:OutputFolder  - Folder to write the CSV to (default: C:\temp)
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$DaysBack      = $env:DaysBack,
+    [string]$OutputFolder  = $env:OutputFolder,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 $ScriptLogName = "msft-windows-rds-logon-report.log"
 
-# Auto-detect non-interactive PowerShell (e.g. NinjaOne, Datto, scheduled tasks).
-# When -NonInteractive is on the command line, Read-Host throws and would kill the
-# script, so treat that as RMM mode even if $RMM was not explicitly passed.
-try {
-    $cmdLineArgs = [Environment]::GetCommandLineArgs()
-    if ($cmdLineArgs | Where-Object { $_ -match '^-NonInteractive$' }) {
-        if ($RMM -ne 1) {
-            Write-Host "Non-interactive PowerShell detected; treating as RMM mode."
-            $RMM = 1
-        }
-    }
-} catch {
-    # If detection itself fails, leave $RMM as-is and proceed.
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Default the audit-trail description if it was not supplied.
+if ($null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
 }
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else {
-    # Prefer RMMScriptPath when the RMM provides one (e.g. Datto), otherwise fall back to WINDIR.
-    if ($RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }
-}
-
-# Defaults for parameters that may be set by the RMM or left empty interactively.
+# Defaults for parameters that may be set by the RMM or left empty.
 if (-not $DaysBack)     { $DaysBack = 90 }
 if (-not $OutputFolder) { $OutputFolder = "C:\temp" }
+
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if ($RMMScriptPath) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+}
 
 # Emit progress to stdout BEFORE the transcript starts, so even if Start-Transcript
 # fails (no log dir, locked file, etc.) the RMM still captures something useful.
 Write-Host "msft-windows-rds-logon-report.ps1 starting"
 Write-Host "Description: $Description"
-Write-Host "RMM: $RMM"
 Write-Host "DaysBack: $DaysBack"
 Write-Host "OutputFolder: $OutputFolder"
 Write-Host "Computer: $env:COMPUTERNAME"

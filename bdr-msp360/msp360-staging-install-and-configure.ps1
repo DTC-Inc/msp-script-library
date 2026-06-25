@@ -1,22 +1,44 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+##
+## MSP360 Configuration Variables (set these in RMM if applicable):
+## $Description          / $env:Description          - Ticket # or initials for audit trail (default: "MSP360 Staging Installation and Configuration")
+## $MSPAccountEmail      / $env:MSPAccountEmail      - MSP360 account email (default: staging@dtctoday.com)
+## $MSPAccountPassword   / $env:MSPAccountPassword   - REQUIRED. MSP360 account password
+## $BackupEncryptionPassword / $env:BackupEncryptionPassword - Backup encryption password (default: staging123!)
+## $BackupPlanName       / $env:BackupPlanName       - Name for the backup plan (default: Staging Job)
+## $CBBPath              / $env:CBBPath              - Path to CBB executable (default: C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe)
+## $OrganizationName     / $env:OrganizationName     - Organization name for backup prefix
+## $SiteName             / $env:SiteName             - Site name for backup prefix
+## $ServiceNames         / $env:ServiceNames         - Service names to check (default: DTCBSure Cloud Backup Service, DTCBSure Cloud Backup Service Remote Management)
+## $UseLocalStorage      / $env:UseLocalStorage      - Set to 1 to use network share storage instead of cloud storage, 0 for cloud storage (default: 0)
+## $LocalStoragePath     / $env:LocalStoragePath     - Network share path when UseLocalStorage is 1 (default: \\server\share\MSP360LocalBackups)
+## $NetworkShareUsername / $env:NetworkShareUsername - Optional: Username for network share authentication
+## $NetworkSharePassword / $env:NetworkSharePassword - Optional: Password for network share authentication
+## $RMMScriptPath        / $env:RMMScriptPath        - Optional log directory base provided by the RMM
 
 # NOTE: This script should be run with -ExecutionPolicy Bypass
 # Example: powershell.exe -ExecutionPolicy Bypass -File .\msp360-staging-install-and-configure.ps1
 
-# MSP360 Configuration Variables (set these in RMM if applicable):
-# $MSPAccountEmail = "staging@dtctoday.com" (MSP360 account email)
-# $MSPAccountPassword = "YourPasswordHere" (MSP360 account password)
-# $BackupEncryptionPassword = "YourEncryptionPasswordHere" (Backup encryption password)
-# $BackupPlanName = "Staging Job" (Name for the backup plan)
-# $CBBPath = "C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe" (Path to CBB executable)
-# $OrganizationName = "YourOrgName" (Organization name for backup prefix)
-# $SiteName = "YourSiteName" (Site name for backup prefix)
-# $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management") (Service names to check)
-# $UseLocalStorage = 0 (Set to 1 to use network share storage instead of cloud storage, 0 for cloud storage)
-# $LocalStoragePath = "\\server\share\MSP360LocalBackups" (Network share path when UseLocalStorage is 1)
-# $NetworkShareUsername = "domain\username" (Optional: Username for network share authentication)
-# $NetworkSharePassword = "password" (Optional: Password for network share authentication)
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Parameter ...) or from an RMM that supplies values as env variables.
+    [string]$Description              = $env:Description,
+    [string]$MSPAccountEmail          = $env:MSPAccountEmail,
+    [string]$MSPAccountPassword       = $env:MSPAccountPassword,
+    [string]$BackupEncryptionPassword = $env:BackupEncryptionPassword,
+    [string]$BackupPlanName           = $env:BackupPlanName,
+    [string]$CBBPath                  = $env:CBBPath,
+    [string]$OrganizationName         = $env:OrganizationName,
+    [string]$SiteName                 = $env:SiteName,
+    [string]$ServiceNames             = $env:ServiceNames,
+    [string]$UseLocalStorage          = $env:UseLocalStorage,
+    [string]$LocalStoragePath         = $env:LocalStoragePath,
+    [string]$NetworkShareUsername     = $env:NetworkShareUsername,
+    [string]$NetworkSharePassword     = $env:NetworkSharePassword,
+    [string]$RMMScriptPath            = $env:RMMScriptPath
+)
 
 # Function to sanitize strings for DNS/URL friendly format
 function ConvertTo-DNSFriendly {
@@ -35,245 +57,97 @@ function ConvertTo-DNSFriendly {
     return $sanitized
 }
 
-# Getting input from user if not running from RMM else set variables from RMM.
-
 $ScriptLogName = "MSP360-Staging-Install-Configure.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        
-        # Get MSP360 account credentials
-        $MSPAccountEmail = Read-Host "Enter MSP360 account email (default: staging@dtctoday.com)"
-        if (-not $MSPAccountEmail) {
-            $MSPAccountEmail = "staging@dtctoday.com"
-        }
-        
-        $MSPAccountPasswordSecure = Read-Host "Enter MSP360 account password" -AsSecureString
-        
-        # Get backup encryption password
-        $BackupEncryptionPasswordSecure = Read-Host "Enter backup encryption password (default: staging123!)" -AsSecureString
-        if ([string]::IsNullOrEmpty([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($BackupEncryptionPasswordSecure)))) {
-            $BackupEncryptionPasswordSecure = ConvertTo-SecureString -String "staging123!" -AsPlainText -Force
-        }
-        
-        # Get backup plan name
-        $BackupPlanName = Read-Host "Enter backup plan name (default: Staging Job)"
-        if (-not $BackupPlanName) {
-            $BackupPlanName = "Staging Job"
-        }
-        
-        # Get organization and site information for backup prefix
-        Write-Host "`nBackup Prefix Configuration:" -ForegroundColor Cyan
-        Write-Host "The backup prefix will be: organizationname-sitename-computername" -ForegroundColor White
-        $OrganizationName = Read-Host "Enter organization name"
-        $SiteName = Read-Host "Enter site name"
-        
-        # Get CBB executable path
-        Write-Host "`nCBB Executable Configuration:" -ForegroundColor Cyan
-        Write-Host "Default path: C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe" -ForegroundColor White
-        $useCustomCBBPath = Read-Host "Use custom CBB path? (y/N)"
-        
-        if ($useCustomCBBPath -eq "y" -or $useCustomCBBPath -eq "Y") {
-            $CBBPath = Read-Host "Enter full path to cbb.exe"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+# Every value comes from a -Parameter or its matching $env: variable. Defaults below
+# mirror the script's original defaults; there is no interactive prompting.
+
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "MSP360 Staging Installation and Configuration"
+}
+
+# MSP360 account email (default: staging@dtctoday.com)
+if (-not $MSPAccountEmail) {
+    $MSPAccountEmail = "staging@dtctoday.com"
+}
+
+# MSP360 account password is REQUIRED. There is no prompt fallback -- fail fast if missing.
+if ([string]::IsNullOrEmpty($MSPAccountPassword)) {
+    Write-Error "ERROR: Required input not provided (set as -Parameter or `$env:): MSPAccountPassword"
+    exit 1
+}
+$MSPAccountPasswordSecure = ConvertTo-SecureString -String $MSPAccountPassword -AsPlainText -Force
+
+# Backup encryption password (default: staging123!)
+if ([string]::IsNullOrEmpty($BackupEncryptionPassword)) {
+    $BackupEncryptionPasswordSecure = ConvertTo-SecureString -String "staging123!" -AsPlainText -Force
+} else {
+    $BackupEncryptionPasswordSecure = ConvertTo-SecureString -String $BackupEncryptionPassword -AsPlainText -Force
+}
+
+# Backup plan name (default: Staging Job)
+if (-not $BackupPlanName) {
+    $BackupPlanName = "Staging Job"
+}
+
+# CBB executable path (default: standard DTCBSure install path)
+if (-not $CBBPath) {
+    $CBBPath = "C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe"
+}
+
+# Organization and site information for backup prefix (optional, no default).
+
+# Service names to check (default: the two DTCBSure services).
+if ([string]::IsNullOrEmpty($ServiceNames)) {
+    $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management")
+} else {
+    # Ensure ServiceNames is properly converted to array if it came as a string
+    if ($ServiceNames -is [string]) {
+        # Handle string representation of array
+        if ($ServiceNames.StartsWith('@(') -and $ServiceNames.EndsWith(')')) {
+            # Remove @( and ) and split by comma, then clean up quotes
+            $serviceString = $ServiceNames.Substring(2, $ServiceNames.Length - 3)
+            $ServiceNames = $serviceString -split ',' | ForEach-Object { $_.Trim().Trim('"') }
         } else {
-            $CBBPath = "C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe"
-        }
-        
-        # Get service names
-        Write-Host "`nService Configuration:" -ForegroundColor Cyan
-        Write-Host "Default services: DTCBSure Cloud Backup Service, DTCBSure Cloud Backup Service Remote Management" -ForegroundColor White
-        $useCustomServices = Read-Host "Use custom service names? (y/N)"
-        
-        if ($useCustomServices -eq "y" -or $useCustomServices -eq "Y") {
-            $service1 = Read-Host "Enter first service name"
-            $service2 = Read-Host "Enter second service name (optional)"
-            $ServiceNames = @($service1)
-            if ($service2) {
-                $ServiceNames += $service2
-            }
-        } else {
-            $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management")
-        }
-        
-        # Get storage configuration
-        Write-Host "`nStorage Configuration:" -ForegroundColor Cyan
-        Write-Host "By default, the script will use cloud storage for backups." -ForegroundColor White
-        $useLocalStorageInput = Read-Host "Use network share storage instead of cloud storage? (0 = Cloud, 1 = Network Share)"
-        
-        if ($useLocalStorageInput -eq "1") {
-            $UseLocalStorage = 1
-            $LocalStoragePath = Read-Host "Enter network share path (e.g., \\server\share\MSP360LocalBackups)"
-            if (-not $LocalStoragePath) {
-                $LocalStoragePath = "\\server\share\MSP360LocalBackups"
-            }
-            
-            # Get network share credentials if needed
-            Write-Host "`nNetwork Share Authentication (optional):" -ForegroundColor Cyan
-            $NetworkShareUsername = Read-Host "Enter username for network share (leave blank if not required)"
-            if ($NetworkShareUsername) {
-                $NetworkSharePasswordSecure = Read-Host "Enter password for network share" -AsSecureString
-            }
-            
-            Write-Host "Network share storage will be used with 'Staging Job Local' backup plan at 10 PM daily with monthly full backups" -ForegroundColor Green
-        } else {
-            $UseLocalStorage = 0
-            $LocalStoragePath = ""
-            $NetworkShareUsername = ""
-            Write-Host "Cloud storage will be used with 'Staging Job' backup plan at 12 AM daily" -ForegroundColor Green
-        }
-        
-        if ($Description -and $MSPAccountPasswordSecure -and $BackupEncryptionPasswordSecure) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
+            # Single service name
+            $ServiceNames = @($ServiceNames)
         }
     }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+    # Ensure it's always an array
+    $ServiceNames = @($ServiceNames)
+}
 
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Network share storage configuration. Default to cloud storage (0) when not supplied.
+if ([string]::IsNullOrEmpty($UseLocalStorage)) {
+    $UseLocalStorage = 0
+}
+
+# Ensure UseLocalStorage is an integer
+$UseLocalStorage = [int]$UseLocalStorage
+
+if ($UseLocalStorage -eq 1) {
+    if (-not $LocalStoragePath) {
+        $LocalStoragePath = "\\server\share\MSP360LocalBackups"
     }
 
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "MSP360 Staging Installation and Configuration"
+    # Handle network share credentials if a username was provided.
+    if ($NetworkShareUsername -and $NetworkSharePassword) {
+        $NetworkSharePasswordSecure = ConvertTo-SecureString -String $NetworkSharePassword -AsPlainText -Force
     }
-    
-    # Ask for missing values even in RMM mode - this is the point of the template!
-    if ($null -eq $MSPAccountEmail) {
-        $MSPAccountEmail = Read-Host "MSP360 Account Email not provided by RMM. Enter MSP360 account email (default: staging@dtctoday.com)"
-        if (-not $MSPAccountEmail) {
-            $MSPAccountEmail = "staging@dtctoday.com"
-        }
-    }
-    
-    if ($null -eq $MSPAccountPassword) {
-        $MSPAccountPasswordSecure = Read-Host "MSP360 Account Password not provided by RMM. Enter MSP360 account password" -AsSecureString
-    } else {
-        # Convert password to SecureString if provided as plain text from RMM
-        $MSPAccountPasswordSecure = ConvertTo-SecureString -String $MSPAccountPassword -AsPlainText -Force
-    }
-    
-    # Handle backup encryption password
-    if ($null -eq $BackupEncryptionPassword) {
-        $BackupEncryptionPasswordSecure = Read-Host "Backup Encryption Password not provided by RMM. Enter backup encryption password (default: staging123!)" -AsSecureString
-        if ([string]::IsNullOrEmpty([System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($BackupEncryptionPasswordSecure)))) {
-            $BackupEncryptionPasswordSecure = ConvertTo-SecureString -String "staging123!" -AsPlainText -Force
-        }
-    } else {
-        # Convert password to SecureString if provided as plain text from RMM
-        $BackupEncryptionPasswordSecure = ConvertTo-SecureString -String $BackupEncryptionPassword -AsPlainText -Force
-    }
-    
-    if ($null -eq $BackupPlanName) {
-        $BackupPlanName = Read-Host "Backup Plan Name not provided by RMM. Enter backup plan name (default: Staging Job)"
-        if (-not $BackupPlanName) {
-            $BackupPlanName = "Staging Job"
-        }
-    }
-    
-    if ($null -eq $CBBPath) {
-        Write-Host "CBB Path not provided by RMM." -ForegroundColor Yellow
-        Write-Host "Default path: C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe" -ForegroundColor White
-        $useCustomCBBPath = Read-Host "Use custom CBB path? (y/N)"
-        
-        if ($useCustomCBBPath -eq "y" -or $useCustomCBBPath -eq "Y") {
-            $CBBPath = Read-Host "Enter full path to cbb.exe"
-        } else {
-            $CBBPath = "C:\Program Files\DTC Inc\DTCBSure Cloud Backup\cbb.exe"
-        }
-    }
-    
-    if ($null -eq $OrganizationName) {
-        $OrganizationName = Read-Host "Organization Name not provided by RMM. Enter organization name"
-    }
-    
-    if ($null -eq $SiteName) {
-        $SiteName = Read-Host "Site Name not provided by RMM. Enter site name"
-    }
-    
-    if ($null -eq $ServiceNames) {
-        Write-Host "Service Names not provided by RMM." -ForegroundColor Yellow
-        Write-Host "Default services: DTCBSure Cloud Backup Service, DTCBSure Cloud Backup Service Remote Management" -ForegroundColor White
-        $useCustomServices = Read-Host "Use custom service names? (y/N)"
-        
-        if ($useCustomServices -eq "y" -or $useCustomServices -eq "Y") {
-            $service1 = Read-Host "Enter first service name"
-            $service2 = Read-Host "Enter second service name (optional)"
-            $ServiceNames = @($service1)
-            if ($service2) {
-                $ServiceNames += $service2
-            }
-        } else {
-            $ServiceNames = @("DTCBSure Cloud Backup Service", "DTCBSure Cloud Backup Service Remote Management")
-        }
-    } else {
-        # Ensure ServiceNames is properly converted to array if it came as a string from RMM
-        if ($ServiceNames -is [string]) {
-            # Handle string representation of array from RMM
-            if ($ServiceNames.StartsWith('@(') -and $ServiceNames.EndsWith(')')) {
-                # Remove @( and ) and split by comma, then clean up quotes
-                $serviceString = $ServiceNames.Substring(2, $ServiceNames.Length - 3)
-                $ServiceNames = $serviceString -split ',' | ForEach-Object { $_.Trim().Trim('"') }
-            } else {
-                # Single service name
-                $ServiceNames = @($ServiceNames)
-            }
-        }
-        # Ensure it's always an array
-        $ServiceNames = @($ServiceNames)
-    }
-    
-    # Handle network share storage configuration
-    if ($null -eq $UseLocalStorage) {
-        Write-Host "Network Share Storage Configuration not provided by RMM." -ForegroundColor Yellow
-        Write-Host "By default, the script will use cloud storage for backups." -ForegroundColor White
-        $useLocalStorageInput = Read-Host "Use network share storage instead of cloud storage? (0 = Cloud, 1 = Network Share)"
-        
-        if ($useLocalStorageInput -eq "1") {
-            $UseLocalStorage = 1
-        } else {
-            $UseLocalStorage = 0
-        }
-    }
-    
-    # Ensure UseLocalStorage is an integer
-    $UseLocalStorage = [int]$UseLocalStorage
-    
-    if ($UseLocalStorage -eq 1 -and ($null -eq $LocalStoragePath)) {
-        $LocalStoragePath = Read-Host "Network Share Path not provided by RMM. Enter network share path (e.g., \\server\share\MSP360LocalBackups)"
-        if (-not $LocalStoragePath) {
-            $LocalStoragePath = "\\server\share\MSP360LocalBackups"
-        }
-    }
-    
-    # Handle network share credentials if using network share storage
-    if ($UseLocalStorage -eq 1) {
-        if ($null -eq $NetworkShareUsername) {
-            $NetworkShareUsername = Read-Host "Network Share Username not provided by RMM. Enter username for network share (leave blank if not required)"
-        }
-        
-        if ($NetworkShareUsername -and ($null -eq $NetworkSharePassword)) {
-            $NetworkSharePasswordSecure = Read-Host "Network Share Password not provided by RMM. Enter password for network share" -AsSecureString
-        } elseif ($NetworkShareUsername -and $NetworkSharePassword) {
-            # Convert password to SecureString if provided as plain text from RMM
-            $NetworkSharePasswordSecure = ConvertTo-SecureString -String $NetworkSharePassword -AsPlainText -Force
-        }
-    }
-    
+} else {
     # Set default values if not using network share storage
-    if ($UseLocalStorage -ne 1) {
-        $LocalStoragePath = ""
-        $NetworkShareUsername = ""
-    }
+    $LocalStoragePath = ""
+    $NetworkShareUsername = ""
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Create backup prefix from organization, site, and computer name
@@ -304,7 +178,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "MSP360 Account Email: $MSPAccountEmail"
 Write-Host "Backup Plan Name: $BackupPlanName"
 Write-Host "Organization: $OrganizationName"

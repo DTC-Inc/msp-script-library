@@ -1,8 +1,17 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                                          - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
-## $env:Description                                  - Ticket # or initials for audit trail
-## $env:OrgName                                      - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## NinjaRMM passes script preset variables as environment variables, so each parameter defaults to its $env: value.
+## $Description   / $env:Description   - Ticket # or initials for audit trail
+## $OrgName       / $env:OrgName       - REQUIRED. Organizational identifier used to namespace shared state under %PUBLIC% (e.g., "DTC")
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-OrgName ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$OrgName       = $env:OrgName,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 # Chrome Remote Desktop Detection Script (USER context)
 #
@@ -35,48 +44,39 @@
 
 $ScriptLogName = "chrome-remote-desktop-detect-user.log"
 
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))   { $env:Description   = $Description }
+if (-not [string]::IsNullOrEmpty($OrgName))       { $env:OrgName       = $OrgName }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) { $env:RMMScriptPath = $RMMScriptPath }
+
 # --- Required: $env:OrgName ----------------------------------------------
 # OrgName namespaces the shared state under %PUBLIC%\<OrgName>\rmm-db\.
-# It must be set in the RMM script preset (or interactively for testing).
+# It must be set as a -Parameter or in the RMM script preset -- there is no prompt.
 
 if ([string]::IsNullOrEmpty($env:OrgName)) {
-    if ($env:RMM -eq "1") {
-        Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable in your RMM script preset."
-        exit 99
-    } else {
-        while ([string]::IsNullOrEmpty($env:OrgName)) {
-            $env:OrgName = Read-Host "Please enter the OrgName (organizational identifier, e.g. 'DTC')"
-        }
-    }
+    Write-Host "ERROR: \$env:OrgName is required but not set. Configure the OrgName variable as a -Parameter or in your RMM script preset."
+    exit 99
 }
 
 # --- Computed paths ------------------------------------------------------
 
 $UserStatePath = "$env:PUBLIC\$env:OrgName\rmm-db\google-chrome-remote-desktop-user-active.json"
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM."
+    $env:Description = "RMM Automated Scan"
+}
 
-if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        if ($env:Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$env:LOCALAPPDATA\$env:OrgName-logs\$ScriptLogName"
+# Store logs under $env:RMMScriptPath if provided, otherwise the per-user logs directory
+# (user-context scripts cannot write to $env:WINDIR\logs without admin).
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:LOCALAPPDATA\$env:OrgName-logs\$ScriptLogName"
-    }
-    if ([string]::IsNullOrEmpty($env:Description)) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM."
-        $env:Description = "RMM Automated Scan"
-    }
+    $LogPath = "$env:LOCALAPPDATA\$env:OrgName-logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting transcript
@@ -94,7 +94,6 @@ Write-Host "============================================"
 Write-Host ""
 Write-Host "Description: $env:Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $env:RMM"
 Write-Host "OrgName: $env:OrgName"
 Write-Host "User State Path: $UserStatePath"
 Write-Host "Running As: $([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)"

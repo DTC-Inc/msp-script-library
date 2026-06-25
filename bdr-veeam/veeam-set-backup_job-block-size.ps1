@@ -1,3 +1,13 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $ticketNumber  / $env:ticketNumber  - Ticket # for audit trail (used as the job description)
+## $rmmScriptPath / $env:rmmScriptPath - Optional log directory base provided by the RMM
+
+param(
+    [string]$ticketNumber  = $env:ticketNumber,
+    [string]$rmmScriptPath = $env:rmmScriptPath
+)
+
 # Make sure PSModulePath includes Veeam Console
 Write-Host "Installing Veeam PowerShell Module if not installed already."
 $MyModulePath = "C:\Program Files\Veeam\Backup and Replication\Console\"
@@ -11,20 +21,13 @@ if ($Modules = Get-Module -ListAvailable -Name Veeam.Backup.PowerShell) {
             }
  }
 
-# Getting input from user if not running from RMM else set variables from RMM.
-if ($rmm -ne 1) {
-    $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
-
-
-} else { 
-    # ticketNumber from RMM is set to the description.
-    # targetWinLocalRepository is the targetRepository if targetRepoType is 2.
-    # targetRepoType is targetRepoType. 
-    # RMMScript path is set as a 
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+if (-not [string]::IsNullOrEmpty($rmmScriptPath)) {
     $logPath = "$rmmScriptPath\logs\veeam-add-backup-repo.log"
-    Write-Host "Reference Ticket #$ticketNumber"
-    
+} else {
+    $logPath = "$env:WINDIR\logs\veeam-add-backup-repo.log"
 }
+Write-Host "Reference Ticket #$ticketNumber"
 
 Start-Transcript -Path $logPath
 

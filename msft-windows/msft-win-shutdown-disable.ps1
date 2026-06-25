@@ -1,55 +1,49 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description       / $env:Description       - REQUIRED. Ticket # or initials, used as the job Description
+## $DisableShutdownUi / $env:DisableShutdownUi - REQUIRED. Y to disable the shutdown UI, N to enable it
+## $RMMScriptPath     / $env:RMMScriptPath     - Optional log directory base provided by the RMM
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description       = $env:Description,
+    [string]$DisableShutdownUi = $env:DisableShutdownUi,
+    [string]$RMMScriptPath     = $env:RMMScriptPath
+)
 
 $ScriptLogName = "msft-win-shutdown-disable.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $DisableShutdownUi = Read-Host "Enter Y to enable shutdown, enter N to disable shutdown"
-        if ($DisableShutdownUi -eq "Y") {
-            $DisableShutdownUi = $True
-            $ValidInput = 1
-        } elseif ($DisableShutdownUi -eq "N") {
-            $DisableShutdownUi = $False
-            $ValidInput = 1
-        } else { 
-            Write-Host "Input invalid, please only enter Y or N."
-            $ValidInput = 0
-        }
+# Default the audit-trail description if it was not supplied.
+if ($null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
 
-    }
+# Validate required input. This must come from -Parameter or $env: -- there is no prompt.
+if ([string]::IsNullOrEmpty($DisableShutdownUi)) {
+    Write-Error "ERROR: Required input not provided (set as -Parameter or `$env:): DisableShutdownUi (Y or N)"
+    exit 1
+}
+
+# Convert the Y/N input into the boolean the script logic expects.
+if ($DisableShutdownUi -eq "Y") {
+    $DisableShutdownUi = $True
+} elseif ($DisableShutdownUi -eq "N") {
+    $DisableShutdownUi = $False
+} else {
+    Write-Error "ERROR: Invalid value for DisableShutdownUi: '$DisableShutdownUi'. Please only enter Y or N."
+    exit 1
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -58,7 +52,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write Host "Disable Shutdown: $DisableShutdownUi"
 
 # Set this variable:

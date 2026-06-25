@@ -6,23 +6,38 @@
 ## Veeam repository name = bucket name
 ##
 ## ADMIN CREDENTIALS (org-level in NinjaRMM, used to create bucket + scoped key):
-## $env:B2_ADMIN_KEY_ID               - Master/admin B2 application key ID
-## $env:B2_ADMIN_APP_KEY              - Master/admin B2 application key
+## $B2_ADMIN_KEY_ID / $env:B2_ADMIN_KEY_ID               - Master/admin B2 application key ID
+## $B2_ADMIN_APP_KEY / $env:B2_ADMIN_APP_KEY             - Master/admin B2 application key
 ##
 ## CONFIGURATION:
-## $env:CUSTOM_FIELD_ORG_UUID          - NinjaOne text field containing the organization UUID (REQUIRED)
-## $env:B2_ENDPOINT                   - S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)
-## $env:B2_REGION                     - S3 region ID (e.g. us-west-002)
-## $env:IMMUTABILITY_DAYS             - Object lock immutability period in days (default: 14)
+## $CUSTOM_FIELD_ORG_UUID / $env:CUSTOM_FIELD_ORG_UUID   - NinjaOne text field containing the organization UUID (REQUIRED)
+## $B2_ENDPOINT / $env:B2_ENDPOINT                       - S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)
+## $B2_REGION / $env:B2_REGION                           - S3 region ID (e.g. us-west-002)
+## $IMMUTABILITY_DAYS / $env:IMMUTABILITY_DAYS           - Object lock immutability period in days (default: 14)
 ##
 ## OUTPUT FIELDS (device-level, written after creation):
-## $env:CUSTOM_FIELD_S3_BUCKET_NAME   - Text: bucket name
-## $env:CUSTOM_FIELD_S3_KEY_ID        - Text: scoped B2 key ID (bucket-only access)
-## $env:CUSTOM_FIELD_S3_APP_KEY       - Text: scoped B2 app key (bucket-only access)
+## $CUSTOM_FIELD_S3_BUCKET_NAME / $env:CUSTOM_FIELD_S3_BUCKET_NAME - Text: bucket name
+## $CUSTOM_FIELD_S3_KEY_ID / $env:CUSTOM_FIELD_S3_KEY_ID  - Text: scoped B2 key ID (bucket-only access)
+## $CUSTOM_FIELD_S3_APP_KEY / $env:CUSTOM_FIELD_S3_APP_KEY - Text: scoped B2 app key (bucket-only access)
 ##
-## $env:DESCRIPTION                   - Ticket # or initials for audit trail
-## $env:RMM                           - Set to 1 when running from RMM platform
-## $env:RMM_SCRIPT_PATH               - Script path provided by RMM (used for log location)
+## $DESCRIPTION / $env:DESCRIPTION                       - Ticket # or initials for audit trail
+## $RMM_SCRIPT_PATH / $env:RMM_SCRIPT_PATH               - Script path provided by RMM (used for log location)
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$DESCRIPTION               = $env:DESCRIPTION,
+    [string]$CUSTOM_FIELD_ORG_UUID     = $env:CUSTOM_FIELD_ORG_UUID,
+    [string]$B2_ADMIN_KEY_ID           = $env:B2_ADMIN_KEY_ID,
+    [string]$B2_ADMIN_APP_KEY          = $env:B2_ADMIN_APP_KEY,
+    [string]$B2_ENDPOINT               = $env:B2_ENDPOINT,
+    [string]$B2_REGION                 = $env:B2_REGION,
+    [string]$IMMUTABILITY_DAYS         = $env:IMMUTABILITY_DAYS,
+    [string]$CUSTOM_FIELD_S3_BUCKET_NAME = $env:CUSTOM_FIELD_S3_BUCKET_NAME,
+    [string]$CUSTOM_FIELD_S3_KEY_ID    = $env:CUSTOM_FIELD_S3_KEY_ID,
+    [string]$CUSTOM_FIELD_S3_APP_KEY   = $env:CUSTOM_FIELD_S3_APP_KEY,
+    [string]$RMM_SCRIPT_PATH           = $env:RMM_SCRIPT_PATH
+)
 
 # ============================================================
 # PS7 BOOTSTRAP
@@ -141,30 +156,32 @@ function Set-NinjaField {
 
 $SCRIPT_LOG_NAME = "veeam-create-s3-repo.log"
 
-if ($env:RMM -ne "1") {
-    # Interactive mode
-    $VALID_INPUT = 0
-    while ($VALID_INPUT -ne 1) {
-        $env:DESCRIPTION = Read-Host "Ticket # or initials for audit trail"
-        if ($env:DESCRIPTION) { $VALID_INPUT = 1 } else { Write-Host "Required." }
-    }
-    if (-not $env:CUSTOM_FIELD_ORG_UUID) { $env:CUSTOM_FIELD_ORG_UUID = Read-Host "Organization UUID (REQUIRED)" }
-    if (-not $env:B2_ADMIN_KEY_ID) { $env:B2_ADMIN_KEY_ID = Read-Host "B2 admin key ID (master key)" }
-    if (-not $env:B2_ADMIN_APP_KEY) { $env:B2_ADMIN_APP_KEY = Read-Host "B2 admin app key (master key)" }
-    if (-not $env:B2_ENDPOINT) { $env:B2_ENDPOINT = Read-Host "B2 S3 endpoint (e.g. https://s3.us-west-002.backblazeb2.com)" }
-    if (-not $env:B2_REGION) { $env:B2_REGION = Read-Host "B2 region (e.g. us-west-002)" }
-    if (-not $env:IMMUTABILITY_DAYS) { $env:IMMUTABILITY_DAYS = Read-Host "Immutability period in days (default 14)" }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($DESCRIPTION))                 { $env:DESCRIPTION = $DESCRIPTION }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_ORG_UUID))       { $env:CUSTOM_FIELD_ORG_UUID = $CUSTOM_FIELD_ORG_UUID }
+if (-not [string]::IsNullOrEmpty($B2_ADMIN_KEY_ID))            { $env:B2_ADMIN_KEY_ID = $B2_ADMIN_KEY_ID }
+if (-not [string]::IsNullOrEmpty($B2_ADMIN_APP_KEY))           { $env:B2_ADMIN_APP_KEY = $B2_ADMIN_APP_KEY }
+if (-not [string]::IsNullOrEmpty($B2_ENDPOINT))               { $env:B2_ENDPOINT = $B2_ENDPOINT }
+if (-not [string]::IsNullOrEmpty($B2_REGION))                { $env:B2_REGION = $B2_REGION }
+if (-not [string]::IsNullOrEmpty($IMMUTABILITY_DAYS))         { $env:IMMUTABILITY_DAYS = $IMMUTABILITY_DAYS }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_BUCKET_NAME)) { $env:CUSTOM_FIELD_S3_BUCKET_NAME = $CUSTOM_FIELD_S3_BUCKET_NAME }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_KEY_ID))      { $env:CUSTOM_FIELD_S3_KEY_ID = $CUSTOM_FIELD_S3_KEY_ID }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_APP_KEY))     { $env:CUSTOM_FIELD_S3_APP_KEY = $CUSTOM_FIELD_S3_APP_KEY }
+if (-not [string]::IsNullOrEmpty($RMM_SCRIPT_PATH))           { $env:RMM_SCRIPT_PATH = $RMM_SCRIPT_PATH }
+
+# Default the audit-trail description if it was not supplied.
+if (-not $env:DESCRIPTION) { $env:DESCRIPTION = "No Description" }
+
+# Store logs under $env:RMM_SCRIPT_PATH if provided, otherwise the standard Windows logs directory.
+if ($env:RMM_SCRIPT_PATH) {
+    $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
+    if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
+    $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
 } else {
-    if ($env:RMM_SCRIPT_PATH) {
-        $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
-        if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
-        $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
-    } else {
-        $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-    }
-    if (-not $env:DESCRIPTION) { $env:DESCRIPTION = "No Description" }
+    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 }
 
 # Validate required inputs

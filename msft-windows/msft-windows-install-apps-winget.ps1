@@ -1,7 +1,9 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
-## $AppList = "Mozilla.Firefox,7zip.7zip,Google.Chrome"  # Comma-separated WinGet app IDs
-## $CleanDesktopShortcuts = $true  # Remove desktop shortcuts after installation
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $AppList               / $env:AppList               - Comma-separated WinGet app IDs
+## $CleanDesktopShortcuts / $env:CleanDesktopShortcuts - Remove desktop shortcuts after installation (default: true)
+## $Description           / $env:Description           - Ticket # or initials for audit trail
+## $RMMScriptPath         / $env:RMMScriptPath         - Optional log directory base provided by the RMM
 
 # This script installs applications using WinGet:
 # - Accepts a comma-separated list of WinGet app IDs
@@ -11,7 +13,18 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-AppList ...) or from an RMM that supplies values as env variables.
+    [string]$AppList               = $env:AppList,
+    [string]$CleanDesktopShortcuts = $env:CleanDesktopShortcuts,
+    [string]$Description           = $env:Description,
+    [string]$RMMScriptPath         = $env:RMMScriptPath
+)
+
 $ScriptLogName = "msft-windows-install-apps-winget.log"
+
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
 # Default app list (standard business applications)
 $defaultApps = @(
@@ -28,36 +41,29 @@ if ($null -eq $AppList -or $AppList -eq "") {
     $apps = $AppList -split "," | ForEach-Object { $_.Trim() }
 }
 
-if ($null -eq $CleanDesktopShortcuts) { $CleanDesktopShortcuts = $true }
-
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Default desktop-shortcut cleanup to enabled; treat "false"/"0" as disabled.
+if ([string]::IsNullOrEmpty($CleanDesktopShortcuts)) {
+    $CleanDesktopShortcuts = $true
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
+    $CleanDesktopShortcuts = $CleanDesktopShortcuts -notmatch '^\s*(false|0|no)\s*$'
+}
 
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated WinGet application installation"
-    }
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    $Description = "RMM-initiated WinGet application installation"
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== WinGet Application Installation ===" -ForegroundColor Cyan

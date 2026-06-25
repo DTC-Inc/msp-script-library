@@ -1,8 +1,17 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ##
 ## Optional RMM Variables:
-## - $Description: Ticket number or initials for tracking (defaults to "Automated SID Report")
+## - $Description / $env:Description: Ticket number or initials for tracking (defaults to "Automated SID Report")
+## - $RMMScriptPath / $env:RMMScriptPath: Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 # Local Machine SID Reporter
 # Writes the local machine SID to the "info" (Notes) attribute on the computer's own AD object.
@@ -19,33 +28,20 @@
 # 0 = Success (SID written to AD)
 # 1 = Error (not domain-joined, computer not found, permission denied, etc.)
 
-# Getting input from user if not running from RMM else set variables from RMM.
-
 $ScriptLogName = "msft-windows-sid-report.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials (press Enter for 'Automated SID Report')"
-        if (-not $Description) {
-            $Description = "Automated SID Report"
-        }
-        $ValidInput = 1
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
+# Default the audit-trail description if it was not supplied.
+if (-not $Description) {
+    $Description = "Automated SID Report"
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "Automated SID Report"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -54,7 +50,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 # Step 1: Check domain membership - exit immediately if not domain-joined

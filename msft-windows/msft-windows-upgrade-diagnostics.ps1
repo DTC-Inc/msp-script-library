@@ -1,69 +1,38 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $RMM
-## $anthropicApiKey
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $anthropicApiKey / $env:anthropicApiKey - REQUIRED. Anthropic API key used to call Claude
+## $Description     / $env:Description     - Ticket # or initials for audit trail (default: "No Description")
+## $RMMScriptPath   / $env:RMMScriptPath   - Optional log directory base provided by the RMM
 
-### ————— MSP RMM VARIABLE INITIALIZATION GOES HERE —————
-# Example for NinjaRMM:
-# $RMM = 1 (automatic)
-# $anthropicApiKey = Ninja custom field or organization variable
-#
-# Example for ConnectWise Automate:
-# $RMM = 1
-# $anthropicApiKey = %anthropicapikey%
-#
-# Example for Datto RMM:
-# $RMM = 1
-# $anthropicApiKey = $env:anthropicApiKey
-### ————— END RMM VARIABLE INITIALIZATION —————
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs identically from the
+    # command line (-anthropicApiKey ...) or from an RMM that supplies the values as env variables.
+    [string]$Description     = $env:Description,
+    [string]$anthropicApiKey = $env:anthropicApiKey,
+    [string]$RMMScriptPath   = $env:RMMScriptPath
+)
 
-# Getting input from user if not running from RMM else set variables from RMM.
+# Getting input from parameters or environment variables. Non-interactive: no Read-Host.
 
 $ScriptLogName = "msft-windows-upgrade-diagnostics.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    # Prompt for API key in interactive mode
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $anthropicApiKey = Read-Host "Please enter your Anthropic API key" -AsSecureString
-        $tempKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($anthropicApiKey))
-        if ($tempKey) {
-            $anthropicApiKey = $tempKey
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($anthropicApiKey)) { $env:anthropicApiKey = $anthropicApiKey }
 
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+if ($null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
 
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -72,7 +41,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS

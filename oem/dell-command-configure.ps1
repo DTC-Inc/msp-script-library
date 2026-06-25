@@ -1,67 +1,52 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $dellCommandConfigureURL - URL to Dell Command Configure installer
-## $enableWakeOnLan - Set to 1 to enable Wake on LAN in BIOS (default: 1)
-## $disableSleep - Set to 1 to disable sleep/standby modes (default: 1)
-## $enableSecureBoot - Set to 1 to enable Secure Boot on UEFI systems (default: 0, only works on UEFI not Legacy BIOS)
-## $additionalCctkCommands - Optional: comma-separated CCTK commands to run (e.g., "fastboot=thorough,secureboot=disabled")
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description             / $env:Description             - Ticket # or initials for audit trail (default: "No Description")
+## $RMMScriptPath           / $env:RMMScriptPath           - Optional log directory base provided by the RMM
+## $dellCommandConfigureURL / $env:dellCommandConfigureURL - URL to Dell Command Configure installer
+## $enableWakeOnLan         / $env:enableWakeOnLan         - Set to 1 to enable Wake on LAN in BIOS (default: 1)
+## $disableSleep            / $env:disableSleep            - Set to 1 to disable sleep/standby modes (default: 1)
+## $enableSecureBoot        / $env:enableSecureBoot        - Set to 1 to enable Secure Boot on UEFI systems (default: 0, only works on UEFI not Legacy BIOS)
+## $additionalCctkCommands  / $env:additionalCctkCommands  - Optional: comma-separated CCTK commands to run (e.g., "fastboot=thorough,secureboot=disabled")
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description             = $env:Description,
+    [string]$RMMScriptPath           = $env:RMMScriptPath,
+    [string]$dellCommandConfigureURL = $env:dellCommandConfigureURL,
+    [string]$enableWakeOnLan         = $env:enableWakeOnLan,
+    [string]$disableSleep            = $env:disableSleep,
+    [string]$enableSecureBoot        = $env:enableSecureBoot,
+    [string]$additionalCctkCommands  = $env:additionalCctkCommands
+)
 
 $ScriptLogName = "dell-command-configure.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-    # Set default values for interactive mode
-    if ([string]::IsNullOrEmpty($enableWakeOnLan)) {
-        $enableWakeOnLan = 1
-    }
-    if ([string]::IsNullOrEmpty($disableSleep)) {
-        $disableSleep = 1
-    }
-    if ([string]::IsNullOrEmpty($enableSecureBoot)) {
-        $enableSecureBoot = 0
-    }
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
 
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Set default values if not provided.
+if ([string]::IsNullOrEmpty($enableWakeOnLan)) {
+    $enableWakeOnLan = 1
+}
+if ([string]::IsNullOrEmpty($disableSleep)) {
+    $disableSleep = 1
+}
+if ([string]::IsNullOrEmpty($enableSecureBoot)) {
+    $enableSecureBoot = 0
+}
 
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }
-
-    # Set default values if not provided by RMM
-    if ([string]::IsNullOrEmpty($enableWakeOnLan)) {
-        $enableWakeOnLan = 1
-    }
-    if ([string]::IsNullOrEmpty($disableSleep)) {
-        $disableSleep = 1
-    }
-    if ([string]::IsNullOrEmpty($enableSecureBoot)) {
-        $enableSecureBoot = 0
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -70,7 +55,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "Enable Wake on LAN: $enableWakeOnLan"
 Write-Host "Disable Sleep: $disableSleep"
 Write-Host "Enable Secure Boot: $enableSecureBoot"
@@ -409,9 +393,6 @@ Write-Host ""
 Write-Host "NOTE: Some BIOS changes may require a system reboot to take effect."
 Write-Host "Script execution completed successfully."
 Write-Host ""
-
-# Pause for testing
-Read-Host "Press Enter to exit"
 
 Stop-Transcript
 exit 0

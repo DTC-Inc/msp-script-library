@@ -5,11 +5,20 @@
 ## Uses immediate/simple mode (copies latest restore point when source job
 ## finishes, not full history). This is the "pruning" mode.
 ##
-## $env:CUSTOM_FIELD_S3_BUCKET_NAME  - NinjaOne field name for the S3 bucket/repo name
-## $env:CUSTOM_FIELD_CLOUD_RETENTION      - NinjaOne org-level field name for cloud backup retention days (versions to keep) (default: 30)
-## $env:DESCRIPTION                  - Ticket # or initials for audit trail
-## $env:RMM                          - Set to 1 when running from RMM platform
-## $env:RMM_SCRIPT_PATH              - Script path provided by RMM (used for log location)
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $CUSTOM_FIELD_S3_BUCKET_NAME  / $env:CUSTOM_FIELD_S3_BUCKET_NAME  - NinjaOne field name for the S3 bucket/repo name
+## $CUSTOM_FIELD_CLOUD_RETENTION / $env:CUSTOM_FIELD_CLOUD_RETENTION - NinjaOne org-level field name for cloud backup retention days (versions to keep) (default: 30)
+## $DESCRIPTION                  / $env:DESCRIPTION                  - Ticket # or initials for audit trail
+## $RMM_SCRIPT_PATH              / $env:RMM_SCRIPT_PATH              - Script path provided by RMM (used for log location)
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-DESCRIPTION ...) or from an RMM that supplies values as env variables.
+    [string]$CUSTOM_FIELD_S3_BUCKET_NAME  = $env:CUSTOM_FIELD_S3_BUCKET_NAME,
+    [string]$CUSTOM_FIELD_CLOUD_RETENTION = $env:CUSTOM_FIELD_CLOUD_RETENTION,
+    [string]$DESCRIPTION                  = $env:DESCRIPTION,
+    [string]$RMM_SCRIPT_PATH              = $env:RMM_SCRIPT_PATH
+)
 
 # ============================================================
 # PS7 BOOTSTRAP
@@ -58,18 +67,22 @@ if ($PSVersionTable.PSVersion.Major -ge 7) {
 $SCRIPT_LOG_NAME = "veeam-configure-s3-copy-job.log"
 $ConfirmPreference = 'None'
 
-if ($env:RMM -ne "1") {
-    if (-not $env:DESCRIPTION) { $env:DESCRIPTION = Read-Host "Ticket # or initials" }
-    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_BUCKET_NAME))  { $env:CUSTOM_FIELD_S3_BUCKET_NAME  = $CUSTOM_FIELD_S3_BUCKET_NAME }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_CLOUD_RETENTION)) { $env:CUSTOM_FIELD_CLOUD_RETENTION = $CUSTOM_FIELD_CLOUD_RETENTION }
+if (-not [string]::IsNullOrEmpty($DESCRIPTION))                  { $env:DESCRIPTION                  = $DESCRIPTION }
+if (-not [string]::IsNullOrEmpty($RMM_SCRIPT_PATH))              { $env:RMM_SCRIPT_PATH              = $RMM_SCRIPT_PATH }
+
+if ([string]::IsNullOrEmpty($env:DESCRIPTION)) { $env:DESCRIPTION = "No Description" }
+
+# Store logs under $env:RMM_SCRIPT_PATH if provided, otherwise the standard Windows logs directory.
+if ($env:RMM_SCRIPT_PATH) {
+    $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
+    if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
+    $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
 } else {
-    if (-not $env:DESCRIPTION) { $env:DESCRIPTION = "No Description" }
-    if ($env:RMM_SCRIPT_PATH) {
-        $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
-        if (-not (Test-Path $LOG_DIR)) { New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null }
-        $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
-    } else {
-        $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-    }
+    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 }
 
 # Cloud Retention: read from org-level NinjaOne field, default 30

@@ -1,45 +1,42 @@
-# Getting input from user if not running from RMM else set variables from RMM.
-# serviceName is the only variable that needs set by the RMM. Everything else is hardcoded.
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $description   / $env:description   - Ticket # or initials for audit trail (defaults to "No description")
+## $serviceName   / $env:serviceName   - REQUIRED. The TeamViewer service name to disable
+## $rmmScriptPath / $env:rmmScriptPath - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-serviceName ...) or from an RMM that supplies values as env variables.
+    [string]$description   = $env:description,
+    [string]$serviceName   = $env:serviceName,
+    [string]$rmmScriptPath = $env:rmmScriptPath
+)
 
 $scriptLogName = "teamviewer-uninstall.log"
 
-if ($rmm -ne 1) {
-    $validInput = 0
-    # Checking for valid input.
-    while ($validInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make validInput = 1 whenever correct input is given.
-        $description = Read-Host "Please enter the ticket # and, or your initials. Its used as the description for the job"
-        if ($description) {
-            $validInput = 1
-        } else {
-            Write-Output "Invalid input. Please try again."
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $serviceName = Read-Host "Enter the TeamViewer service name"
-        if ($serviceName) {
-            $validInput = 1
-        } else {
-            Write-Output "Invalid input. Please try again."
-        }
-        
-    }
-    $logPath = "$env:WINDIR\logs\$scriptLogName"
-
-} else { 
-    # Store the logs in the rmmScriptPath
-    $logPath = "$rmmScriptPath\logs\$scriptLogName"
-
-    if ($description -eq $null) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $description = "No description"
-    }   
-
-    Write-Output $description
-    Write-Output $rmmScriptPath
-    Write-Output $rmm
-    
+# Default the audit-trail description if it was not supplied.
+if (-not $description) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $description = "No description"
 }
+
+# serviceName is required (the interactive prompt accepted no default). Fail fast if missing.
+if (-not $serviceName) {
+    Write-Error "ERROR: Required input 'serviceName' not provided (set as -serviceName or `$env:serviceName)."
+    exit 1
+}
+
+# Store the logs in the rmmScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($rmmScriptPath)) {
+    $logPath = "$rmmScriptPath\logs\$scriptLogName"
+} else {
+    $logPath = "$env:WINDIR\logs\$scriptLogName"
+}
+
+Write-Output $description
+Write-Output $rmmScriptPath
 
 Start-Transcript -Path $logPath
 
@@ -56,7 +53,7 @@ if ($service) {
 
     # Disable the service
     Set-Service -Name $serviceName -StartupType Disabled
-    
+
     Write-Output "TeamViewer service has been disabled."
 } else {
     Write-Output "TeamViewer service not found."
@@ -88,23 +85,23 @@ $osArchitecture = (Get-CimInstance Win32_operatingsystem).OSArchitecture
 
 #if ($uninstallKey64bit) {
     #$teamViewerKey = Get-ChildItem -Path $uninstallKey64bit | Where-Object { $_.GetValue("DisplayName") -like "*TeamViewer*" }
-#} else { 
+#} else {
     #$teamViewerKey = Get-ChildItem -Path $uninstallKey32bit | Where-Object { $_.GetValue("DisplayName") -like "*TeamViewer*" }
 #}
 
 # Check if TeamViewer is installed
 #if ($teamViewerKey) {
     #Write-Output "TeamViewer is installed. Uninstalling..."
-    
+
     # Get the uninstall string
     #$uninstallString = $teamViewerKey.GetValue("UninstallString")
-    
+
     # Remove quotes from the uninstall string if they exist
     #$uninstallString = $uninstallString -replace '"', ''
-    
+
     # Execute the uninstall string
     #Start-Process -FilePath $uninstallString -ArgumentList "/S" -Wait
-    
+
     #Write-Output "TeamViewer has been uninstalled."
 #} else {
     #Write-Output "TeamViewer is not installed."

@@ -1,9 +1,19 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ##
 ## Optional RMM Variables:
-## - $Description: Ticket number or initials for tracking (defaults to "Automated Duplicate SID Scan")
-## - $SearchBase: LDAP path to limit search scope (e.g., "OU=Workstations,DC=contoso,DC=com")
+## - $Description / $env:Description: Ticket number or initials for tracking (defaults to "Automated Duplicate SID Scan")
+## - $SearchBase / $env:SearchBase: LDAP path to limit search scope (e.g., "OU=Workstations,DC=contoso,DC=com")
+## - $RMMScriptPath / $env:RMMScriptPath: Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$SearchBase    = $env:SearchBase,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 # Duplicate Local Machine SID Detector
 # Queries all AD computer objects with the info (Notes) attribute populated (written by msft-windows-sid-report.ps1),
@@ -22,36 +32,21 @@
 # 1 = Success, duplicates found (non-zero to trigger RMM alerting)
 # 2 = Error (not domain-joined, LDAP query failed, etc.)
 
-# Getting input from user if not running from RMM else set variables from RMM.
-
 $ScriptLogName = "msft-windows-sid-detect-duplicates.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and, or your initials (press Enter for 'Automated Duplicate SID Scan')"
-        if (-not $Description) {
-            $Description = "Automated Duplicate SID Scan"
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $SearchBase = Read-Host "Enter LDAP search base to limit scope (press Enter to search entire domain)"
+if (-not $Description) {
+    $Description = "Automated Duplicate SID Scan"
+}
 
-        $ValidInput = 1
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# $SearchBase is optional: empty means search the entire domain.
 
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "Automated Duplicate SID Scan"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -60,7 +55,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host "Search Base: $(if ($SearchBase) { $SearchBase } else { '(entire domain)' })"
 Write-Host ""
 

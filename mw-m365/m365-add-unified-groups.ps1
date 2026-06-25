@@ -1,3 +1,28 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $csvPath    / $env:csvPath    - REQUIRED. Path to the CSV file containing the group details
+## $domainName / $env:domainName - New domain name for created groups (default: "league91.com")
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-csvPath ...) or from an RMM that supplies values as env variables.
+    [string]$csvPath    = $env:csvPath,
+    [string]$domainName = $env:domainName
+)
+
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Validate required input. This must come from -Parameter or $env: -- there is no prompt.
+if ([string]::IsNullOrEmpty($csvPath)) {
+    Write-Error "ERROR: Required input csvPath not provided (set as -Parameter or `$env:csvPath)."
+    exit 1
+}
+
+# Default the new domain name if it was not supplied.
+if ([string]::IsNullOrEmpty($domainName)) {
+    $domainName = "league91.com"
+}
+
 # Install & Import POwershellGet
 Install-Module -Name PowerShellGet -Force -AllowClobber
 Import-Module PowershellGet
@@ -13,12 +38,6 @@ Import-Module ExchangeOnlineManagement
 # Connect to Exchange Online
 Connect-ExchangeOnline
 Connect-MicrosoftTeams
-
-# Specify the path to the CSV file containing mailbox details
-$csvPath = Read-Host "Enter CSV Path"
-
-# Specify new domain name
-$domainName = "league91.com"
 
 # Read the CSV file
 $groupList = Import-Csv -Path $csvPath

@@ -1,16 +1,32 @@
-## PLEASE SET THE FOLLOWING ENVIRONMENT VARIABLES IN YOUR RMM BEFORE RUNNING
-## $env:CUSTOM_FIELD_S3_BUCKET_NAME    - Text field: last used S3 bucket name
-## $env:CUSTOM_FIELD_S3_BUCKET_SIZE    - Text field: last used S3 bucket size (human readable)
-## $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
-## $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
-## $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
-## $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup job's last run failed
-## $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of jobs whose last run failed/warned
-## $env:CUSTOM_FIELD_S3_COPY_MISSING   - Checkbox field: checked if S3 copy job is missing or incomplete
-## $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
-## $env:DESCRIPTION                    - Ticket # or initials for audit trail
-## $env:RMM                            - Set to 1 when running from RMM platform
-## $env:RMM_SCRIPT_PATH                - Script path provided by RMM (used for log location)
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $CUSTOM_FIELD_S3_BUCKET_NAME    / $env:CUSTOM_FIELD_S3_BUCKET_NAME    - Text field: last used S3 bucket name
+## $CUSTOM_FIELD_S3_BUCKET_SIZE    / $env:CUSTOM_FIELD_S3_BUCKET_SIZE    - Text field: last used S3 bucket size (human readable)
+## $CUSTOM_FIELD_S3_INVENTORY      / $env:CUSTOM_FIELD_S3_INVENTORY      - WYSIWYG field: HTML table of all S3 repos
+## $CUSTOM_FIELD_ORPHANS_FOUND     / $env:CUSTOM_FIELD_ORPHANS_FOUND     - Integer field: 1 if orphaned backups found, 0 if not
+## $CUSTOM_FIELD_ORPHANED_BACKUPS  / $env:CUSTOM_FIELD_ORPHANED_BACKUPS  - WYSIWYG field: HTML table of orphaned/stale backup data (all repos)
+## $CUSTOM_FIELD_FAILED_BACKUP     / $env:CUSTOM_FIELD_FAILED_BACKUP     - Checkbox field: checked if any backup job's last run failed
+## $CUSTOM_FIELD_FAILED_BACKUPS    / $env:CUSTOM_FIELD_FAILED_BACKUPS    - WYSIWYG field: HTML table of jobs whose last run failed/warned
+## $CUSTOM_FIELD_S3_COPY_MISSING   / $env:CUSTOM_FIELD_S3_COPY_MISSING   - Checkbox field: checked if S3 copy job is missing or incomplete
+## $ORPHAN_DAYS_THRESHOLD          / $env:ORPHAN_DAYS_THRESHOLD          - Days since last backup to consider orphaned (default: 30)
+## $DESCRIPTION                    / $env:DESCRIPTION                    - Ticket # or initials for audit trail
+## $RMM_SCRIPT_PATH                / $env:RMM_SCRIPT_PATH                - Script path provided by RMM (used for log location)
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-DESCRIPTION ...) or from an RMM that supplies values as env variables.
+    [string]$DESCRIPTION                 = $env:DESCRIPTION,
+    [string]$CUSTOM_FIELD_S3_BUCKET_NAME = $env:CUSTOM_FIELD_S3_BUCKET_NAME,
+    [string]$CUSTOM_FIELD_S3_BUCKET_SIZE = $env:CUSTOM_FIELD_S3_BUCKET_SIZE,
+    [string]$CUSTOM_FIELD_S3_INVENTORY   = $env:CUSTOM_FIELD_S3_INVENTORY,
+    [string]$CUSTOM_FIELD_ORPHANS_FOUND  = $env:CUSTOM_FIELD_ORPHANS_FOUND,
+    [string]$CUSTOM_FIELD_ORPHANED_BACKUPS = $env:CUSTOM_FIELD_ORPHANED_BACKUPS,
+    [string]$CUSTOM_FIELD_FAILED_BACKUP  = $env:CUSTOM_FIELD_FAILED_BACKUP,
+    [string]$CUSTOM_FIELD_FAILED_BACKUPS = $env:CUSTOM_FIELD_FAILED_BACKUPS,
+    [string]$CUSTOM_FIELD_S3_COPY_MISSING = $env:CUSTOM_FIELD_S3_COPY_MISSING,
+    [string]$ORPHAN_DAYS_THRESHOLD       = $env:ORPHAN_DAYS_THRESHOLD,
+    [string]$RMM_SCRIPT_PATH             = $env:RMM_SCRIPT_PATH
+)
 
 # ============================================================
 # PS7 BOOTSTRAP
@@ -155,44 +171,34 @@ $SCRIPT_LOG_NAME = "veeam-s3-bucket-inventory.log"
 # SECTION 2: INPUT HANDLING
 # ============================================================
 
-if ($env:RMM -ne "1") {
-    # Interactive mode
-    $VALID_INPUT = 0
-    while ($VALID_INPUT -ne 1) {
-        $env:DESCRIPTION = Read-Host "Please enter the ticket # and/or your initials (used for audit trail)"
-        if ($env:DESCRIPTION) {
-            $VALID_INPUT = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($DESCRIPTION))                 { $env:DESCRIPTION                 = $DESCRIPTION }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_BUCKET_NAME)) { $env:CUSTOM_FIELD_S3_BUCKET_NAME = $CUSTOM_FIELD_S3_BUCKET_NAME }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_BUCKET_SIZE)) { $env:CUSTOM_FIELD_S3_BUCKET_SIZE = $CUSTOM_FIELD_S3_BUCKET_SIZE }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_INVENTORY))   { $env:CUSTOM_FIELD_S3_INVENTORY   = $CUSTOM_FIELD_S3_INVENTORY }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_ORPHANS_FOUND))  { $env:CUSTOM_FIELD_ORPHANS_FOUND  = $CUSTOM_FIELD_ORPHANS_FOUND }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_ORPHANED_BACKUPS)) { $env:CUSTOM_FIELD_ORPHANED_BACKUPS = $CUSTOM_FIELD_ORPHANED_BACKUPS }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_FAILED_BACKUP))  { $env:CUSTOM_FIELD_FAILED_BACKUP  = $CUSTOM_FIELD_FAILED_BACKUP }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_FAILED_BACKUPS)) { $env:CUSTOM_FIELD_FAILED_BACKUPS = $CUSTOM_FIELD_FAILED_BACKUPS }
+if (-not [string]::IsNullOrEmpty($CUSTOM_FIELD_S3_COPY_MISSING)) { $env:CUSTOM_FIELD_S3_COPY_MISSING = $CUSTOM_FIELD_S3_COPY_MISSING }
+if (-not [string]::IsNullOrEmpty($ORPHAN_DAYS_THRESHOLD))       { $env:ORPHAN_DAYS_THRESHOLD       = $ORPHAN_DAYS_THRESHOLD }
+if (-not [string]::IsNullOrEmpty($RMM_SCRIPT_PATH))             { $env:RMM_SCRIPT_PATH             = $RMM_SCRIPT_PATH }
+
+if (-not $env:DESCRIPTION) {
+    Write-Host "DESCRIPTION is null. This was most likely run automatically from the RMM with no description passed."
+    $env:DESCRIPTION = "No Description"
+}
+
+# Store logs under $env:RMM_SCRIPT_PATH if provided, otherwise the standard Windows logs directory.
+if ($env:RMM_SCRIPT_PATH) {
+    $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
+    if (-not (Test-Path $LOG_DIR)) {
+        New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null
     }
-
-    $env:CUSTOM_FIELD_S3_BUCKET_NAME = Read-Host "NinjaOne text field for S3 bucket name (blank to skip)"
-    $env:CUSTOM_FIELD_S3_BUCKET_SIZE = Read-Host "NinjaOne text field for S3 bucket size (blank to skip)"
-    $env:CUSTOM_FIELD_S3_INVENTORY = Read-Host "NinjaOne WYSIWYG field for S3 inventory table (blank to skip)"
-    $env:CUSTOM_FIELD_ORPHANS_FOUND = Read-Host "NinjaOne integer field for orphans found flag (blank to skip)"
-    $env:CUSTOM_FIELD_ORPHANED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for orphaned backups table (blank to skip)"
-    $env:CUSTOM_FIELD_FAILED_BACKUP = Read-Host "NinjaOne checkbox field for failed backup flag (blank to skip)"
-    $env:CUSTOM_FIELD_FAILED_BACKUPS = Read-Host "NinjaOne WYSIWYG field for failed backups table (blank to skip)"
-
-    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-
+    $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
 } else {
-    # RMM mode
-    if ($env:RMM_SCRIPT_PATH) {
-        $LOG_DIR = "$env:RMM_SCRIPT_PATH\logs"
-        if (-not (Test-Path $LOG_DIR)) {
-            New-Item -ItemType Directory -Path $LOG_DIR -Force | Out-Null
-        }
-        $LOG_PATH = "$LOG_DIR\$SCRIPT_LOG_NAME"
-    } else {
-        $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
-    }
-
-    if (-not $env:DESCRIPTION) {
-        Write-Host "DESCRIPTION is null. This was most likely run automatically from the RMM with no description passed."
-        $env:DESCRIPTION = "No Description"
-    }
+    $LOG_PATH = "$env:WINDIR\logs\$SCRIPT_LOG_NAME"
 }
 
 # ============================================================
@@ -204,7 +210,6 @@ Start-Transcript -Path $LOG_PATH
 Write-Host "=== Veeam Inventory ==="
 Write-Host "Description:  $env:DESCRIPTION"
 Write-Host "Log path:     $LOG_PATH"
-Write-Host "RMM mode:     $($env:RMM -eq '1')"
 Write-Host "PS version:   $($PSVersionTable.PSVersion)"
 Write-Host ""
 

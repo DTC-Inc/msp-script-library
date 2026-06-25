@@ -1,10 +1,12 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
-## $RemoveXbox = $true          # Remove Xbox apps
-## $RemoveCommunications = $true # Remove People, Mail, Calendar, Skype
-## $RemoveMaps = $true          # Remove Maps
-## $RemoveEntertainment = $true # Remove Zune Music/Video, Solitaire
-## $RemoveMiscBloat = $true     # Remove 3D Builder, Print3D, etc.
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description          / $env:Description          - Ticket # or initials for audit trail
+## $RMMScriptPath        / $env:RMMScriptPath        - Optional log directory base provided by the RMM
+## $RemoveXbox           / $env:RemoveXbox           - Remove Xbox apps (default: true)
+## $RemoveCommunications / $env:RemoveCommunications - Remove People, Mail, Calendar, Skype (default: true)
+## $RemoveMaps           / $env:RemoveMaps           - Remove Maps (default: true)
+## $RemoveEntertainment  / $env:RemoveEntertainment  - Remove Zune Music/Video, Solitaire (default: true)
+## $RemoveMiscBloat      / $env:RemoveMiscBloat      - Remove 3D Builder, Print3D, etc. (default: true)
 
 # This script removes default Windows apps (bloatware) that are typically
 # not needed in business environments.
@@ -12,36 +14,42 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description          = $env:Description,
+    [string]$RMMScriptPath        = $env:RMMScriptPath,
+    [string]$RemoveXbox           = $env:RemoveXbox,
+    [string]$RemoveCommunications = $env:RemoveCommunications,
+    [string]$RemoveMaps           = $env:RemoveMaps,
+    [string]$RemoveEntertainment  = $env:RemoveEntertainment,
+    [string]$RemoveMiscBloat      = $env:RemoveMiscBloat
+)
+
 $ScriptLogName = "msft-windows-debloat-apps.log"
 
-# Default values - remove everything unless specified otherwise
-if ($null -eq $RemoveXbox) { $RemoveXbox = $true }
-if ($null -eq $RemoveCommunications) { $RemoveCommunications = $true }
-if ($null -eq $RemoveMaps) { $RemoveMaps = $true }
-if ($null -eq $RemoveEntertainment) { $RemoveEntertainment = $true }
-if ($null -eq $RemoveMiscBloat) { $RemoveMiscBloat = $true }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Default values - remove everything unless specified otherwise. The Remove* inputs arrive as
+# strings (RMM/-Parameter); an empty value means "not supplied" so we default it to $true,
+# otherwise coerce the supplied string ("true"/"false"/"1"/"0") to a boolean.
+if ([string]::IsNullOrEmpty($RemoveXbox))           { $RemoveXbox = $true }           else { $RemoveXbox = [System.Convert]::ToBoolean($RemoveXbox) }
+if ([string]::IsNullOrEmpty($RemoveCommunications)) { $RemoveCommunications = $true } else { $RemoveCommunications = [System.Convert]::ToBoolean($RemoveCommunications) }
+if ([string]::IsNullOrEmpty($RemoveMaps))           { $RemoveMaps = $true }           else { $RemoveMaps = [System.Convert]::ToBoolean($RemoveMaps) }
+if ([string]::IsNullOrEmpty($RemoveEntertainment))  { $RemoveEntertainment = $true }  else { $RemoveEntertainment = [System.Convert]::ToBoolean($RemoveEntertainment) }
+if ([string]::IsNullOrEmpty($RemoveMiscBloat))      { $RemoveMiscBloat = $true }      else { $RemoveMiscBloat = [System.Convert]::ToBoolean($RemoveMiscBloat) }
+
+# Default the audit-trail description if it was not supplied. This preserves the original
+# behavior where an unattended/RMM run that passed no Description used a placeholder value.
+if ([string]::IsNullOrEmpty($Description)) {
+    $Description = "RMM-initiated app debloating"
+}
+
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated app debloating"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 # Ensure log directory exists before starting transcript
@@ -54,7 +62,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== Windows App Debloating ===" -ForegroundColor Cyan

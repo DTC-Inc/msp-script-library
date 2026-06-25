@@ -1,50 +1,44 @@
-# Getting input from user if not running from RMM else set variables from RMM.
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description     / $env:Description     - Ticket # or initials for audit trail (defaults to "No Description")
+## $AccountKey      / $env:AccountKey      - REQUIRED. Huntress account key
+## $OrganizationKey / $env:OrganizationKey - REQUIRED. Organization name (all lowercase, dashes for spaces)
+## $TagsKey         / $env:TagsKey         - Optional tag (commonly the location or group of the endpoint)
+## $RMMScriptPath   / $env:RMMScriptPath   - Optional log directory base provided by the RMM
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-AccountKey ...) or from an RMM that supplies values as env variables.
+    [string]$Description     = $env:Description,
+    [string]$AccountKey      = $env:AccountKey,
+    [string]$OrganizationKey = $env:OrganizationKey,
+    [string]$TagsKey         = $env:TagsKey,
+    [string]$RMMScriptPath   = $env:RMMScriptPath
+)
 
 $ScriptLogName = "HuntressAgentInstall.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-        $AccountKey = Read-Host "Enter your Huntress account key"
-        $OrganizationKey = Read-Host "Please enter the organization name (all lowercase, spaces separate with dashes, remove all other symbols)"
-        $TagsKey = Read-Host "Please enter a tag (this is most commonly the location or group of the endpoint)"
-    }
+# Default the audit-trail description if it was not supplied.
+if ($Null -eq $Description -or $Description -eq "") {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
+
+# Store the logs in the RMMScriptPath when provided, else the standard Windows logs directory.
+if ($null -ne $RMMScriptPath -and $RMMScriptPath -ne "") {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+
+} else {
     $LogPath = "$env:WINDIR\logs\$ScriptLogName"
 
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($Null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 
 # Copyright (c) 2023 Huntress Labs, Inc.
 # All rights reserved.

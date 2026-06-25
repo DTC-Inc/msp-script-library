@@ -1,45 +1,41 @@
-## PLEASE COMMENT YOUR VARIALBES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## THIS IS HOW WE EASILY LET PEOPLE KNOW WHAT VARIABLES NEED SET IN THE RMM
-## $RMM
-## $isoUrl
-## $forceUpgrade
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description   / $env:Description   - Ticket # or initials for audit trail (default: "No Description")
+## $isoUrl        / $env:isoUrl        - REQUIRED. URL of the Windows 11 ISO to download
+## $forceUpgrade  / $env:forceUpgrade  - Set to 1 to add the /product server flag, 0 to skip (default: 0)
+## $RMMScriptPath / $env:RMMScriptPath - Optional log directory base provided by the RMM
 
-# Getting input from user if not running from RMM else set variables from RMM.
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-isoUrl ...) or from an RMM that supplies values as env variables.
+    [string]$Description   = $env:Description,
+    [string]$isoUrl        = $env:isoUrl,
+    [string]$forceUpgrade  = $env:forceUpgrade,
+    [string]$RMMScriptPath = $env:RMMScriptPath
+)
 
 $ScriptLogName = "msft-win11-upgrade.log"
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    # Checking for valid input.
-    while ($ValidInput -ne 1) {
-        # Ask for input here. This is the interactive area for getting variable information.
-        # Remember to make ValidInput = 1 whenever correct input is given.
-        $Description = Read-Host "Please enter the ticket # and, or your initials. Its used as the Description for the job"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Mirror the resolved parameter values into $env: so the rest of the script can reference
+# either $Name or $env:Name, whichever form the input arrived in.
+if (-not [string]::IsNullOrEmpty($Description))   { $env:Description   = $Description }
+if (-not [string]::IsNullOrEmpty($isoUrl))        { $env:isoUrl        = $isoUrl }
+if (-not [string]::IsNullOrEmpty($forceUpgrade))  { $env:forceUpgrade  = $forceUpgrade }
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) { $env:RMMScriptPath = $RMMScriptPath }
+
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "No Description"
+}
+
+# Store the logs in the RMMScriptPath when provided, else the Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
+} else {
     $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-
-} else { 
-    # Store the logs in the RMMScriptPath
-    if ($null -eq $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-        
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-        
-    }
-
-    if ($null -eq $Description) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $Description = "No Description"
-    }   
-
-
-    
 }
 
 # Start the script logic here. This is the part that actually gets done what you need done.
@@ -48,7 +44,6 @@ Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 
 <#
 .SYNOPSIS
@@ -78,10 +73,7 @@ Write-Host "RMM: $RMM"
 #>
 
 ### ————— CONFIGURATION —————
-# $true = report to NinjaRMM; $false = write to host
-#$RMM        = $true
-
-# URL of your Win11 ISO
+# URL of your Win11 ISO (supply via -isoUrl or $env:isoUrl)
 #$isoUrl     = "https://example.com/Windows11.iso"
 
 # Where to save the ISO
@@ -89,7 +81,7 @@ $downloadDir = "$env:TEMP"
 $isoPath     = Join-Path $downloadDir "Win11Upgrade.iso"
 
 # Force upgrade flag - set to 1 to use /product server flag, 0 to skip it
-if ($null -eq $forceUpgrade) {
+if ([string]::IsNullOrEmpty($forceUpgrade)) {
     $forceUpgrade = 0
 }
 
@@ -99,7 +91,7 @@ function Show-Progress {
         [int]$Percent,
         [string]$Stage
     )
-    if ($RMM) {
+    if (Get-Command Ninja-Property-Set -ErrorAction SilentlyContinue) {
         Ninja-Property-Set windowsUpgradeProgress -Value $Percent
     } else {
         Write-Output "[$Stage] $Percent% complete"
@@ -129,17 +121,16 @@ try {
     Write-Output "Warning: Could not dismount ISO: $_"
 }
 
-### ————— ELEVATION CHECK (Interactive mode only) —————
-# Skip elevation check when running from RMM - RMM platforms run as SYSTEM (already elevated)
-if ($RMM -ne 1) {
-    if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
-        ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        Write-Output "Relaunching elevated..."
-        Start-Process -FilePath "PowerShell.exe" `
-            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
-            -Verb RunAs
-        exit
-    }
+### ————— ELEVATION CHECK —————
+# RMM platforms run as SYSTEM (already elevated); when run manually without admin rights,
+# relaunch elevated so the upgrade has the privileges it needs.
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+    ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Output "Relaunching elevated..."
+    Start-Process -FilePath "PowerShell.exe" `
+        -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" `
+        -Verb RunAs
+    exit
 }
 
 ### ————— VALIDATE REQUIRED VARIABLES —————

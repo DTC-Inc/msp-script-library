@@ -1,10 +1,10 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
-## $RMM = 1
-## $RMMScriptPath
-## $Description
-## $InstallNetFx3 = $true         # Install .NET Framework 3.5
-## $InstallSandbox = $true        # Install Windows Sandbox (Pro/Enterprise only)
-## $InstallHyperV = $false        # Install Hyper-V (requires compatible hardware)
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $Description    / $env:Description    - Ticket # or initials for audit trail
+## $RMMScriptPath  / $env:RMMScriptPath  - Optional log directory base provided by the RMM
+## $InstallNetFx3  / $env:InstallNetFx3  - Install .NET Framework 3.5 (default: $true)
+## $InstallSandbox / $env:InstallSandbox - Install Windows Sandbox, Pro/Enterprise only (default: $true)
+## $InstallHyperV  / $env:InstallHyperV  - Install Hyper-V, requires compatible hardware (default: $false)
 
 # This script installs optional Windows features:
 # - .NET Framework 3.5 (for legacy applications)
@@ -14,41 +14,43 @@
 
 #Requires -RunAsAdministrator
 
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-Description ...) or from an RMM that supplies values as env variables.
+    [string]$Description    = $env:Description,
+    [string]$RMMScriptPath  = $env:RMMScriptPath,
+    [string]$InstallNetFx3  = $env:InstallNetFx3,
+    [string]$InstallSandbox = $env:InstallSandbox,
+    [string]$InstallHyperV  = $env:InstallHyperV
+)
+
 $ScriptLogName = "msft-windows-config-features.log"
 
-# Default values
-if ($null -eq $InstallNetFx3) { $InstallNetFx3 = $true }
-if ($null -eq $InstallSandbox) { $InstallSandbox = $true }
-if ($null -eq $InstallHyperV) { $InstallHyperV = $false }
+# --- Input handling: non-interactive (no Read-Host) ----------------------
 
-if ($RMM -ne 1) {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $Description = Read-Host "Please enter the ticket # and/or your initials"
-        if ($Description) {
-            $ValidInput = 1
-        } else {
-            Write-Host "Invalid input. Please try again."
-        }
-    }
-    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
+# Default the audit-trail description if it was not supplied.
+if ([string]::IsNullOrEmpty($Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $Description = "RMM-initiated Windows features installation"
+}
+
+# Default the feature toggles, then coerce the string inputs to booleans so the install
+# blocks below (which test $InstallNetFx3 etc.) behave as they did originally.
+if ([string]::IsNullOrEmpty($InstallNetFx3))  { $InstallNetFx3  = $true }  else { $InstallNetFx3  = [System.Convert]::ToBoolean($InstallNetFx3) }
+if ([string]::IsNullOrEmpty($InstallSandbox)) { $InstallSandbox = $true }  else { $InstallSandbox = [System.Convert]::ToBoolean($InstallSandbox) }
+if ([string]::IsNullOrEmpty($InstallHyperV))  { $InstallHyperV  = $false } else { $InstallHyperV  = [System.Convert]::ToBoolean($InstallHyperV) }
+
+# Store logs under $RMMScriptPath if provided, otherwise the standard Windows logs directory.
+if (-not [string]::IsNullOrEmpty($RMMScriptPath)) {
+    $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if ($null -ne $RMMScriptPath) {
-        $LogPath = "$RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
-    }
-
-    if ($null -eq $Description) {
-        $Description = "RMM-initiated Windows features installation"
-    }
+    $LogPath = "$ENV:WINDIR\logs\$ScriptLogName"
 }
 
 Start-Transcript -Path $LogPath
 
 Write-Host "Description: $Description"
 Write-Host "Log path: $LogPath"
-Write-Host "RMM: $RMM"
 Write-Host ""
 
 Write-Host "=== Windows Features Installation ===" -ForegroundColor Cyan

@@ -1,3 +1,22 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $csvPath / $env:csvPath - REQUIRED. Path to the CSV file containing mailbox details
+
+param(
+    # Defaults to its $env: counterpart so the script runs the same from the command line
+    # (-csvPath ...) or from an RMM that supplies the value as an env variable. There is no
+    # Read-Host: the script is non-interactive by design and never blocks on input.
+    [string]$csvPath = $env:csvPath
+)
+
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Required input. Must come from -Parameter or $env: -- there is no prompt fallback.
+if ([string]::IsNullOrEmpty($csvPath)) {
+    Write-Error "ERROR: Required input not provided (set as -Parameter or `$env:): csvPath"
+    exit 1
+}
+
 # Install & Import PowershellGet
 Install-Module -Name PowerShellGet -Force -AllowClobber
 Import-Module PowershellGet
@@ -11,7 +30,7 @@ Import-Module ExchangeOnlineManagement
 Connect-ExchangeOnline -Credential (Get-Credential)
 
 # Specify the path to the CSV file containing mailbox details
-$csvPath = Read-Host "Enter CSV Path"
+# ($csvPath is supplied via the -csvPath parameter or $env:csvPath -- see top of script.)
 
 # Read the CSV file
 $mailboxList = Import-Csv -Path $csvPath

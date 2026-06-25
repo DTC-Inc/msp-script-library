@@ -1,4 +1,27 @@
+## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
+## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
+## $userApiKey    / $env:userApiKey    - REQUIRED. Backblaze B2 API Key ID
+## $userApiSecret / $env:userApiSecret - REQUIRED. Backblaze B2 API App Key
+
 # Please make sure that b2-windows.exe is in the script root. All logs and data exported is stored here.
+
+param(
+    # Each parameter defaults to its $env: counterpart so the script runs the same from the
+    # command line (-userApiKey ...) or from an RMM that supplies values as env variables.
+    [string]$userApiKey    = $env:userApiKey,
+    [string]$userApiSecret = $env:userApiSecret
+)
+
+# --- Input handling: non-interactive (no Read-Host) ----------------------
+
+# Validate required inputs. These must come from -Parameter or $env: -- there is no prompt.
+$missing = @()
+if (-not $userApiKey)    { $missing += 'userApiKey' }
+if (-not $userApiSecret) { $missing += 'userApiSecret' }
+if ($missing.Count -gt 0) {
+    Write-Error "ERROR: Required input(s) not provided (set as -Parameter or `$env:): $($missing -join ', ')"
+    exit 1
+}
 
 # global variables
 $lifecycleRules = @'
@@ -24,9 +47,6 @@ if (-not (Test-Path -Path $filePath)) {
 } else {
     Write-Host "File already exists."
 }
-
-$userApiKey = Read-Host "Enter API Key ID"
-$userApiSecret = Read-Host "Enter API App Key"
 
 # Authorize B2
 & $psScriptRoot\b2-windows.exe authorize-account $userApiKey $userApiSecret
