@@ -1,9 +1,9 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## Each input can be supplied EITHER as a -Parameter OR as an $env: variable of the same name.
 ## $Description     / $env:Description     - Ticket # or initials for audit trail (defaults to "No Description")
-## $AccountKey      / $env:AccountKey      - REQUIRED. Huntress account key
-## $OrganizationKey / $env:OrganizationKey - REQUIRED. Organization name (all lowercase, dashes for spaces)
-## $TagsKey         / $env:TagsKey         - Optional tag (commonly the location or group of the endpoint)
+## $AccountKey      / $env:AccountKey      - REQUIRED. Huntress account key (passed through as a Ninja variable)
+## $OrganizationKey - Set automatically from Ninja's built-in $env:NINJA_ORGANIZATION_NAME
+## $TagsKey         - Set automatically from Ninja's built-in $env:NINJA_LOCATION_NAME
 ## $RMMScriptPath   / $env:RMMScriptPath   - Optional log directory base provided by the RMM
 
 param(
@@ -11,8 +11,9 @@ param(
     # command line (-AccountKey ...) or from an RMM that supplies values as env variables.
     [string]$Description     = $env:Description,
     [string]$AccountKey      = $env:AccountKey,
-    [string]$OrganizationKey = $env:OrganizationKey,
-    [string]$TagsKey         = $env:TagsKey,
+    # OrganizationKey/TagsKey come straight from Ninja's built-in org/location variables.
+    [string]$OrganizationKey = $env:NINJA_ORGANIZATION_NAME,
+    [string]$TagsKey         = $env:NINJA_LOCATION_NAME,
     [string]$RMMScriptPath   = $env:RMMScriptPath
 )
 
@@ -143,20 +144,20 @@ if ($KernelVersion.Major -eq 6) {
     $LegacyCommandsRequired = $true
 }
 
-# Check for an account key specified on the command line.
-if ( ! [string]::IsNullOrEmpty($acctkey) ) {
-    $AccountKey = $acctkey
-}
+# AccountKey, OrganizationKey, and TagsKey are supplied via the param() block above
+# (AccountKey from the Ninja variable; OrganizationKey/TagsKey from Ninja's built-in
+# org/location variables). The legacy lowercase $acctkey/$orgkey/$tags command-line
+# overrides were removed: nothing set them under our RMM usage and, with Set-StrictMode
+# enabled, they only emitted "variable cannot be retrieved" errors into the output log.
 
-# Check for an organization key specified on the command line.
-if ( ! [string]::IsNullOrEmpty($orgkey) ) {
-    $OrganizationKey = $orgkey
-}
-
-# Check for tags specified on the command line.
-if ( ! [string]::IsNullOrEmpty($tags) ) {
-    $TagsKey = $tags
-}
+# Huntress install-mode switches. Default off = the normal fresh-install path. Declared
+# here (script scope) so Set-StrictMode does not emit "variable cannot be retrieved"
+# errors when main() reads them on an unattended run; the install logic still toggles
+# them as needed (orphan -> reregister, no account key -> repair, etc.).
+$reregister = $false
+$reinstall  = $false
+$uninstall  = $false
+$repair     = $false
 
 # pick the appropriate file to download based on the OS version
 if ($LegacyCommandsRequired -eq $true) {
