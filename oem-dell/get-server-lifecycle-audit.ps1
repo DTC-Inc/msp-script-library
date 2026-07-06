@@ -223,7 +223,7 @@ function Get-DTCServerLifecycleAudit {
 
     # ----- CAL SIZING INPUTS -----
     $lines.Add('')
-    $lines.Add('== CAL SIZING INPUTS  (Device CALs billed per device that needs one; size packs to count) ==')
+    $lines.Add('== CAL SIZING INPUTS  (Device CALs billed per device; marked individually, do NOT round to 5-packs) ==')
     if ($isDC) {
         try {
             Import-Module ActiveDirectory -ErrorAction Stop
@@ -231,7 +231,7 @@ function Get-DTCServerLifecycleAudit {
             $wsCount = (Get-ADComputer -Filter "OperatingSystem -notlike '*Server*'" | Measure-Object).Count
             $lines.Add(("AD enabled users     : {0}" -f $userCount))
             $lines.Add(("AD workstations      : {0}" -f $wsCount))
-            $lines.Add(("Device CAL packs (5) : {0} pack(s)  [SFT-109 for 2022 / SFT-111 for 2025]" -f [math]::Ceiling($wsCount / 5)))
+            $lines.Add(("Device CALs needed   : {0}  (1 per device, marked individually - do NOT round to 5-packs)  [SFT-109 for 2022 / SFT-111 for 2025]" -f $wsCount))
         } catch { $lines.Add('AD counts            : ActiveDirectory module unavailable - count users/devices at the DC') }
     } else {
         $lines.Add('Not a DC - pull enabled user + workstation counts from the domain DC to size CALs.')
