@@ -34,8 +34,6 @@
     Repo: DTC-Inc/msp-script-library -> msft-windows/msft-win-azure-migration-discovery.ps1
 #>
 
-[CmdletBinding()]
-param()
 
 # ============================================================================
 # 64-bit relaunch (NinjaOne defaults to 32-bit PowerShell)
@@ -751,3 +749,4 @@ if ($SaveReportToDisk) {
     try { Stop-Transcript | Out-Null } catch { Write-Output 'WARN: transcript was not running.' }
 }
 exit 0
+
