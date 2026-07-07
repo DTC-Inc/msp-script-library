@@ -1,4 +1,5 @@
-#Requires -Version 5.1
+﻿# NOTE: intentionally no "#Requires" - downlevel hosts (PS 4.0 / Server 2012 R2 era)
+# must run with degraded output rather than failing before execution. See version banner.
 <#
 .SYNOPSIS
     msft-win-azure-migration-discovery - Standardized server discovery for Azure/Entra migration SOW scoping.
@@ -28,6 +29,7 @@
         saveReportToDisk  (Checkbox, default true)  - write report + transcript to ProgramData
 
     Run as: SYSTEM, 64-bit (self-relaunches from 32-bit NinjaOne default).
+    PowerShell: designed for 5.1; runs degraded on 4.0 (some sections emit errors/empty).
     Deployment: run on EVERY server at the site - each host AND inside each guest VM.
     Repo: DTC-Inc/msp-script-library -> msft-windows/msft-win-azure-migration-discovery.ps1
 #>
@@ -123,6 +125,12 @@ if ($isDC)          { $contexts.Add('DOMAIN CONTROLLER') }
 
 Write-Line "DTC AZURE MIGRATION DISCOVERY v4 | Host: $env:COMPUTERNAME | $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') | SOP: KB 3893"
 Write-Line "RUN CONTEXT: $($contexts -join ' + ')"
+$psMajor = $PSVersionTable.PSVersion.Major
+Write-Line "PowerShell: $($PSVersionTable.PSVersion)"
+if ($psMajor -lt 5) {
+    Write-Line "WARN: PowerShell $psMajor.x detected (target is 5.1+). Some sections will be empty or emit errors - treat gaps as 'not collected', NOT as 'absent'."
+    Write-Line "FLAG: PS $psMajor.x implies Server 2012 R2-era or older OS - EOL platform, itself a migration finding."
+}
 
 # ============================================================================
 # 1. OS / HARDWARE / IDENTITY / FIRMWARE / LICENSING CHANNEL
