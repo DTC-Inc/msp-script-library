@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Read-only server lifecycle audit collector for upgrade-vs-replace quoting.
 .DESCRIPTION
@@ -23,8 +23,10 @@
     Author: Zach Boogher
     Repo:   msp-script-library/ninjaone/audit/get-server-lifecycle-audit.ps1  (propose ninjaone/audit/ in PR)
     Standards: KB 3299 (PowerShell Engineering Patterns), KB 3344 (Contributing a Script)
-    Read-only; inherently idempotent. PowerShell 5.1 compatible.
+    Read-only; inherently idempotent. PowerShell 3.0+ compatible (audits downlevel WMF 3/4 hosts).
 #>
+
+#Requires -Version 3.0
 
 [CmdletBinding()]
 param(
@@ -40,7 +42,7 @@ function Get-DTCServerLifecycleAudit {
         [string]$ClientName = 'UNSPECIFIED'
     )
 
-    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines = New-Object -TypeName 'System.Collections.Generic.List[string]'
 
     $lines.Add('========================================================================')
     $lines.Add((" SERVER LIFECYCLE AUDIT  (read-only)   {0}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm')))
@@ -190,7 +192,7 @@ function Get-DTCServerLifecycleAudit {
     # ----- SQL (license trigger) -----
     $lines.Add('')
     $lines.Add('== SQL SERVER INSTANCES  (SFT-107 applies ONLY for a licensed edition; Express/LocalDB are free) ==')
-    $sqlInstances = [System.Collections.Generic.List[string]]::new()
+    $sqlInstances = New-Object -TypeName 'System.Collections.Generic.List[string]'
     try {
         $instKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\Instance Names\SQL' -ErrorAction Stop
         $instKey.PSObject.Properties | Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object {
@@ -262,7 +264,7 @@ if ($MyInvocation.InvocationName -ne '.') {
     Start-Transcript -Path $logPath -Append | Out-Null
 
     try {
-        Write-Information ("Auditing {0} for client '{1}'" -f $env:COMPUTERNAME, $ClientName) -InformationAction Continue
+        Write-Output ("Auditing {0} for client '{1}'" -f $env:COMPUTERNAME, $ClientName)
         $report = Get-DTCServerLifecycleAudit -ClientName $ClientName
         Write-Output $report
         exit 0
