@@ -1,6 +1,7 @@
 ## PLEASE COMMENT YOUR VARIABLES DIRECTLY BELOW HERE IF YOU'RE RUNNING FROM A RMM
 ## NinjaRMM passes script preset variables as environment variables, so each is read via $env: in this script.
-## $env:RMM                        - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode
+## This script is 100% NON-INTERACTIVE - it hard-fails if $env:RMM is not "1".
+## $env:RMM                        - Set to "1" by NinjaRMM to indicate RMM (non-interactive) mode. REQUIRED.
 ## $env:Description                - Ticket # or initials for audit trail
 ## $env:RMMScriptPath              - Optional log directory base provided by the RMM
 ## $env:IossUrl                    - URL to IOSS_v3.2.zip. Empty = skip IOSS phase.
@@ -28,40 +29,29 @@ if ([string]::IsNullOrEmpty($env:ForceReinstall))              { $env:ForceReins
 if ([string]::IsNullOrEmpty($env:SkipVersionCheck))            { $env:SkipVersionCheck = "0" }
 if ([string]::IsNullOrEmpty($env:DigitalIntegrationRegFiles)) { $env:DigitalIntegrationRegFiles = "Schick_Sensor_Integration.reg" }
 
-# --- Input handling: RMM vs interactive ----------------------------------
+# --- Input handling: non-interactive only --------------------------------
+# This script is designed for RMM execution exclusively. For manual runs,
+# set the required environment variables ($env:RMM="1", $env:IossUrl, etc.) first.
 if ($env:RMM -ne "1") {
-    $ValidInput = 0
-    while ($ValidInput -ne 1) {
-        $env:Description = Read-Host "Please enter the ticket # and/or your initials for audit trail"
-        if ($env:Description) { $ValidInput = 1 } else { Write-Host "Invalid input. Please try again." }
-    }
-    if ([string]::IsNullOrEmpty($env:IossUrl)) {
-        $env:IossUrl = Read-Host "Enter IOSS zip URL (blank to skip)"
-    }
-    if ([string]::IsNullOrEmpty($env:CdrEliteUrl)) {
-        $env:CdrEliteUrl = Read-Host "Enter CDRElite 5.16 zip URL (blank to skip legacy filter stack)"
-    }
-    if ([string]::IsNullOrEmpty($env:DigitalIntegrationUrl)) {
-        $env:DigitalIntegrationUrl = Read-Host "Enter Digital Integration zip URL (blank to skip)"
-    }
-    if ([string]::IsNullOrEmpty($env:MsxmlUrl)) {
-        $env:MsxmlUrl = Read-Host "Enter MSXML 4.0 zip URL (blank to skip)"
-    }
-    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+    Write-Host "ERROR: This script is non-interactive and requires RMM mode. Set `$env:RMM='1' and required variables before running manually."
+    exit 1
+}
+if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
+    $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
 } else {
-    if (-not [string]::IsNullOrEmpty($env:RMMScriptPath)) {
-        $LogPath = "$env:RMMScriptPath\logs\$ScriptLogName"
-    } else {
-        $LogPath = "$env:WINDIR\logs\$ScriptLogName"
-    }
-    if ([string]::IsNullOrEmpty($env:Description)) {
-        Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
-        $env:Description = "No Description"
-    }
+    $LogPath = "$env:WINDIR\logs\$ScriptLogName"
+}
+if ([string]::IsNullOrEmpty($env:Description)) {
+    Write-Host "Description is null. This was most likely run automatically from the RMM and no information was passed."
+    $env:Description = "No Description"
 }
 
+# --- Log rotation (runaway protection: cap transcript growth at ~10MB) ---
 $logDir = Split-Path -Path $LogPath -Parent
 if (-not (Test-Path -Path $logDir)) { New-Item -Path $logDir -ItemType Directory -Force | Out-Null }
+if ((Test-Path $LogPath) -and ((Get-Item $LogPath).Length -gt 10MB)) {
+    Move-Item -Path $LogPath -Destination "$LogPath.old" -Force
+}
 
 # --- Script logic --------------------------------------------------------
 Start-Transcript -Path $LogPath -Append
@@ -77,28 +67,54 @@ $iossInstallPath = "$env:ProgramFiles\Sirona\Intraoral Sensors"
 $patchedDllVersion = "5.15.1877.10093"
 $tempRoot = "$env:TEMP\SchickIossInstall"
 $minEaglesoftVersion = [version]"24.20"
+$downloadTimeoutSec = 1800   # 30 min per component download
+$installTimeoutSec = 1800    # 30 min for large installers (CDR Elite, IOSS)
+$smallTimeoutSec = 900       # 15 min for MSIs/redists
+
+function Invoke-ProcessWithTimeout {
+    # Runaway protection: launches a process, waits up to TimeoutSec, kills it on timeout.
+    # Returns the exit code, or 9999 if the process was killed for exceeding the timeout.
+    param([string]$PhaseName, [string]$FilePath, [string]$Arguments, [int]$TimeoutSec)
+    Write-Host "[$PhaseName] Running: $FilePath $Arguments (timeout ${TimeoutSec}s)"
+    if ([string]::IsNullOrWhiteSpace($Arguments)) {
+        $p = Start-Process -FilePath $FilePath -PassThru
+    } else {
+        $p = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru
+    }
+    if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+        Write-Host "[$PhaseName] TIMEOUT after ${TimeoutSec}s - killing process $($p.Id) ($FilePath)."
+        try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { Write-Host "[$PhaseName] Kill failed: $($_.Exception.Message)" }
+        return 9999
+    }
+    Write-Host "[$PhaseName] Exit code: $($p.ExitCode)"
+    return $p.ExitCode
+}
+
+function Install-Msi {
+    param([string]$PhaseName, [string]$MsiPath, [int]$TimeoutSec = 900)
+    return Invoke-ProcessWithTimeout -PhaseName $PhaseName -FilePath "msiexec.exe" -Arguments "/i `"$MsiPath`" /qn /norestart" -TimeoutSec $TimeoutSec
+}
 
 function Get-Component {
-    # Downloads a component zip and extracts it. Returns the extraction path or $null if no URL set.
+    # Downloads a component zip (with timeout) and extracts it. Returns the extraction path or $null if no URL set.
     param([string]$Name, [string]$Url)
     if ([string]::IsNullOrWhiteSpace($Url)) { return $null }
     $zipFile = Join-Path $tempRoot "$Name.zip"
     $extractPath = Join-Path $tempRoot $Name
-    Write-Host "[$Name] Downloading: $Url"
-    (New-Object System.Net.WebClient).DownloadFile($Url, $zipFile)
+    Write-Host "[$Name] Downloading: $Url (timeout ${downloadTimeoutSec}s)"
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $zipFile -TimeoutSec $downloadTimeoutSec -UseBasicParsing
+    } finally {
+        $ProgressPreference = $prevProgress
+    }
     if (-not (Test-Path $zipFile)) { throw "[$Name] Download failed." }
+    Write-Host "[$Name] Downloaded $([math]::Round((Get-Item $zipFile).Length / 1MB, 1)) MB."
     Unblock-File -Path $zipFile
     Expand-Archive -Path $zipFile -DestinationPath $extractPath -Force
     Get-ChildItem -Path $extractPath -Recurse -File | Unblock-File
     return $extractPath
-}
-
-function Install-Msi {
-    param([string]$PhaseName, [string]$MsiPath)
-    Write-Host "[$PhaseName] Installing MSI: $MsiPath"
-    $p = Start-Process msiexec.exe -ArgumentList "/i `"$MsiPath`" /qn /norestart" -Wait -PassThru
-    Write-Host "[$PhaseName] msiexec exit code: $($p.ExitCode)"
-    return $p.ExitCode
 }
 
 try {
@@ -188,10 +204,9 @@ try {
         foreach ($wanted in $wantedRegs) {
             $reg = Get-ChildItem -Path $diPath -Filter $wanted -Recurse | Select-Object -First 1
             if ($reg) {
-                Write-Host "[DigitalIntegration] Importing: $($reg.FullName)"
-                $p = Start-Process reg.exe -ArgumentList "import `"$($reg.FullName)`"" -Wait -PassThru
-                if ($p.ExitCode -ne 0) {
-                    Write-Host "[DigitalIntegration] WARNING: reg import exit $($p.ExitCode) for $($reg.Name)"
+                $rc = Invoke-ProcessWithTimeout -PhaseName "DigitalIntegration" -FilePath "reg.exe" -Arguments "import `"$($reg.FullName)`"" -TimeoutSec 120
+                if ($rc -ne 0) {
+                    Write-Host "[DigitalIntegration] WARNING: reg import exit $rc for $($reg.Name)"
                     $exitCode = 1
                 }
             } else {
@@ -212,12 +227,11 @@ try {
         if ($msxmlPath) {
             $installer = Get-ChildItem -Path $msxmlPath -Include *.msi -Recurse | Select-Object -First 1
             if ($installer) {
-                $rc = Install-Msi -PhaseName "MSXML" -MsiPath $installer.FullName
+                $rc = Install-Msi -PhaseName "MSXML" -MsiPath $installer.FullName -TimeoutSec $smallTimeoutSec
             } else {
                 $installer = Get-ChildItem -Path $msxmlPath -Include *.exe -Recurse | Select-Object -First 1
                 if (-not $installer) { throw "[MSXML] No installer found in package." }
-                Write-Host "[MSXML] Running EXE: $($installer.FullName) /quiet /norestart"
-                $rc = (Start-Process $installer.FullName -ArgumentList "/quiet /norestart" -Wait -PassThru).ExitCode
+                $rc = Invoke-ProcessWithTimeout -PhaseName "MSXML" -FilePath $installer.FullName -Arguments "/quiet /norestart" -TimeoutSec $smallTimeoutSec
             }
             if ($rc -ne 0 -and $rc -ne 3010) { throw "MSXML phase failed (exit $rc)." }
             if (Test-Path "$env:WINDIR\SysWOW64\msxml4.dll") {
@@ -236,10 +250,8 @@ try {
         $cdrPath = Get-Component -Name "CDRElite516" -Url $env:CdrEliteUrl
         $cdrSetup = Get-ChildItem -Path $cdrPath -Filter "CDR Elite Setup.exe" -Recurse | Select-Object -First 1
         if (-not $cdrSetup) { throw "CDR Elite Setup.exe not found in CDRElite package." }
-        Write-Host "[CDRElite516] Installing: $($cdrSetup.FullName) $env:CdrEliteArgs"
-        $p = Start-Process $cdrSetup.FullName -ArgumentList $env:CdrEliteArgs -Wait -PassThru
-        Write-Host "[CDRElite516] Installer exit code: $($p.ExitCode)"
-    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { throw "CDRElite516 phase failed (exit $($p.ExitCode))." }
+        $rc = Invoke-ProcessWithTimeout -PhaseName "CDRElite516" -FilePath $cdrSetup.FullName -Arguments $env:CdrEliteArgs -TimeoutSec $installTimeoutSec
+        if ($rc -ne 0 -and $rc -ne 3010) { throw "CDRElite516 phase failed (exit $rc)." }
 
         if (-not (Test-Path $sharedFilesPath)) {
             throw "Shared Files folder not found at $sharedFilesPath after CDRElite install."
@@ -251,7 +263,7 @@ try {
 
         $patchMsi = Get-ChildItem -Path $cdrPath -Filter "CDRPatch*.msi" -Recurse | Select-Object -First 1
         if (-not $patchMsi) { throw "CDRElite patch MSI (CDRPatch*.msi) not found in package." }
-        $rc = Install-Msi -PhaseName "CDRElitePatch" -MsiPath $patchMsi.FullName
+        $rc = Install-Msi -PhaseName "CDRElitePatch" -MsiPath $patchMsi.FullName -TimeoutSec $smallTimeoutSec
         if ($rc -ne 0 -and $rc -ne 3010) { throw "CDRElitePatch failed (msiexec exit $rc)." }
 
         $dll = Get-Item "$sharedFilesPath\CDRImageProcess.dll" -ErrorAction SilentlyContinue
@@ -279,9 +291,7 @@ try {
         # Prerequisite: VC++ 2019 x64 redistributable (ships in the package)
         $vcRedist = Get-ChildItem -Path $iossPath -Filter "VC_redist.x64.exe" -Recurse | Select-Object -First 1
         if ($vcRedist) {
-            Write-Host "[IOSS] Installing VC++ 2019 x64 redistributable."
-            $rc = (Start-Process $vcRedist.FullName -ArgumentList "/install /quiet /norestart" -Wait -PassThru).ExitCode
-            Write-Host "[IOSS] VC_redist exit code: $rc"
+            $rc = Invoke-ProcessWithTimeout -PhaseName "IOSS-VCRedist" -FilePath $vcRedist.FullName -Arguments "/install /quiet /norestart" -TimeoutSec $smallTimeoutSec
             # 0 = ok, 3010 = ok+reboot, 1638 = newer version already installed
             if ($rc -notin 0, 3010, 1638) { throw "VC++ redistributable install failed (exit $rc)." }
             if ($rc -eq 3010) { $rebootRequired = $true }
@@ -298,7 +308,7 @@ try {
         $iossMsi = Get-ChildItem -Path $iossPath -Filter "Intraoral Sensor Software.msi" -Recurse |
             Where-Object { $_.FullName -match '\\en-us\\' } | Select-Object -First 1
         if (-not $iossMsi) { throw "[IOSS] en-us 'Intraoral Sensor Software.msi' not found in package." }
-        $rc = Install-Msi -PhaseName "IOSS" -MsiPath $iossMsi.FullName
+        $rc = Install-Msi -PhaseName "IOSS" -MsiPath $iossMsi.FullName -TimeoutSec $installTimeoutSec
         if ($rc -ne 0 -and $rc -ne 3010) { throw "IOSS phase failed (exit $rc)." }
         if ($rc -eq 3010) { $rebootRequired = $true }
     } elseif ($iossRequested) {
