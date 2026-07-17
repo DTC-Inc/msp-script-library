@@ -71,6 +71,11 @@ $downloadTimeoutSec = 1800   # 30 min per component download
 $installTimeoutSec = 1800    # 30 min for large installers (CDR Elite, IOSS)
 $smallTimeoutSec = 900       # 15 min for MSIs/redists
 
+# Legacy packages to remove per Patterson/Eaglesoft guidance for ES 24.20+ - always removed, no skip.
+# (MSXML deliberately excluded: msxml4.dll is validated/installed by the MSXML phase,
+#  and uninstalling MSXML 4 risks breaking unrelated LOB software that depends on it.)
+$legacyUninstallTargets = @("CDR Patch", "CDRPatch", "CDR USB Driver", "CDR HS Driver", "Schick AE Driver")
+
 function Invoke-ProcessWithTimeout {
     # Runaway protection: launches a process, waits up to TimeoutSec, kills it on timeout.
     # Returns the exit code, or 9999 if the process was killed for exceeding the timeout.
@@ -168,7 +173,25 @@ try {
         throw "CdrEliteArgs not set. CDR Elite Setup.exe cannot run silently without switches - aborting before any changes are made."
     }
 
-    # --- Kill blocking processes (Patterson Answer 44313) ---
+    # --- Core Isolation / HVCI (Patterson Answer 40785 / vendor step 1) ---
+    # Vendor procedure requires HVCI disabled AND rebooted BEFORE driver installs.
+    # If we flip it here, stop and require a reboot + rerun rather than installing under active enforcement.
+    if ($env:DisableCoreIsolation -eq "1") {
+        $hvciKey = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
+        $current = (Get-ItemProperty -Path $hvciKey -Name Enabled -ErrorAction SilentlyContinue).Enabled
+        if ($current -eq 1) {
+            Write-Host "Core Isolation (HVCI) enabled. Disabling per vendor requirement."
+            Set-ItemProperty -Path $hvciKey -Name Enabled -Value 0 -Type DWord
+            Write-Host "REBOOT REQUIRED BEFORE INSTALL: HVCI was active this session; drivers must not install under enforcement."
+            Write-Host "Reboot this machine and rerun this script - it will resume from where it left off."
+            Stop-Transcript
+            exit 3010
+        } else {
+            Write-Host "Core Isolation (HVCI) already disabled or not configured (value: $current)."
+        }
+    }
+
+    # --- Kill blocking processes (Patterson Answer 44313 / vendor step 2) ---
     Get-Process AutoDetectServer -ErrorAction SilentlyContinue | ForEach-Object {
         Write-Host "Stopping AutoDetectServer.exe (PID $($_.Id))"
         Stop-Process -Id $_.Id -Force
@@ -178,16 +201,27 @@ try {
         Stop-Process -Id $_.Id -Force
     }
 
-    # --- Core Isolation / HVCI (Patterson Answer 40785) ---
-    if ($env:DisableCoreIsolation -eq "1") {
-        $hvciKey = "HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity"
-        $current = (Get-ItemProperty -Path $hvciKey -Name Enabled -ErrorAction SilentlyContinue).Enabled
-        if ($current -eq 1) {
-            Write-Host "Core Isolation (HVCI) enabled. Disabling per vendor requirement."
-            Set-ItemProperty -Path $hvciKey -Name Enabled -Value 0 -Type DWord
-            $rebootRequired = $true
-        } else {
-            Write-Host "Core Isolation (HVCI) already disabled or not configured (value: $current)."
+    # --- Legacy driver package removal (vendor step 3) - always runs ---
+    # Leftover CDR/Schick driver packages cause CDR-Autodetect interference with IOSS sensor detection.
+    # MSI-based entries are removed silently; non-MSI uninstallers are logged and skipped (no known silent switch).
+    $uninstallEntries = Get-ItemProperty "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+                                         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*" -ErrorAction SilentlyContinue
+    foreach ($target in $legacyUninstallTargets) {
+        $found = $uninstallEntries | Where-Object { $_.DisplayName -like "*$target*" }
+        foreach ($entry in $found) {
+            Write-Host "[LegacyUninstall] Found: $($entry.DisplayName) $($entry.DisplayVersion)"
+            if ($entry.UninstallString -match '(\{[0-9A-Fa-f\-]{36}\})') {
+                $productCode = $Matches[1]
+                $rc = Invoke-ProcessWithTimeout -PhaseName "LegacyUninstall" -FilePath "msiexec.exe" -Arguments "/x $productCode /qn /norestart" -TimeoutSec $smallTimeoutSec
+                if ($rc -notin 0, 3010, 1605) {
+                    Write-Host "[LegacyUninstall] WARNING: uninstall of '$($entry.DisplayName)' exited $rc."
+                    $exitCode = 1
+                }
+                if ($rc -eq 3010) { $rebootRequired = $true }
+            } else {
+                Write-Host "[LegacyUninstall] WARNING: '$($entry.DisplayName)' has a non-MSI uninstaller - skipped (no verified silent switch). Remove manually if sensor detection issues occur."
+                $exitCode = 1
+            }
         }
     }
 
@@ -196,7 +230,7 @@ try {
     if (Test-Path $tempRoot) { Remove-Item $tempRoot -Recurse -Force }
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
 
-    # === Phase 1: Digital Integration (Patterson Answer 18352) ===
+    # === Phase 1: Digital Integration (Patterson Answer 18352 / vendor step 9) ===
     # Package contains .reg files for 14 vendors - import ONLY those named in DigitalIntegrationRegFiles.
     $diPath = Get-Component -Name "DigitalIntegration" -Url $env:DigitalIntegrationUrl
     if ($diPath) {
@@ -219,7 +253,7 @@ try {
         Write-Host "DigitalIntegrationUrl not set - skipping. Sensor options will not appear in ES preferences unless already integrated."
     }
 
-    # === Phase 2: MSXML 4.0 (must precede CDRElite patch) ===
+    # === Phase 2: MSXML 4.0 (must precede CDRElite patch / vendor step 7) ===
     if (Test-Path "$env:WINDIR\SysWOW64\msxml4.dll") {
         Write-Host "[MSXML] msxml4.dll already present - skipping."
     } else {
@@ -245,13 +279,13 @@ try {
         }
     }
 
-    # === Phase 3-5: CDR Elite 5.16 install, Shared Files strip, patch ===
+    # === Phase 3-5: CDR Elite 5.16 install, Shared Files strip, patch (vendor steps 4, 5, 8) ===
     if ($legacyRequested -and (-not $dllOk -or $env:ForceReinstall -eq "1")) {
         $cdrPath = Get-Component -Name "CDRElite516" -Url $env:CdrEliteUrl
         $cdrSetup = Get-ChildItem -Path $cdrPath -Filter "CDR Elite Setup.exe" -Recurse | Select-Object -First 1
         if (-not $cdrSetup) { throw "CDR Elite Setup.exe not found in CDRElite package." }
         $rc = Invoke-ProcessWithTimeout -PhaseName "CDRElite516" -FilePath $cdrSetup.FullName -Arguments $env:CdrEliteArgs -TimeoutSec $installTimeoutSec
-        if ($rc -ne 0 -and $rc -ne 3010) { throw "CDRElite516 phase failed (exit $rc)." }
+    if ($rc -ne 0 -and $rc -ne 3010) { throw "CDRElite516 phase failed (exit $rc)." }
 
         if (-not (Test-Path $sharedFilesPath)) {
             throw "Shared Files folder not found at $sharedFilesPath after CDRElite install."
@@ -284,7 +318,7 @@ try {
         Write-Host "CDRImageProcess.dll already at $patchedDllVersion - skipping legacy filter stack."
     }
 
-    # === Phase 6: IOSS (Intraoral Sensor Software v3.2) ===
+    # === Phase 6: IOSS (Intraoral Sensor Software v3.2 / vendor step 6) ===
     if ($iossRequested -and (-not $iossService -or $env:ForceReinstall -eq "1")) {
         $iossPath = Get-Component -Name "IOSS" -Url $env:IossUrl
 
@@ -339,7 +373,7 @@ try {
 
     Remove-Item $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     if ($rebootRequired) {
-        Write-Host "REBOOT REQUIRED: HVCI change, registry integration, and/or installer requested restart. Sensor will not function until reboot."
+        Write-Host "REBOOT REQUIRED: legacy uninstall, registry integration, and/or installer requested restart. Sensor will not function until reboot."
     }
     Write-Host "Completed with exit code $exitCode. RebootRequired: $rebootRequired"
 }
