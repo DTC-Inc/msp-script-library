@@ -4,10 +4,11 @@
     from a workgroup to an Active Directory domain. Built for NinjaOne delivery.
 
 .DESCRIPTION
-    Captures hardware identity, domain state, shares, services, databases,
-    profiles, printers, remote-access surface and firewall posture prior to a
-    domain join, so a Statement of Work is built on evidence rather than
-    assumption, and so a failed cutover can be reversed rather than recovered.
+    Captures hardware identity, virtualisation platform, domain state, shares,
+    services, databases, profiles, printers, remote-access surface and firewall
+    posture prior to a domain join, so a Statement of Work is built on evidence
+    rather than assumption, and so a failed cutover can be reversed rather than
+    recovered.
 
     The script makes NO changes to the system. It does not write to the registry,
     does not start or stop services, and does not modify permissions. It does not
@@ -30,18 +31,18 @@
 
 .EXAMPLE
     $env:DTC_Client = 'Contoso Dental - Main'
-    .\Invoke-DomainReadinessAudit.ps1
+    .\msft-windows-domain-readiness-audit.ps1
 
 .EXAMPLE
     $env:DTC_Client      = 'Contoso Dental - Main'
     $env:DTC_Ticket      = '1234567'
     $env:DTC_ProfileSize = '1'
     $env:DTC_CaptureDir  = 'C:\_predomain'
-    .\Invoke-DomainReadinessAudit.ps1
+    .\msft-windows-domain-readiness-audit.ps1
 
 .NOTES
     Author  : Z. Boogher
-    Version : 2.0.0
+    Version : 2.1.0
 
     NinjaOne preset variables (create with these exact names; all optional):
       DTC_Client        Client / site label for the banner. Default UNSPECIFIED.
@@ -69,9 +70,15 @@
     Relaunches itself 64-bit when started from a 32-bit host process. NinjaOne
     runs 32-bit by default and a 32-bit process reads a redirected registry view,
     which would silently miss 64-bit SQL Server instances.
-#>
 
-#Requires -Version 5.1
+    Virtualisation classification (2.1.0): the host is classified as physical or
+    as a guest of a named platform, from manufacturer and model strings. This
+    gates the warranty and out-of-band checklist lines - a guest's BIOS serial is
+    a hypervisor-assigned GUID, not a service tag, and emitting it as one produces
+    an unactionable warranty lookup per guest. HypervisorPresent is deliberately
+    NOT used as the test: it reports true on a Hyper-V host as well as a guest,
+    because enabling the role places the management OS on top of the hypervisor.
+#>
 
 # ---------------------------------------------------------------------------
 # 64-bit self-relaunch. Runs before the mutex and transcript so the child owns
@@ -90,6 +97,8 @@ if ($env:PROCESSOR_ARCHITEW6432 -eq 'AMD64' -and -not $env:DTC_RELAUNCHED) {
         }
     }
 }
+
+#Requires -Version 5.1
 
 Set-StrictMode -Version 1.0
 $ErrorActionPreference = 'Continue'
@@ -119,7 +128,7 @@ $MaxListItems = 60
 if ($env:DTC_MaxListItems -match '^\d+$') { $MaxListItems = [int]$env:DTC_MaxListItems }
 
 $ScriptTag     = 'DomainReadinessAudit'
-$ScriptVersion = '2.0.0'
+$ScriptVersion = '2.1.0'
 $CompleteToken = '##DTC-AUDIT-COMPLETE##'
 
 # ---------------------------------------------------------------------------
@@ -223,24 +232,41 @@ function Get-RegValue {
     }
 }
 
-function Invoke-AuditSection {
+function Get-VirtualisationPlatform {
     <#
-        Runs a section in isolation. A failing section is reported and skipped
-        rather than aborting the whole audit, which matters when the operator
-        only gets one shot per maintenance visit.
+        Classifies the host as physical or as a guest of a named platform.
+
+        Manufacturer and model strings are the reliable tell. HypervisorPresent is
+        NOT sufficient on its own: it reports true on a Hyper-V host as well as a
+        guest, because enabling the role places the management OS on top of the
+        hypervisor, so it cannot distinguish the two.
+
+        Returns a display string; 'Physical' means no guest signature matched.
     #>
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][scriptblock]$Body
-    )
-    Add-DetailSection $Name
-    try {
-        & $Body
-    } catch {
-        Add-Detail ('  !! SECTION FAILED: ' + $_.Exception.Message)
-        Add-Flag ("Audit section '" + $Name + "' failed - that section's data is missing and must be captured manually")
+    param([Parameter(Mandatory)]$ComputerSystem)
+
+    $signature = "$($ComputerSystem.Manufacturer) $($ComputerSystem.Model)"
+
+    switch -Regex ($signature) {
+        'Microsoft Corporation.*Virtual Machine' { return 'Hyper-V guest' }
+        'VMware'                                 { return 'VMware guest' }
+        'innotek|VirtualBox'                     { return 'VirtualBox guest' }
+        'QEMU|KVM'                               { return 'KVM/QEMU guest' }
+        '\bXen\b'                                { return 'Xen guest' }
+        'Parallels'                              { return 'Parallels guest' }
+        'Amazon EC2'                             { return 'EC2 guest' }
+        'Google Compute Engine'                  { return 'GCE guest' }
+        'Nutanix'                                { return 'Nutanix guest' }
     }
+
+    # Fallback: a Hyper-V guest whose manufacturer strings have been customised
+    # still runs the integration-services heartbeat. A Hyper-V HOST does not.
+    if (Get-Service -Name 'vmicheartbeat' -ErrorAction SilentlyContinue) {
+        return 'Hyper-V guest (inferred from integration services)'
+    }
+
+    return 'Physical'
 }
 
 function Get-DtcSqlInfo {
@@ -331,6 +357,26 @@ function Get-PathActivity {
     }
 }
 
+function Invoke-AuditSection {
+    <#
+        Runs a section in isolation. A failing section is reported and skipped
+        rather than aborting the whole audit, which matters when the operator
+        only gets one shot per maintenance visit.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][scriptblock]$Body
+    )
+    Add-DetailSection $Name
+    try {
+        & $Body
+    } catch {
+        Add-Detail ('  !! SECTION FAILED: ' + $_.Exception.Message)
+        Add-Flag ("Audit section '" + $Name + "' failed - that section's data is missing and must be captured manually")
+    }
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -384,7 +430,7 @@ try {
         New-PSDrive -Name HKU -PSProvider Registry -Root HKEY_USERS -Scope Script -ErrorAction SilentlyContinue | Out-Null
     }
 
-    # -- role detection ------------------------------------------------------
+    # -- role and platform detection ----------------------------------------
     $cs = Get-CimInstance -ClassName Win32_ComputerSystem
     $os = Get-CimInstance -ClassName Win32_OperatingSystem
     $isServerOS = ($os.ProductType -ne 1)
@@ -400,11 +446,16 @@ try {
             Write-Verbose ('Role enumeration unavailable: ' + $_.Exception.Message)
         }
     }
+
+    $virtPlatform   = Get-VirtualisationPlatform -ComputerSystem $cs
+    $isVirtualGuest = ($virtPlatform -ne 'Physical')
+
     $roleParts = @()
     if ($isServerOS) { $roleParts += 'ServerOS' } else { $roleParts += 'Workstation' }
     if ($isDC)     { $roleParts += 'DomainController' }
     if ($isHyperV) { $roleParts += 'Hyper-V Host' }
     if ($isRDSH)   { $roleParts += 'RD Session Host' }
+    $roleParts += $virtPlatform
     $roleText = $roleParts -join ' / '
 
     Register-Checklist -Id 'CL-1.1-A' -Status 'CAPTURED' -Value ('{0} | role {1} | {2}' -f $env:COMPUTERNAME, $roleText, (Get-Date -Format 'yyyy-MM-dd HH:mm'))
@@ -418,27 +469,43 @@ try {
         $mem  = @(Get-CimInstance -ClassName Win32_PhysicalMemory -ErrorAction SilentlyContinue)
         $arr  = Get-CimInstance -ClassName Win32_PhysicalMemoryArray -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        $ramGb    = [math]::Round(($cs.TotalPhysicalMemory / 1GB), 0)
-        $slotsUsed = $mem.Count
+        $ramGb      = [math]::Round(($cs.TotalPhysicalMemory / 1GB), 0)
+        $slotsUsed  = $mem.Count
         $slotsTotal = if ($arr) { $arr.MemoryDevices } else { 'unknown' }
-        $maxGb = if ($arr -and $arr.MaxCapacityEx) { [math]::Round(($arr.MaxCapacityEx / 1MB), 0) } else { 'unknown' }
-        $cpuName = if ($cpus.Count -gt 0) { $cpus[0].Name.Trim() } else { 'unknown' }
-        $cores   = ($cpus | Measure-Object -Property NumberOfCores -Sum).Sum
-        $logical = $cs.NumberOfLogicalProcessors
+        $maxGb      = if ($arr -and $arr.MaxCapacityEx) { [math]::Round(($arr.MaxCapacityEx / 1MB), 0) } else { 'unknown' }
+        $cpuName    = if ($cpus.Count -gt 0) { $cpus[0].Name.Trim() } else { 'unknown' }
+        $cores      = ($cpus | Measure-Object -Property NumberOfCores -Sum).Sum
+        $logical    = $cs.NumberOfLogicalProcessors
 
+        Add-DetailKv 'Platform'      $virtPlatform
         Add-DetailKv 'Manufacturer'  $cs.Manufacturer
         Add-DetailKv 'Model'         $cs.Model
-        Add-DetailKv 'Service tag'   $(if ($bios) { $bios.SerialNumber } else { 'unknown' })
         Add-DetailKv 'BIOS version'  $(if ($bios) { $bios.SMBIOSBIOSVersion } else { 'unknown' })
         Add-DetailKv 'CPU'           $cpuName
         Add-DetailKv 'Sockets/Cores' ('{0} socket(s), {1} physical, {2} logical' -f $cpus.Count, $cores, $logical)
-        Add-DetailKv 'RAM installed' ('{0} GB (slots {1} of {2}, max {3} GB)' -f $ramGb, $slotsUsed, $slotsTotal, $maxGb)
 
-        Register-Checklist -Id 'CL-1.2-A' -Status 'CAPTURED' -Value ('{0} {1} | tag {2} | {3} | {4}C/{5}T | {6} GB, slots {7}/{8}, max {9} GB' -f `
-            $cs.Manufacturer, $cs.Model, $(if ($bios) { $bios.SerialNumber } else { 'unknown' }), $cpuName, $cores, $logical, $ramGb, $slotsUsed, $slotsTotal, $maxGb)
+        if ($isVirtualGuest) {
+            Add-DetailKv 'BIOS serial'   ('{0}   (hypervisor-assigned GUID - NOT a service tag)' -f $(if ($bios) { $bios.SerialNumber } else { 'unknown' }))
+            Add-DetailKv 'RAM allocated' ('{0} GB   (virtual allocation, not installed hardware)' -f $ramGb)
+            Add-Detail ''
+            Add-Detail '  NOTE: this is a virtual guest. Hardware warranty and out-of-band management'
+            Add-Detail '        apply to the virtualisation host, not to this machine. An absent TPM'
+            Add-Detail '        is expected on a Generation 2 guest without a virtual TPM and is not'
+            Add-Detail '        a hardware finding.'
 
-        if ($bios -and $bios.SerialNumber) {
-            Register-Checklist -Id 'CL-2.1-A' -Status 'OPEN' -Value ('Warranty lookup required at dell.com/support for tag ' + $bios.SerialNumber + ' - not obtainable from the OS')
+            Register-Checklist -Id 'CL-1.2-A' -Status 'CAPTURED' -Value ('{0} | {1} | {2}C/{3}T allocated | {4} GB allocated' -f `
+                $virtPlatform, $cs.Model, $cores, $logical, $ramGb)
+            Register-Checklist -Id 'CL-2.1-A' -Status 'N/A' -Value ($virtPlatform + ' - no hardware warranty; warranty applies to the virtualisation host')
+        } else {
+            Add-DetailKv 'Service tag'   $(if ($bios) { $bios.SerialNumber } else { 'unknown' })
+            Add-DetailKv 'RAM installed' ('{0} GB (slots {1} of {2}, max {3} GB)' -f $ramGb, $slotsUsed, $slotsTotal, $maxGb)
+
+            Register-Checklist -Id 'CL-1.2-A' -Status 'CAPTURED' -Value ('{0} {1} | tag {2} | {3} | {4}C/{5}T | {6} GB, slots {7}/{8}, max {9} GB' -f `
+                $cs.Manufacturer, $cs.Model, $(if ($bios) { $bios.SerialNumber } else { 'unknown' }), $cpuName, $cores, $logical, $ramGb, $slotsUsed, $slotsTotal, $maxGb)
+
+            if ($bios -and $bios.SerialNumber) {
+                Register-Checklist -Id 'CL-2.1-A' -Status 'OPEN' -Value ('Warranty lookup required for service tag ' + $bios.SerialNumber + ' - not obtainable from the OS')
+            }
         }
 
         Add-Detail ''
@@ -461,7 +528,7 @@ try {
         Add-DetailKv 'OS install date'    $os.InstallDate
         Add-DetailKv 'Last boot'          $os.LastBootUpTime
 
-        Register-Checklist -Id 'CL-1.2-B' -Status 'CAPTURED' -Value ('{0} | build {1} | domain state: {2}' -f $os.Caption, $os.Version, $cs.Domain)
+        Register-Checklist -Id 'CL-1.2-B' -Status 'CAPTURED' -Value ('{0} | build {1} | domain state: {2} | {3}' -f $os.Caption, $os.Version, $cs.Domain, $virtPlatform)
 
         if (-not $cs.PartOfDomain) {
             Add-Flag ("$env:COMPUTERNAME is WORKGROUP '" + $cs.Domain + "' - full identity cutover required")
@@ -474,7 +541,7 @@ try {
 
         # Sign-in format, current versus post-join. Feeds the remote user notice.
         $currentFormat = if ($cs.PartOfDomain) { "$($cs.Domain)\username" } else { "$env:COMPUTERNAME\username  -or-  .\username" }
-        Add-DetailKv 'Sign-in format now'  $currentFormat
+        Add-DetailKv 'Sign-in format now'   $currentFormat
         Add-DetailKv 'Sign-in format after' '<NETBIOS>\username  -or-  username@<domain.fqdn>   (fill from the agreed domain name)'
         Register-Checklist -Id 'CL-2.4-C' -Status 'PARTIAL' -Value ('current = ' + $currentFormat + ' ; future = <NETBIOS>\username once the domain name is agreed')
     }
@@ -619,8 +686,8 @@ try {
                 $account, $p.LocalPath, $p.LastUseTime, $p.Loaded, $size)
         }
         Add-DetailList -Items $lines -Label 'profile'
-        Add-DetailKv 'Non-special profiles'      $profileCount
-        Add-DetailKv 'Active in last 90 days'    $recentCount
+        Add-DetailKv 'Non-special profiles'   $profileCount
+        Add-DetailKv 'Active in last 90 days' $recentCount
         if ($profileCount -gt 0) {
             Add-Flag "$profileCount local profile(s) on $env:COMPUTERNAME ($recentCount active in 90 days) - each becomes a new profile after domain join"
         }
@@ -710,18 +777,18 @@ try {
     # =======================================================================
     Invoke-AuditSection -Name 'PMS / Imaging Footprint  (no data enumeration)' -Body {
         $platformMap = @{
-            'SoftDent'       = 'Carestream|SoftDent'
-            'Eaglesoft'      = 'Eaglesoft|Patterson'
-            'CS Imaging'     = 'CS Imaging|CSIS'
-            'Dentrix'        = 'Dentrix'
-            'Open Dental'    = 'Open ?Dental'
-            'Sidexis'        = 'Sidexis'
-            'DEXIS'          = 'DEXIS'
-            'VixWin'         = 'VixWin'
-            'TDO'            = '\bTDO\b'
-            'WinOMS'         = 'WinOMS'
-            'iDentalSoft'    = 'iDentalSoft'
-            'DTX Studio'     = 'DTX'
+            'SoftDent'    = 'Carestream|SoftDent'
+            'Eaglesoft'   = 'Eaglesoft|Patterson'
+            'CS Imaging'  = 'CS Imaging|CSIS'
+            'Dentrix'     = 'Dentrix'
+            'Open Dental' = 'Open ?Dental'
+            'Sidexis'     = 'Sidexis'
+            'DEXIS'       = 'DEXIS'
+            'VixWin'      = 'VixWin'
+            'TDO'         = '\bTDO\b'
+            'WinOMS'      = 'WinOMS'
+            'iDentalSoft' = 'iDentalSoft'
+            'DTX Studio'  = 'DTX'
         }
         $enginePattern = 'SQLANY|SQL Anywhere|Sybase|Actian|Pervasive|MySQL|MariaDB|FairCom|ctree|c-tree'
         $allServices = @(Get-CimInstance -ClassName Win32_Service)
@@ -1214,11 +1281,11 @@ try {
             $assignedCpu = ($vms | Measure-Object -Property ProcessorCount -Sum).Sum
 
             Add-Detail ''
-            Add-DetailKv 'Host physical RAM'   ("$physicalGb GB")
-            Add-DetailKv 'Sum assigned to VMs' ("$totalAssigned GB")
+            Add-DetailKv 'Host physical RAM'    ("$physicalGb GB")
+            Add-DetailKv 'Sum assigned to VMs'  ("$totalAssigned GB")
             Add-DetailKv 'Nominal RAM headroom' ("$headroomGb GB")
-            Add-DetailKv 'Logical processors'  $logicalCpu
-            Add-DetailKv 'vCPU assigned total' $assignedCpu
+            Add-DetailKv 'Logical processors'   $logicalCpu
+            Add-DetailKv 'vCPU assigned total'  $assignedCpu
 
             if ($assignedCpu -ge $logicalCpu) {
                 Add-Flag ("vCPU is already at or over subscription ($assignedCpu assigned against $logicalCpu logical) - adding a controller guest increases contention")
@@ -1231,10 +1298,10 @@ try {
             Register-Checklist -Id 'CL-1.2-D' -Status 'CAPTURED' -Value ("RAM headroom $headroomGb GB of $physicalGb GB ; vCPU $assignedCpu assigned of $logicalCpu logical")
 
             # Licensing entitlement math.
-            $hostEdition = $os.Caption
-            $isStandard  = $hostEdition -match 'Standard'
+            $hostEdition  = $os.Caption
+            $isStandard   = $hostEdition -match 'Standard'
             $isDatacenter = $hostEdition -match 'Datacenter'
-            $guestCount  = $vms.Count
+            $guestCount   = $vms.Count
             if ($isDatacenter) {
                 $verdict = "Host is Datacenter - unlimited guest environments. No additional licence required for a controller guest."
             } elseif ($isStandard) {
@@ -1371,7 +1438,6 @@ try {
     Register-Checklist -Id 'CL-1.3-E' -Status 'OPEN' -Value 'Server rename in or out of scope - default position is OUT'
     Register-Checklist -Id 'CL-1.3-F' -Status 'OPEN' -Value 'Site device count for CAL sizing - from the RMM device list, not this host'
     Register-Checklist -Id 'CL-1.3-G' -Status 'OPEN' -Value 'Staff working across multiple sites - account manager and client'
-    Register-Checklist -Id 'CL-2.1-B' -Status 'OPEN' -Value 'Remote management controller reachability and licence - confirm in the controller interface'
     Register-Checklist -Id 'CL-2.1-C' -Status 'OPEN' -Value 'Backup job health and restore point - from the backup console'
     Register-Checklist -Id 'CL-2.1-D' -Status 'OPEN' -Value 'Verified test restore - must be performed, not queried'
     Register-Checklist -Id 'CL-2.2-C' -Status 'OPEN' -Value 'Site-to-site tunnel and peer overlap - from the network controller'
@@ -1382,6 +1448,13 @@ try {
     Register-Checklist -Id 'CL-2.4-F' -Status 'OPEN' -Value 'Follow-up assisted sign-in engagement - raise once a cutover date exists'
     Register-Checklist -Id 'CL-2.5-A' -Status 'OPEN' -Value 'Operating hours and no-touch dates - account manager and client'
     Register-Checklist -Id 'CL-2.5-B' -Status 'OPEN' -Value 'Window count and shape - dispatch, against the execution sequence'
+
+    # CL-2.1-B is gated on the virtualisation classification: a guest has no BMC.
+    if ($isVirtualGuest) {
+        Register-Checklist -Id 'CL-2.1-B' -Status 'N/A' -Value 'Virtual guest - no out-of-band management controller; applies to the virtualisation host'
+    } else {
+        Register-Checklist -Id 'CL-2.1-B' -Status 'OPEN' -Value 'Remote management controller reachability and licence - confirm in the controller interface'
+    }
 
     if ($script:Flags.Count -gt 0) { $script:ExitCode = 2 }
 
@@ -1395,12 +1468,22 @@ try {
     [void]$out.Add((' Client   : ' + $ClientLabel))
     [void]$out.Add((' Host     : ' + $env:COMPUTERNAME))
     [void]$out.Add((' Role     : ' + $roleText))
+    [void]$out.Add((' Platform : ' + $virtPlatform))
     [void]$out.Add((' Ticket   : ' + $TicketLabel))
     [void]$out.Add((' Run      : ' + (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')))
     [void]$out.Add((' Version  : ' + $ScriptVersion))
     [void]$out.Add((' Flags    : ' + $script:Flags.Count))
     [void]$out.Add((' Exit     : ' + $script:ExitCode))
     if ($DoCapture) { [void]$out.Add((' Capture  : ' + $CaptureDir)) }
+
+    # Reserve the slot for the line count. The total cannot be known until the
+    # whole report is assembled, and the placeholder must occupy a real slot so
+    # that the count it eventually reports is correct. Remember the index rather
+    # than inserting at a fixed position later - capture mode adds a banner row
+    # and shifts everything below it.
+    $lineCountIndex = $out.Count
+    [void]$out.Add('<<LINECOUNT>>')
+
     [void]$out.Add('========================================================================')
     [void]$out.Add('')
     [void]$out.Add('== CHECKLIST AUTO-FILL  (transcribe these onto the site checklist) ==')
@@ -1430,8 +1513,9 @@ try {
     [void]$out.Add((' END - ' + $env:COMPUTERNAME + ' - ' + $script:Flags.Count + ' flag(s) - exit ' + $script:ExitCode))
     [void]$out.Add('========================================================================')
 
-    $expected = $out.Count + 2
-    $out.Insert(11, (' Lines    : ' + $expected + '   (if the log ends before the completion token, it was truncated)'))
+    # +1 accounts for the completion token emitted after the list.
+    $expected = $out.Count + 1
+    $out[$lineCountIndex] = (' Lines    : ' + $expected + '   (if the log ends before the completion token, it was truncated)')
 
     foreach ($line in $out) { Write-Output $line }
     Write-Output $CompleteToken
